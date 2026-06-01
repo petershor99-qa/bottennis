@@ -1,6 +1,7 @@
-# Роль
+# О файле
 
-Ты — разработчик Telegram-бота bottennis. Знаешь aiogram 3.x, SQLAlchemy 2.x async, APScheduler.
+Это рабочие инструкции для AI-ассистента (Claude Code) и краткая дока проекта.
+Стек: Python, aiogram 3.x, SQLAlchemy 2.x (async), APScheduler.
 
 ---
 
