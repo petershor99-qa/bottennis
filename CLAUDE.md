@@ -1,6 +1,7 @@
-# Роль
+# О файле
 
-Ты — разработчик Telegram-бота bottennis. Знаешь aiogram 3.x, SQLAlchemy 2.x async, APScheduler.
+Это рабочие инструкции для AI-ассистента (Claude Code) и краткая дока проекта.
+Стек: Python, aiogram 3.x, SQLAlchemy 2.x (async), APScheduler.
 
 ---
 
@@ -8,15 +9,66 @@
 
 **Рабочая папка — эта (`bottennis_github`). Единственный источник правды.** Отсюда идёт всё: разработка, публикация на GitHub и деплой на Railway. Старая папка `bottennis` больше не используется.
 
-- **GitHub:** https://github.com/petershor99-qa/bottennis — публичный репозиторий, CI на GitHub Actions (pytest на каждый push, файл `.github/workflows/tests.yml`)
+- **GitHub:** https://github.com/petershor99-qa/bottennis — публичный репозиторий, CI на GitHub Actions (pytest на каждый push/PR, файл `.github/workflows/tests.yml`)
 - **Railway:** проект `bottennis`, окружение `production` — эта папка слинкована (`railway up` деплоит именно сюда)
 
-**Флоу любого изменения (по порядку):**
-1. Правим код
-2. `py -3.13 -m pytest -q` — все тесты зелёные (упали → чиним, дальше не идём)
-3. `git add -A && git commit -m "..."` + `git push` — уезжает на GitHub, CI сам прогонит тесты
-4. `railway up --detach` — деплой в прод (только если меняли код; для правок доков не нужно)
-5. Обновить `RELEASE_NOTES.md` + Mionika (см. ниже)
+---
+
+## Ветки (три-веточная система)
+
+```
+main        ← прод. Только через PR из staging. Прямой пуш заблокирован.
+  └── staging    ← предпрод. Финальная проверка перед релизом.
+        └── develop  ← рабочая ветка. Сюда мержатся все фичи.
+```
+
+**Правила:**
+- В `main` — никогда не коммитишь напрямую. Только PR из `staging`.
+- В `develop` — тоже через PR из `feature/`-веток (можно и напрямую для мелких правок).
+- Всегда работаешь на ветке `develop` или `feature/xxx`.
+
+---
+
+## Флоу: добавить новую фичу (по порядку)
+
+**Шаг 1 — Создай ветку для задачи:**
+```bash
+git checkout develop
+git pull
+git checkout -b feature/название-задачи
+```
+Например: `feature/add-tournament-mode`, `feature/fix-rating-bug`
+
+**Шаг 2 — Работаешь с Клодом, пишешь код.**
+
+**Шаг 3 — Прогони тесты локально:**
+```bash
+py -3.13 -m pytest -q
+```
+Упали → чинишь, дальше не идёшь.
+
+**Шаг 4 — Коммит и пуш:**
+```bash
+git add -A && git commit -m "feat: описание что сделал"
+git push origin feature/название-задачи
+```
+
+**Шаг 5 — PR на GitHub:** `feature/xxx` → `develop`
+- Открываешь на github.com
+- GitHub Actions автоматически прогонит тесты
+- Мержишь
+
+**Шаг 6 — Когда готов к релизу:** PR `develop` → `staging` → проверяешь → PR `staging` → `main`
+
+**Шаг 7 — Деплой в прод:**
+```bash
+git checkout main && git pull
+railway up --detach
+```
+
+**Шаг 8 — Обновить** `RELEASE_NOTES.md` + Mionika (см. ниже)
+
+---
 
 ⚠️ **Репозиторий публичный.** Не вписывать реальные имена игроков, токены, персональные данные. В `RATING_ANALYSIS.md` имена обезличены (Игрок A–F) — так и держим. `.env` и `*.db` в `.gitignore`, не коммитим.
 
