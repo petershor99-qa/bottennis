@@ -5,3 +5,6 @@ __pycache__/
 *.db
 venv/
 .venv/
+
+# личные заметки (не для публичного репо)
+STUDY_NOTES.md
