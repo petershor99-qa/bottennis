@@ -1,0 +1,9 @@
+# Конфиг линтера ruff. Запуск: ruff check .
+target-version = "py311"
+line-length = 120
+
+[lint]
+# E/W — pycodestyle, F — pyflakes (неисп. импорты/переменные), I — сортировка импортов
+select = ["E", "W", "F", "I"]
+# Длину строк не контролируем: много длинных HTML-сообщений на русском
+ignore = ["E501"]

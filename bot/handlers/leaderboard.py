@@ -1,15 +1,14 @@
 from datetime import datetime, timedelta, timezone
 from html import escape as h
 
-from aiogram import Router, F
+from aiogram import F, Router
 from aiogram.types import CallbackQuery
-from sqlalchemy import select, desc, func
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from sqlalchemy.orm import selectinload
 
-from bot.db.models import Player, Match, MatchStatus
-from bot.keyboards.inline import leaderboard_kb, back_to_menu_kb, back_to_leaderboard_kb
+from bot.db.models import Match, MatchStatus, Player
+from bot.keyboards.inline import back_to_leaderboard_kb, back_to_menu_kb, leaderboard_kb
 from bot.utils import get_player, pluralize_matches
 
 router = Router()
@@ -190,7 +189,7 @@ async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
     inactive = [p for p in all_players if p.id not in stats]
 
     medals = ["🥇", "🥈", "🥉"]
-    lines = [f"📅 <b>Сегодня</b>\n", f"⚡ Сыграно матчей: <b>{len(matches)}</b>\n"]
+    lines = ["📅 <b>Сегодня</b>\n", f"⚡ Сыграно матчей: <b>{len(matches)}</b>\n"]
 
     for i, (pid, s) in enumerate(sorted_players):
         prefix = medals[i] if i < 3 else f"{i + 1}."

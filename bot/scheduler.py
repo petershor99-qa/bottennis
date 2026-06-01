@@ -6,15 +6,19 @@ from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from sqlalchemy import select, or_, and_, desc, func
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from bot.db.database import async_session
 from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import active_match_kb
 from bot.utils import (
-    match_rating_delta, pluralize_matches, _match_line,
-    pick_match_of_day, match_drama_reason, match_score_challenger_first,
+    _match_line,
+    match_drama_reason,
+    match_rating_delta,
+    match_score_challenger_first,
+    pick_match_of_day,
+    pluralize_matches,
 )
 
 MSK_OFFSET = timedelta(hours=3)
@@ -230,7 +234,7 @@ async def send_weekly_digest(bot: Bot) -> None:
             else:
                 draws_str = f"  |  🤝 Ничьих: <b>{draws}</b>" if draws > 0 else ""
                 lines = [
-                    f"📊 <b>Итоги недели</b>\n",
+                    "📊 <b>Итоги недели</b>\n",
                     f"🏆 Побед: <b>{wins}</b>{draws_str}  |  💔 Поражений: <b>{losses}</b>",
                     f"📈 Рейтинг: <b>{round(player.rating, 1)}</b> pts "
                     f"({sign}{round(rating_delta, 1)}) — #{rank}\n",

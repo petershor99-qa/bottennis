@@ -3,6 +3,7 @@
 Запускать: railway run python migrate_add_challenge_reminder.py
 """
 import asyncio
+
 from bot.db.database import engine
 
 

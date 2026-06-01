@@ -3,9 +3,11 @@
 Запуск: pytest tests/test_rating.py
 """
 from bot.services.rating import (
-    calculate_rating_change, calculate_draw_rating_change, SHORT_MATCH_MULT, win_probability,
+    SHORT_MATCH_MULT,
+    calculate_draw_rating_change,
+    calculate_rating_change,
+    win_probability,
 )
-
 
 # ── win_probability ───────────────────────────────────────────────────────────
 

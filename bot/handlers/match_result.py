@@ -1,20 +1,23 @@
 from datetime import datetime, timezone
 from html import escape as h
 
-from aiogram import Router, F, Bot
+from aiogram import Bot, F, Router
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from sqlalchemy import select, desc, or_, and_, func
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import Player, Match, MatchStatus
-from bot.keyboards.inline import after_set_kb, main_menu_kb, back_to_menu_kb, rematch_kb
+from bot.db.models import Match, MatchStatus, Player
+from bot.keyboards.inline import after_set_kb, back_to_menu_kb, main_menu_kb, rematch_kb
 from bot.services.achievements import (
-    check_win_achievements, check_loss_achievements, check_draw_achievements, ACHIEVEMENTS_MAP,
+    ACHIEVEMENTS_MAP,
+    check_draw_achievements,
+    check_loss_achievements,
+    check_win_achievements,
 )
-from bot.services.rating import calculate_rating_change, calculate_draw_rating_change
+from bot.services.rating import calculate_draw_rating_change, calculate_rating_change
 from bot.services.validation import validate_set_score
 from bot.states.states import MatchResultStates
 from bot.utils import get_player

@@ -6,15 +6,15 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 
-from bot.db.database import init_db, async_session
-from bot.middleware import DatabaseMiddleware
+from bot.db.database import async_session, init_db
 from bot.handlers.admin import router as admin_router
-from bot.handlers.start import router as start_router
-from bot.handlers.leaderboard import router as leaderboard_router
-from bot.handlers.profile import router as profile_router
-from bot.handlers.history import router as history_router
 from bot.handlers.challenge import router as challenge_router
+from bot.handlers.history import router as history_router
+from bot.handlers.leaderboard import router as leaderboard_router
 from bot.handlers.match_result import router as match_result_router
+from bot.handlers.profile import router as profile_router
+from bot.handlers.start import router as start_router
+from bot.middleware import DatabaseMiddleware
 from bot.scheduler import setup_scheduler
 
 load_dotenv()

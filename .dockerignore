@@ -1,0 +1,30 @@
+# В прод-образ нужен только runtime: main.py, bot/, requirements.txt.
+# Всё остальное (история git, тесты, CI, доки, скрипты) — отсекаем.
+
+.git
+.github
+.gitignore
+.gitattributes
+.dockerignore
+
+# тесты и кэши
+tests/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+
+# окружения и секреты
+.venv/
+venv/
+.env
+*.db
+
+# линтер/конфиги разработки
+ruff.toml
+pytest.ini
+requirements-dev.txt
+
+# документация и разовые скрипты
+*.md
+scripts/

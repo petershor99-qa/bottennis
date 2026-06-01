@@ -3,9 +3,11 @@
 Запускать: railway run python fix_ratings.py
 """
 import asyncio
+
+from sqlalchemy import select, update
+
 from bot.db.database import async_session
 from bot.db.models import Player
-from sqlalchemy import select, update
 
 
 async def fix():
