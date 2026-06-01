@@ -6,8 +6,11 @@ from datetime import datetime
 from types import SimpleNamespace
 
 from bot.utils import (
-    match_drama_score, match_drama_reason, pick_match_of_day,
-    match_score_challenger_first, DRAMA_THRESHOLD,
+    DRAMA_THRESHOLD,
+    match_drama_reason,
+    match_drama_score,
+    match_score_challenger_first,
+    pick_match_of_day,
 )
 
 

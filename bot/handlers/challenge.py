@@ -1,19 +1,18 @@
 from datetime import datetime, timedelta, timezone
 from html import escape as h
 
-from aiogram import Router, F, Bot
+from aiogram import Bot, F, Router
 from aiogram.types import CallbackQuery
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from sqlalchemy import select, or_, and_, func
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import Player, Match, MatchStatus
+from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import (
-    players_list_kb,
     active_match_kb,
     back_to_menu_kb,
-    main_menu_kb,
     cancel_match_confirm_kb,
+    main_menu_kb,
+    players_list_kb,
 )
 from bot.services.rating import win_probability
 from bot.utils import get_player

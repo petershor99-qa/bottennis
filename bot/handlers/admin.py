@@ -7,12 +7,11 @@
 import json
 import os
 from collections import defaultdict
-from datetime import timezone
 
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
-from sqlalchemy import select, or_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Match, MatchStatus, Player
@@ -105,8 +104,8 @@ async def cmd_dbstats(message: Message, session: AsyncSession) -> None:
             continue
         sets = m.sets_data if isinstance(m.sets_data, list) else json.loads(m.sets_data)
         w = sum(1 for s in sets if s["w"] > s["l"])
-        l = len(sets) - w
-        fmt_data[f"{w}-{l}"].append(m.rating_change)
+        losses = len(sets) - w
+        fmt_data[f"{w}-{losses}"].append(m.rating_change)
 
     lines = ["<b>🎯 Среднее Δ по формату матча:</b>\n"]
     lines.append(f"  {'Формат':<8} {'Матчей':>7}  {'Мин':>5}  {'Ср.':>5}  {'Макс':>5}")
@@ -129,12 +128,12 @@ async def cmd_dbstats(message: Message, session: AsyncSession) -> None:
 
     for i, p in enumerate(players, 1):
         w = win_map.get(p.id, 0)
-        l = loss_map.get(p.id, 0)
-        total = w + l
+        losses = loss_map.get(p.id, 0)
+        total = w + losses
         pct = f"{100*w//total}%" if total else "—"
         lines.append(
             f"  {i}. <b>{p.display_name}</b>  {p.rating:.1f} pts  "
-            f"({w}W/{l}L  {pct})"
+            f"({w}W/{losses}L  {pct})"
         )
 
     await _send(message, "\n".join(lines))

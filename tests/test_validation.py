@@ -4,7 +4,6 @@
 """
 from bot.services.validation import validate_set_score
 
-
 # ── Корректные счёта ──────────────────────────────────────────────────────────
 
 def test_normal_win():

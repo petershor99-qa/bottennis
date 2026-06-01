@@ -1,18 +1,22 @@
 from html import escape as h
 
-from aiogram import Router, F
+from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from sqlalchemy import select, desc, or_, and_
+from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from bot.db.models import Player, Match, MatchStatus
+from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import (
-    history_kb, back_to_menu_kb, rating_history_kb,
-    player_history_kb, player_profile_kb, h2h_kb,
+    back_to_menu_kb,
+    h2h_kb,
+    history_kb,
+    player_history_kb,
+    player_profile_kb,
+    rating_history_kb,
 )
-from bot.utils import get_player, match_rating_delta, _match_line, compute_h2h
+from bot.utils import _match_line, compute_h2h, get_player, match_rating_delta
 
 router = Router()
 

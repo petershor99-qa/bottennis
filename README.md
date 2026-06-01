@@ -94,7 +94,8 @@ delta = base_delta × score_mult × short_match_mult × newcomer_bonus × repeat
 | БД | SQLite + aiosqlite |
 | Фоновые задачи | APScheduler 3.x |
 | Тесты | pytest, pytest-asyncio |
-| CI | GitHub Actions |
+| Линтер | ruff |
+| CI | GitHub Actions (lint + тесты на 3.11/3.13) |
 | Хостинг | Railway |
 
 ## 📁 Структура
@@ -121,7 +122,8 @@ bottennis/
 │   ├── middleware.py           # сессия БД на каждый апдейт
 │   ├── states/states.py        # FSM-состояния
 │   └── utils.py                # хелперы + чистая логика (H2H, «матч дня»)
-└── tests/                      # 97 автотестов
+├── tests/                      # 97 автотестов
+└── scripts/                    # разовые скрипты (миграции, анализ рейтинга)
 ```
 
 ## 🚀 Запуск у себя

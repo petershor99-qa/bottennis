@@ -14,7 +14,7 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import select, or_, func, desc, and_
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Match, MatchStatus, Player

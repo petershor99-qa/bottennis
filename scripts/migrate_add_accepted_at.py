@@ -3,6 +3,7 @@
 Запускать: railway run python migrate_add_accepted_at.py
 """
 import asyncio
+
 from bot.db.database import engine
 
 

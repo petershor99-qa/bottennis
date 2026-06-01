@@ -1,17 +1,17 @@
 import os
 from html import escape as h
 
-from aiogram import Router, F, Bot
-from aiogram.filters import CommandStart, Command
+from aiogram import Bot, F, Router
+from aiogram.filters import Command, CommandStart
 from aiogram.filters.command import CommandObject
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery
-from sqlalchemy import select, func, or_
+from aiogram.types import CallbackQuery, Message
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from bot.db.models import Player, Match, MatchStatus
-from bot.keyboards.inline import main_menu_kb, back_to_menu_kb
+from bot.db.models import Match, MatchStatus, Player
+from bot.keyboards.inline import back_to_menu_kb, main_menu_kb
 from bot.utils import get_player
 
 router = Router()

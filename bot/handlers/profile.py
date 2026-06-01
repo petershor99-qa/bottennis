@@ -2,19 +2,21 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from html import escape as h
 
-from aiogram import Router, F
+from aiogram import F, Router
 from aiogram.types import CallbackQuery
-from sqlalchemy import select, desc, or_, and_, func
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from bot.db.models import Player, Match, MatchStatus
+from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import (
-    stats_kb, player_profile_kb, back_to_menu_kb,
-    achievements_kb, player_achievements_kb,
+    achievements_kb,
+    player_achievements_kb,
+    player_profile_kb,
+    stats_kb,
 )
-from bot.services.achievements import get_achievements, ACHIEVEMENTS_LIST
-from bot.utils import get_player, match_rating_delta, _match_line
+from bot.services.achievements import ACHIEVEMENTS_LIST, get_achievements
+from bot.utils import _match_line, get_player, match_rating_delta
 
 router = Router()
 
