@@ -254,11 +254,11 @@ async def send_weekly_digest(bot: Bot) -> None:
     logger.info("Еженедельный дайджест отправлен")
 
 
-# ── Итоги дня (20:00 МСК) ─────────────────────────────────────────────────────
+# ── Итоги дня (21:30 МСК) ─────────────────────────────────────────────────────
 
 
 async def send_daily_summary(bot: Bot) -> None:
-    """Каждый день в 20:00 МСК отправляет игрокам сводку за день + «матч дня»."""
+    """Каждый день в 21:30 МСК отправляет игрокам сводку за день + «матч дня»."""
     async with async_session() as session:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         msk_now = now + MSK_OFFSET
@@ -371,10 +371,10 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         id="weekly_digest",
     )
 
-    # Итоги дня — каждый день в 20:00 МСК (17:00 UTC)
+    # Итоги дня — каждый день в 21:30 МСК (18:30 UTC)
     scheduler.add_job(
         send_daily_summary,
-        CronTrigger(hour=17, minute=0),
+        CronTrigger(hour=18, minute=30),
         args=[bot],
         id="daily_summary",
     )
