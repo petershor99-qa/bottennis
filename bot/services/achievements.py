@@ -50,13 +50,19 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("maniac",         "🤪", "Теннисный маньячелло",       "Сыграть 10 матчей за один день"),
     Achievement("collector",      "🗺", "Со всеми познакомился",     "Победить каждого игрока хотя бы раз"),
     Achievement("rating_1200",    "⭐", "Рейтинг 1200",              "Достичь рейтинга 1200 pts"),
+    Achievement("anchorage_spirit", "🏳️", "Дух Анкориджа",          "Отменить матч"),
+    Achievement("comeback",       "🔄", "CumБэк",                    "Выиграть матч, проигрывая 0:2 по партиям"),
+    Achievement("fk_tyumen",      "🥊", "ФК Тюмень",                 "Проиграть 5 матчей подряд"),
+    Achievement("relentless",     "☀️", "Неистого",                  "Выиграть все свои матчи за день (от 3)"),
+    Achievement("deuce_maker",    "🎢", "Дьюсмейкер",                "Выиграть партию на дьюсе (12:10 и выше)"),
+    Achievement("titans",         "🥋", "Битва такеши титанов",      "Победить в матче, где оба были 1100+ pts"),
 ]
 
 ACHIEVEMENTS_MAP: dict[str, Achievement] = {a.id: a for a in ACHIEVEMENTS_LIST}
 
 # Увеличивай при добавлении новых ачивок, требующих бэкфилл.
 # Игроки с player.backfill_version < BACKFILL_VERSION будут обработаны один раз при старте.
-BACKFILL_VERSION = 2
+BACKFILL_VERSION = 3
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -249,6 +255,31 @@ async def check_win_achievements(
     if winner.rating >= 1200.0:
         maybe("rating_1200")
 
+    # ── CumБэк: выиграл, проиграв первые две партии (0:2 → победа) ───────────
+    if (
+        len(sets_data) >= 2
+        and sets_data[0]["l"] > sets_data[0]["w"]
+        and sets_data[1]["l"] > sets_data[1]["w"]
+    ):
+        maybe("comeback")
+
+    # ── Дьюсмейкер: выиграл партию на дьюсе (12+ очков) ──────────────────────
+    if any(s["w"] >= 12 and s["w"] > s["l"] for s in sets_data):
+        maybe("deuce_maker")
+
+    # ── Битва такеши титанов: оба игрока были 1100+ ─────────────────────────
+    if old_winner_rating >= 1100.0 and old_loser_rating >= 1100.0:
+        maybe("titans")
+
+    # ── Неистого: все матчи за сегодня — победы (от 3) ──────────────────────
+    # completed_at в проде naive-UTC; .replace(tzinfo=None) защищает от tz-aware дат
+    today_matches = [
+        m for m in all_matches
+        if m.completed_at and m.completed_at.replace(tzinfo=None) >= today_start
+    ]
+    if len(today_matches) >= 3 and all(m.winner_id == winner.id for m in today_matches):
+        maybe("relentless")
+
     if new_ids:
         winner.achievements = json.dumps(earned)
 
@@ -319,6 +350,21 @@ async def check_loss_achievements(
     )
     if today_r.scalar() >= 10:
         maybe("maniac")
+
+    # ── ФК Тюмень: 5 поражений подряд ───────────────────────────────────────
+    loss_streak = 0
+    for m in reversed(all_matches):
+        if m.winner_id is not None and m.winner_id != loser.id:
+            loss_streak += 1
+        else:
+            break
+    if loss_streak >= 5:
+        maybe("fk_tyumen")
+
+    # ── Дьюсмейкер: проигравший всё же выиграл партию на дьюсе ───────────────
+    # sets_data в перспективе победителя: очки проигравшего — s["l"]
+    if any(s["l"] >= 12 and s["l"] > s["w"] for s in sets_data):
+        maybe("deuce_maker")
 
     if new_ids:
         loser.achievements = json.dumps(earned)
@@ -397,9 +443,32 @@ async def check_draw_achievements(
     if today_r.scalar() >= 10:
         maybe("maniac")
 
+    # ── Дьюсмейкер: выиграл партию на дьюсе (с перспективы игрока) ───────────
+    if is_challenger:
+        if any(s["w"] >= 12 and s["w"] > s["l"] for s in sets_data):
+            maybe("deuce_maker")
+    else:
+        if any(s["l"] >= 12 and s["l"] > s["w"] for s in sets_data):
+            maybe("deuce_maker")
+
     if new_ids:
         player.achievements = json.dumps(earned)
 
+    return new_ids
+
+
+# ── Check after cancel ──────────────────────────────────────────────────────────
+
+async def check_cancel_achievements(session: AsyncSession, player: Player) -> list[str]:
+    """Достижение за отмену матча (Дух Анкориджа). Вызывается из обработчика отмены.
+
+    Начисляется любому участнику отменённого матча.
+    """
+    earned = get_achievements(player)
+    new_ids: list[str] = []
+    if _add_new(earned, "anchorage_spirit"):
+        new_ids.append("anchorage_spirit")
+        player.achievements = json.dumps(earned)
     return new_ids
 
 
@@ -448,6 +517,7 @@ async def backfill_achievements(session: AsyncSession) -> None:
         win_streak = 0
         max_win_streak = 0
         loss_streak = 0
+        max_loss_streak = 0
         total_wins = 0
         total_draws = 0
         beaten_opponents: set[int] = set()
@@ -474,6 +544,16 @@ async def backfill_achievements(session: AsyncSession) -> None:
                         _add_new(earned, "no_sweat")
                     if len(m.sets_data) >= 5:
                         _add_new(earned, "marathon")
+                    # CumБэк: проиграл первые две партии и выиграл матч
+                    if (
+                        len(m.sets_data) >= 2
+                        and m.sets_data[0]["l"] > m.sets_data[0]["w"]
+                        and m.sets_data[1]["l"] > m.sets_data[1]["w"]
+                    ):
+                        _add_new(earned, "comeback")
+                    # Дьюсмейкер: выиграл партию на дьюсе (победитель = w)
+                    if any(s["w"] >= 12 and s["w"] > s["l"] for s in m.sets_data):
+                        _add_new(earned, "deuce_maker")
 
             elif is_draw:
                 total_draws += 1
@@ -485,20 +565,28 @@ async def backfill_achievements(session: AsyncSession) -> None:
                     if is_ch:
                         if any(s["w"] == 11 and s["l"] == 0 for s in m.sets_data):
                             _add_new(earned, "no_sweat")
+                        if any(s["w"] >= 12 and s["w"] > s["l"] for s in m.sets_data):
+                            _add_new(earned, "deuce_maker")
                     else:
                         if any(s["l"] == 11 and s["w"] == 0 for s in m.sets_data):
                             _add_new(earned, "no_sweat")
+                        if any(s["l"] >= 12 and s["l"] > s["w"] for s in m.sets_data):
+                            _add_new(earned, "deuce_maker")
                     if len(m.sets_data) >= 5:
                         _add_new(earned, "marathon")
 
             else:  # поражение
                 win_streak = 0
                 loss_streak += 1
+                max_loss_streak = max(max_loss_streak, loss_streak)
 
                 # no_sweat: проигравший мог выиграть партию 11:0
                 if m.sets_data:
                     if any(s["l"] == 11 and s["w"] == 0 for s in m.sets_data):
                         _add_new(earned, "no_sweat")
+                    # Дьюсмейкер: проигравший выиграл партию на дьюсе (проигравший = l)
+                    if any(s["l"] >= 12 and s["l"] > s["w"] for s in m.sets_data):
+                        _add_new(earned, "deuce_maker")
                 # marathon: 5+ партий независимо от результата
                 if m.sets_data and len(m.sets_data) >= 5:
                     _add_new(earned, "marathon")
@@ -520,6 +608,20 @@ async def backfill_achievements(session: AsyncSession) -> None:
         # Феникс
         if had_phoenix:
             _add_new(earned, "phoenix")
+
+        # ФК Тюмень: 5 поражений подряд
+        if max_loss_streak >= 5:
+            _add_new(earned, "fk_tyumen")
+
+        # Неистого: любой день, где все матчи (от 3) — победы
+        day_groups: dict = {}
+        for m in matches:
+            if m.completed_at:
+                day_groups.setdefault(m.completed_at.date(), []).append(m)
+        for day_matches in day_groups.values():
+            if len(day_matches) >= 3 and all(mm.winner_id == player.id for mm in day_matches):
+                _add_new(earned, "relentless")
+                break
 
         # Дипломат
         if total_draws >= 5:
@@ -559,6 +661,16 @@ async def backfill_achievements(session: AsyncSession) -> None:
         # Рейтинг 1200 (по peak_rating)
         if player.peak_rating and player.peak_rating >= 1200.0:
             _add_new(earned, "rating_1200")
+
+        # Дух Анкориджа: были отменённые (declined) матчи
+        declined_r = await session.execute(
+            select(func.count()).select_from(Match).where(
+                or_(Match.challenger_id == player.id, Match.challenged_id == player.id),
+                Match.status == MatchStatus.declined,
+            )
+        )
+        if declined_r.scalar() > 0:
+            _add_new(earned, "anchorage_spirit")
 
         player.achievements = json.dumps(earned)
         player.backfill_version = BACKFILL_VERSION

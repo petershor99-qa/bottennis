@@ -14,6 +14,7 @@ from bot.keyboards.inline import (
     main_menu_kb,
     players_list_kb,
 )
+from bot.services.achievements import ACHIEVEMENTS_MAP, check_cancel_achievements
 from bot.services.rating import win_probability
 from bot.utils import get_player
 
@@ -312,5 +313,24 @@ async def do_cancel_match(callback: CallbackQuery, session: AsyncSession, bot: B
         )
     except Exception:
         pass
+
+    # Достижение «Дух Анкориджа» — обоим участникам отменённого матча
+    new_p = await check_cancel_achievements(session, player)
+    new_o = await check_cancel_achievements(session, opponent)
+    if new_p or new_o:
+        await session.commit()
+    for pl, ach_ids in ((player, new_p), (opponent, new_o)):
+        for aid in ach_ids:
+            a = ACHIEVEMENTS_MAP.get(aid)
+            if not a:
+                continue
+            try:
+                await bot.send_message(
+                    pl.telegram_id,
+                    f"🏅 <b>Новое достижение!</b>\n\n{a.emoji} <b>{a.name}</b>\n<i>{a.desc}</i>",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
 
     await callback.answer()

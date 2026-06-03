@@ -12,6 +12,7 @@ from bot.db.models import Base, Match, MatchStatus, Player
 from bot.services.achievements import (
     BACKFILL_VERSION,
     backfill_achievements,
+    check_cancel_achievements,
     check_draw_achievements,
     check_loss_achievements,
     check_win_achievements,
@@ -627,6 +628,198 @@ async def test_backfill_skips_already_processed_players(db):
     assert "press_start" not in get_achievements(p1)
     # p2 обработан — press_start есть
     assert "press_start" in get_achievements(p2)
+
+
+# ── НОВЫЕ АЧИВКИ ─────────────────────────────────────────────────────────────
+
+# comeback (CumБэк)
+
+async def test_comeback_win_after_losing_first_two_sets(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    # winner perspective: проиграл первые 2 партии, выиграл матч 3:2
+    sets = [{"w": 9, "l": 11}, {"w": 7, "l": 11}, {"w": 11, "l": 7},
+            {"w": 11, "l": 9}, {"w": 11, "l": 8}]
+    new = await _do_win(db, p1, p2, sets=sets)
+    assert "comeback" in new
+
+
+async def test_no_comeback_when_first_two_sets_won(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    sets = [{"w": 11, "l": 7}, {"w": 11, "l": 9}]
+    new = await _do_win(db, p1, p2, sets=sets)
+    assert "comeback" not in new
+
+
+# titans (Битва такеши титанов)
+
+async def test_titans_when_both_1100(db):
+    p1, p2 = _player(1, "Alice", 1100.0), _player(2, "Bob", 1100.0)
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = await _do_win(db, p1, p2, old_wr=1100.0, old_lr=1100.0)
+    assert "titans" in new
+
+
+async def test_no_titans_when_loser_below_1100(db):
+    p1, p2 = _player(1, "Alice", 1150.0), _player(2, "Bob", 1050.0)
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = await _do_win(db, p1, p2, old_wr=1150.0, old_lr=1050.0)
+    assert "titans" not in new
+
+
+# deuce_maker (Дьюсмейкер)
+
+async def test_deuce_maker_winner_wins_deuce_set(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    sets = [{"w": 12, "l": 10}, {"w": 11, "l": 7}]
+    new = await _do_win(db, p1, p2, sets=sets)
+    assert "deuce_maker" in new
+
+
+async def test_no_deuce_maker_without_deuce(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    sets = [{"w": 11, "l": 9}, {"w": 11, "l": 7}]
+    new = await _do_win(db, p1, p2, sets=sets)
+    assert "deuce_maker" not in new
+
+
+async def test_deuce_maker_loser_wins_deuce_set(db):
+    """Проигравший взял партию на дьюсе — тоже получает дьюсмейкера."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    # p2 выиграл матч; p1 (проигравший) взял партию 12:10
+    sets = [{"w": 11, "l": 7}, {"w": 10, "l": 12}, {"w": 11, "l": 7}]
+    await _add_win(db, p2, p1, sets=sets)
+    new = await check_loss_achievements(db, p1, sets)
+    assert "deuce_maker" in new
+
+
+# fk_tyumen (ФК Тюмень — 5 поражений подряд)
+
+async def test_fk_tyumen_after_5_losses(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    for i in range(5):
+        await _add_win(db, p2, p1, dt=_ts(i))  # p1 проигрывает 5 раз
+    new = await check_loss_achievements(db, p1, _DEFAULT_SETS)
+    assert "fk_tyumen" in new
+
+
+async def test_no_fk_tyumen_after_4_losses(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    for i in range(4):
+        await _add_win(db, p2, p1, dt=_ts(i))
+    new = await check_loss_achievements(db, p1, _DEFAULT_SETS)
+    assert "fk_tyumen" not in new
+
+
+# relentless (Неистого — все матчи за день победы, от 3)
+
+async def test_relentless_three_wins_same_day(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    today = datetime.now(timezone.utc).replace(hour=9, minute=0, second=0, microsecond=0)
+    await _add_win(db, p1, p2, dt=today)
+    await _add_win(db, p1, p2, dt=today + timedelta(minutes=1))
+    new = await _do_win(db, p1, p2, dt=today + timedelta(minutes=2))
+    assert "relentless" in new
+
+
+async def test_no_relentless_with_a_loss_today(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    today = datetime.now(timezone.utc).replace(hour=9, minute=0, second=0, microsecond=0)
+    await _add_win(db, p1, p2, dt=today)
+    await _add_win(db, p2, p1, dt=today + timedelta(minutes=1))  # поражение p1
+    new = await _do_win(db, p1, p2, dt=today + timedelta(minutes=2))
+    assert "relentless" not in new
+
+
+# anchorage_spirit (Дух Анкориджа — отмена матча)
+
+async def test_anchorage_spirit_on_cancel(db):
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.flush()
+
+    new = await check_cancel_achievements(db, p1)
+    assert "anchorage_spirit" in new
+
+
+async def test_anchorage_spirit_not_repeated(db):
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.flush()
+
+    await check_cancel_achievements(db, p1)
+    new2 = await check_cancel_achievements(db, p1)
+    assert "anchorage_spirit" not in new2
+
+
+# backfill новых ачивок
+
+async def test_backfill_fk_tyumen(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    for i in range(5):
+        db.add(Match(
+            challenger_id=p2.id, challenged_id=p1.id,
+            status=MatchStatus.completed, winner_id=p2.id,
+            sets_data=_DEFAULT_SETS, completed_at=_ts(i),
+        ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "fk_tyumen" in get_achievements(p1)
+
+
+async def test_backfill_anchorage_from_declined_match(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    # один завершённый (чтобы игрок попал в обработку) + один отменённый
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=p1.id,
+        sets_data=_DEFAULT_SETS, completed_at=_ts(0),
+    ))
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.declined, completed_at=None,
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "anchorage_spirit" in get_achievements(p1)
 
 
 async def test_backfill_idempotent(db):
