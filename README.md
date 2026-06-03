@@ -1,7 +1,7 @@
 # 🏓 bottennis
 
 ![tests](https://github.com/petershor99-qa/bottennis/actions/workflows/tests.yml/badge.svg)
-![python](https://img.shields.io/badge/python-3.11%2B-blue)
+![python](https://img.shields.io/badge/python-3.13-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
 > Telegram-бот для рейтинговых игр в настольный теннис внутри команды.
@@ -88,14 +88,14 @@ delta = base_delta × score_mult × short_match_mult × newcomer_bonus × repeat
 
 | Слой | Технология |
 |---|---|
-| Язык | Python 3.11+ |
+| Язык | Python 3.13 |
 | Telegram | aiogram 3.x (long-polling) |
 | ORM | SQLAlchemy 2.x (async) |
 | БД | SQLite + aiosqlite |
 | Фоновые задачи | APScheduler 3.x |
 | Тесты | pytest, pytest-asyncio |
 | Линтер | ruff |
-| CI | GitHub Actions (lint + тесты на 3.11/3.13) |
+| CI | GitHub Actions (lint + тесты на 3.13) |
 | Хостинг | Railway |
 
 ## 📁 Структура
