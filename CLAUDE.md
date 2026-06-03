@@ -152,7 +152,7 @@ delta = round(base_delta × score_mult × short_match_mult × newcomer_bonus × 
 
 | Слой | Технология |
 |------|-----------|
-| Язык | Python 3.11+ |
+| Язык | Python 3.13 |
 | Telegram | aiogram 3.x, long-polling |
 | ORM | SQLAlchemy 2.x async |
 | БД | SQLite + aiosqlite |
