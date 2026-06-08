@@ -247,7 +247,11 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
 
 @router.callback_query(F.data.startswith("cancel_match_"))
 async def cancel_match(callback: CallbackQuery, session: AsyncSession):
-    match_id = int(callback.data.split("_")[2])
+    try:
+        match_id = int(callback.data.split("_")[2])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
 
     r = await session.execute(select(Match).where(Match.id == match_id))
     match = r.scalar_one_or_none()
@@ -277,7 +281,11 @@ async def cancel_match(callback: CallbackQuery, session: AsyncSession):
 
 @router.callback_query(F.data.startswith("cancel_yes_"))
 async def do_cancel_match(callback: CallbackQuery, session: AsyncSession, bot: Bot):
-    match_id = int(callback.data.split("_")[2])
+    try:
+        match_id = int(callback.data.split("_")[2])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
 
     r = await session.execute(select(Match).where(Match.id == match_id))
     match = r.scalar_one_or_none()
