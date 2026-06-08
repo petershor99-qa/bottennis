@@ -7,10 +7,9 @@
 
 # ⚙️ Репозиторий и рабочий процесс (читать первым)
 
-**Рабочая папка — эта (`bottennis_github`). Единственный источник правды.** Отсюда идёт всё: разработка, публикация на GitHub и деплой на Railway. Старая папка `bottennis` больше не используется.
+**GitHub:** https://github.com/petershor99-qa/bottennis — публичный репозиторий, CI на GitHub Actions (pytest на каждый push/PR, файл `.github/workflows/tests.yml`)
 
-- **GitHub:** https://github.com/petershor99-qa/bottennis — публичный репозиторий, CI на GitHub Actions (pytest на каждый push/PR, файл `.github/workflows/tests.yml`)
-- **Railway:** проект `bottennis`, окружение `production` — эта папка слинкована (`railway up` деплоит именно сюда)
+**VPS:** FirstVDS, Ubuntu 24.04, IP `188.120.228.39`, бот запущен как systemd-сервис (`bottennis.service`).
 
 ---
 
@@ -59,10 +58,9 @@ git push origin feature/название-задачи
 
 **Шаг 6 — Когда готов к релизу:** PR `develop` → `main`, дождись зелёного CI, мержишь
 
-**Шаг 7 — Деплой в прод:**
-```bash
-git checkout main && git pull
-railway up --detach
+**Шаг 7 — Деплой в прод (из PowerShell):**
+```powershell
+ssh root@188.120.228.39 "cd /opt/bottennis && git pull && systemctl restart bottennis"
 ```
 
 **Шаг 8 — Обновить** `RELEASE_NOTES.md` + Mionika (см. ниже)
@@ -76,7 +74,7 @@ railway up --detach
 # Проект
 
 Telegram-бот для рейтинговых игр в настольный теннис внутри закрытой группы.
-Регистрация только по инвайт-коду. Один разработчик. Стадия: MVP в проде на Railway.
+Регистрация только по инвайт-коду. Один разработчик. Стадия: MVP в проде на VPS (FirstVDS).
 
 **Что умеет бот:**
 - Регистрация игроков по инвайт-ссылке (`/start <INVITE_CODE>`)
@@ -157,8 +155,8 @@ delta = round(base_delta × score_mult × short_match_mult × newcomer_bonus × 
 | БД | SQLite + aiosqlite |
 | FSM storage | MemoryStorage (сбрасывается при рестарте) |
 | Фоновые задачи | APScheduler 3.x |
-| Хостинг | Railway |
-| БД в проде | Railway Volume → `/data/bottennis.db` |
+| Хостинг | VPS FirstVDS (Ubuntu 24.04), systemd |
+| БД в проде | `/data/bottennis.db` на VPS |
 | Конфиг | python-dotenv, `.env` |
 
 ---
@@ -205,15 +203,24 @@ delta = round(base_delta × score_mult × short_match_mult × newcomer_bonus × 
 
 # Деплой — порядок команд (обязательно!)
 
-Всё из папки `bottennis_github`. Сначала тесты, потом пуш, потом деплой:
+Перед каждым деплоем сначала прогоняем тесты, потом деплоим:
 
 ```bash
-py -3.13 -m pytest -q          # все зелёные
-git add -A && git commit -m "..." && git push   # → GitHub + CI
-railway up --detach            # → прод (если менялся код)
+# 1. Локально — прогоняем тесты
+py -3.13 -m pytest tests/ -v
+
+# 2. Пушим в GitHub (develop → PR → main)
+
+# 3. Деплоим на VPS (одной командой из PowerShell)
+ssh root@188.120.228.39 "cd /opt/bottennis && git pull && systemctl restart bottennis"
 ```
 
-Если тесты упали — ни пуша, ни деплоя, сначала чиним.
+Если тесты упали — деплой не делаем, сначала чиним.
+
+**⚠️ Важно для VPS:** PyPI недоступен с сервера (заблокирован провайдером). При установке новых зависимостей на сервере использовать зеркало:
+```bash
+.venv/bin/pip install ПАКЕТ -i https://pypi.tuna.tsinghua.edu.cn/simple/
+```
 
 ---
 
@@ -231,10 +238,11 @@ railway up --detach            # → прод (если менялся код)
 
 ---
 
-# Текущий статус (май 2026)
+# Текущий статус (июнь 2026)
 
-**Готово и в проде:** всё перечисленное в разделе "Что умеет бот".  
-**Не реализовано:** админ-команды, отмена матча с подтверждением, валидация минимального числа игроков для дайджеста, PostgreSQL.
+**Готово и в проде:** всё перечисленное в разделе "Что умеет бот".
+**Хостинг:** VPS FirstVDS, IP 188.120.228.39, systemd, бэкапы /data/backups/ (7 шт, каждую ночь в 3:00).
+**Не реализовано:** PostgreSQL, автодеплой через GitHub Actions (пока деплоим вручную через ssh).
 
 # Запланировано на будущее
 
