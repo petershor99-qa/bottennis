@@ -1,5 +1,16 @@
 # Release Notes
 
+## v2.54.1 — 2026-06-08
+
+### Миграция на VPS + security-фиксы
+- 🚀 **Переезд с Railway на VPS** (FirstVDS, Ubuntu 24.04, 224₽/мес) — Railway credits закончились. Бот работает как systemd-сервис с автостартом.
+- 💾 **Автобэкапы базы** — ежедневно в 3:00, хранятся последние 7 копий (`/data/backups/`)
+- 🔒 **`.env` защищён** (`chmod 600`) — токен доступен только root
+- 🛡️ **Лимит партий** — максимум 10 партий в матче (`MAX_SETS=10`)
+- 🛡️ **Защита от ValueError** — `try/except` в callback-хандлерах `report_`, `confirm_`, `cancel_match_`, `cancel_yes_`
+
+---
+
 ## v2.54.0 — 2026-06-04
 
 ### Тесты на хендлеры + TESTING.md
