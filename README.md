@@ -98,7 +98,7 @@ delta = base_delta × score_mult × short_match_mult × newcomer_bonus × repeat
 | Тесты | pytest, pytest-asyncio |
 | Линтер | ruff |
 | CI | GitHub Actions (lint + тесты на 3.13) |
-| Хостинг | Railway |
+| Хостинг | VPS (FirstVDS, Ubuntu 24.04) |
 
 ## 📁 Структура
 
@@ -143,7 +143,7 @@ cp .env.example .env        # впиши свой BOT_TOKEN от @BotFather
 python main.py
 ```
 
-Деплой на Railway — через `Dockerfile` и `railway.toml` (БД хранится в Railway Volume).
+Деплой на VPS — через `git pull` + `systemctl restart bottennis` (БД хранится в `/data/bottennis.db`).
 
 > ℹ️ **Достижения и пасхалки** — внутренние шутки нашей команды, **местами с нецензурной лексикой**. Все тексты собраны в `bot/services/achievements.py` и `bot/handlers/match_result.py` — легко заменить под свою компанию.
 
