@@ -210,6 +210,7 @@ def player_history_kb(player_id: int, page: int, total_pages: int) -> InlineKeyb
 def rating_history_kb() -> InlineKeyboardMarkup:
     """Клавиатура под экраном истории рейтинга (без кнопки 'История рейтинга')."""
     b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="📊 График рейтинга", callback_data="rating_chart"))
     b.row(InlineKeyboardButton(text="📜 Вся история матчей", callback_data="history_0"))
     b.row(InlineKeyboardButton(text="« К статистике", callback_data="menu_stats"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
