@@ -58,10 +58,12 @@ git push origin feature/название-задачи
 
 **Шаг 6 — Когда готов к релизу:** PR `develop` → `main`, дождись зелёного CI, мержишь
 
-**Шаг 7 — Деплой в прод (из PowerShell):**
-```powershell
-ssh root@188.120.228.39 "cd /opt/bottennis && git pull && systemctl restart bottennis"
-```
+**Шаг 7 — Деплой в прод:** автоматический ✅ — мерж в `main` запускает job `deploy` (после зелёных `lint`+`pytest`), который сам делает `git pull` + `systemctl restart bottennis` на VPS. Ручное вмешательство не нужно.
+
+> Запасной ручной деплой (если автодеплой недоступен):
+> ```powershell
+> ssh root@188.120.228.39 "cd /opt/bottennis && git pull && systemctl restart bottennis"
+> ```
 
 **Шаг 8 — Обновить** `RELEASE_NOTES.md` + Mionika (см. ниже)
 
@@ -242,7 +244,8 @@ ssh root@188.120.228.39 "cd /opt/bottennis && git pull && systemctl restart bott
 
 **Готово и в проде:** всё перечисленное в разделе "Что умеет бот".
 **Хостинг:** VPS FirstVDS, IP 188.120.228.39, systemd, бэкапы /data/backups/ (7 шт, каждую ночь в 3:00).
-**Не реализовано:** PostgreSQL, автодеплой через GitHub Actions (пока деплоим вручную через ssh).
+**Автодеплой:** ✅ с v2.55.0 — job `deploy` в `.github/workflows/tests.yml`. Мерж PR `develop→main` → при зелёных `lint`+`pytest` job по SSH делает `git pull` + `systemctl restart bottennis`. Секреты репозитория: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` (выделенный ed25519 deploy-ключ). Ручной ssh-деплой больше не обязателен — достаточно смержить в `main`.
+**Не реализовано:** PostgreSQL.
 
 # Запланировано на будущее
 
