@@ -6,7 +6,7 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Match, MatchStatus, Player
@@ -674,14 +674,26 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
     reporter_player_id: int = data["reporter_player_id"]
     is_draw: bool = data.get("is_draw", False)
 
-    r = await session.execute(select(Match).where(Match.id == match_id))
-    match = r.scalar_one_or_none()
-
-    if not match or match.status != MatchStatus.accepted:
+    # ── Атомарный guard от двойной обработки (двойной тап «Всё верно») ──────────
+    # CAS: переводим матч accepted → completed одним UPDATE. Если изменено 0 строк —
+    # значит другой параллельный обработчик (или быстрый второй тап) уже завершил матч.
+    # Сервер (aiosqlite, timeout 5с) сериализует двух писателей: второй ждёт коммита
+    # первого и видит уже completed. winner_id/sets_data/rating_change проставляются
+    # ниже в этой же транзакции и коммитятся вместе со статусом — промежуточного
+    # «битого» состояния (completed без данных) не возникает.
+    guard = await session.execute(
+        update(Match)
+        .where(Match.id == match_id, Match.status == MatchStatus.accepted)
+        .values(status=MatchStatus.completed)
+    )
+    if guard.rowcount == 0:
         await callback.message.edit_text("Матч уже завершён или не найден.", reply_markup=main_menu_kb())
         await state.clear()
         await callback.answer()
         return
+
+    r = await session.execute(select(Match).where(Match.id == match_id))
+    match = r.scalar_one()
 
     rc = await session.execute(select(Player).where(Player.id == match.challenger_id))
     rd = await session.execute(select(Player).where(Player.id == match.challenged_id))
