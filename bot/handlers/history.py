@@ -1,6 +1,6 @@
 from html import escape as h
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import and_, desc, or_, select
@@ -16,7 +16,14 @@ from bot.keyboards.inline import (
     player_profile_kb,
     rating_history_kb,
 )
-from bot.utils import _match_line, compute_h2h, get_player, match_rating_delta
+from bot.utils import (
+    _match_line,
+    build_rating_series,
+    compute_h2h,
+    get_player,
+    match_rating_delta,
+    rating_chart_url,
+)
 
 router = Router()
 
@@ -73,6 +80,51 @@ async def show_rating_history(callback: CallbackQuery, session: AsyncSession):
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+# ── График рейтинга ───────────────────────────────────────────────────────────
+
+@router.callback_query(F.data == "rating_chart")
+async def show_rating_chart(callback: CallbackQuery, session: AsyncSession, bot: Bot):
+    player = await get_player(session, callback.from_user.id)
+    if not player:
+        await callback.answer("Сначала напиши /start", show_alert=True)
+        return
+
+    r = await session.execute(
+        select(Match)
+        .where(
+            or_(Match.challenger_id == player.id, Match.challenged_id == player.id),
+            Match.status == MatchStatus.completed,
+            Match.rating_change.isnot(None),
+        )
+        .order_by(Match.completed_at)  # старые первыми — для ряда слева направо
+    )
+    matches = r.scalars().all()
+
+    if len(matches) < 2:
+        await callback.answer("Нужно минимум 2 матча для графика 🏓", show_alert=True)
+        return
+
+    labels, values = build_rating_series(matches, player.id, player.rating)
+    url = rating_chart_url(player.display_name, labels, values)
+
+    # Картинку скачивает сам Telegram по URL. Исходное текстовое сообщение с
+    # навигацией не трогаем — график приходит отдельным сообщением ниже.
+    try:
+        await bot.send_photo(
+            callback.message.chat.id,
+            url,
+            caption=(
+                f"📊 Динамика рейтинга — <b>{h(player.display_name)}</b>\n"
+                f"Сейчас: <b>{round(player.rating, 1)} pts</b>  "
+                f"<i>(последние {len(values)} матчей)</i>"
+            ),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+    except Exception:
+        await callback.answer("Не удалось построить график, попробуй позже 🙁", show_alert=True)
 
 
 # ── Полная история матчей (своя) ──────────────────────────────────────────────

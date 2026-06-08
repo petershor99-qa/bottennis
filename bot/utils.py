@@ -1,3 +1,5 @@
+import json
+import urllib.parse
 from datetime import datetime
 from html import escape as h
 
@@ -239,3 +241,65 @@ def match_rating_delta(match: Match, player_id: int) -> float:
         # ничья
         return match.rating_change if match.challenger_id == player_id else -match.rating_change
     return match.rating_change if match.winner_id == player_id else -match.rating_change
+
+
+# ── График рейтинга (quickchart.io) ───────────────────────────────────────────
+
+CHART_MAX_POINTS = 40  # сколько последних матчей показывать на графике
+
+
+def build_rating_series(
+    matches: list[Match], player_id: int, current_rating: float, limit: int = CHART_MAX_POINTS
+) -> tuple[list[str], list[float]]:
+    """Строит ряд рейтинга игрока для графика.
+
+    matches — завершённые матчи игрока с rating_change, отсортированные по
+    completed_at (старые первыми). Возвращает (labels, values), где values[i] —
+    рейтинг ПОСЛЕ матча i. Ряд восстанавливается НАЗАД от current_rating через
+    дельты: последняя точка точно равна текущему рейтингу, недавние точки точны.
+    Пол рейтинга (1000/900) при откате не учитывается — это приближение, как и в
+    ▲▼ лидерборда; для давних точек возможен небольшой дрейф.
+    """
+    recent = list(matches[-limit:]) if limit else list(matches)
+    n = len(recent)
+    values = [0.0] * n
+    post = current_rating
+    for i in range(n - 1, -1, -1):
+        values[i] = round(post, 1)
+        post -= match_rating_delta(recent[i], player_id)
+    labels = [
+        (m.completed_at.strftime("%d.%m") if m.completed_at else str(i + 1))
+        for i, m in enumerate(recent)
+    ]
+    return labels, values
+
+
+def rating_chart_url(name: str, labels: list[str], values: list[float]) -> str:
+    """Формирует URL картинки графика рейтинга через quickchart.io.
+
+    Картинку скачивает сам Telegram при send_photo(photo=url) — собственный
+    HTTP-клиент не нужен. Конфиг — Chart.js (line), компактный JSON в query.
+    """
+    config = {
+        "type": "line",
+        "data": {
+            "labels": labels,
+            "datasets": [
+                {
+                    "label": "Рейтинг",
+                    "data": values,
+                    "borderColor": "rgb(54,162,235)",
+                    "backgroundColor": "rgba(54,162,235,0.15)",
+                    "fill": True,
+                    "tension": 0.3,
+                    "pointRadius": 2,
+                }
+            ],
+        },
+        "options": {
+            "title": {"display": True, "text": f"Рейтинг — {name}"},
+            "legend": {"display": False},
+        },
+    }
+    encoded = urllib.parse.quote(json.dumps(config, separators=(",", ":"), ensure_ascii=False))
+    return f"https://quickchart.io/chart?w=700&h=420&bkg=white&c={encoded}"
