@@ -30,6 +30,7 @@ NEWCOMER_FLOOR = 1000.0   # пол рейтинга для новичков (<15
 VETERAN_FLOOR = 900.0     # пол рейтинга для ветеранов (15+ матчей)
 NEWCOMER_BONUS = 1.2      # бонус к победам новичка
 REPEAT_MIN = 0.5          # минимальный множитель за повтор
+MAX_SETS = 10             # максимальное число партий в матче
 
 
 def _fmt_delta(d: float) -> str:
@@ -325,7 +326,11 @@ async def cancel_report(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("report_"))
 async def start_report(callback: CallbackQuery, session: AsyncSession, state: FSMContext):
-    match_id = int(callback.data.split("_")[1])
+    try:
+        match_id = int(callback.data.split("_")[1])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
 
     r = await session.execute(select(Match).where(Match.id == match_id))
     match = r.scalar_one_or_none()
@@ -536,6 +541,12 @@ async def process_set_score(message: Message, state: FSMContext):
 
     # ── Пакетный ввод: несколько счётов через пробел ("11:7 9:11 11:8") ──────
     if len(tokens) > 1:
+        if len(sets_data) + len(tokens) > MAX_SETS:
+            await message.answer(
+                f"⚠️ Максимум {MAX_SETS} партий в матче.",
+                parse_mode="HTML",
+            )
+            return
         new_sets = []
         for token in tokens:
             if ":" not in token:
@@ -614,6 +625,10 @@ async def process_set_score(message: Message, state: FSMContext):
         )
         return
 
+    if len(sets_data) >= MAX_SETS:
+        await message.answer(f"⚠️ Максимум {MAX_SETS} партий в матче.")
+        return
+
     sets_data.append({"reporter": my_score, "opponent": opp_score})
     sent = await message.answer(
         _sets_progress_text(sets_data),
@@ -649,7 +664,11 @@ async def redo_result(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("confirm_"), MatchResultStates.confirming)
 async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: FSMContext, bot: Bot):
-    match_id = int(callback.data.split("_")[1])
+    try:
+        match_id = int(callback.data.split("_")[1])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
     data = await state.get_data()
     sets_data: list = data["sets_data"]
     reporter_player_id: int = data["reporter_player_id"]
