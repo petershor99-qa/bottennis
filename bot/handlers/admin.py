@@ -50,8 +50,8 @@ async def cmd_dbstats(message: Message, session: AsyncSession) -> None:
             await message.answer(
                 "⚙️ <b>ADMIN_ID не настроен.</b>\n\n"
                 f"Твой ID: <code>{message.from_user.id}</code>\n\n"
-                "Добавь переменную <code>ADMIN_ID</code> в Railway с этим значением, "
-                "затем передеплой и повтори команду.",
+                "Добавь переменную <code>ADMIN_ID</code> в <code>.env</code> с этим значением, "
+                "затем перезапусти бота и повтори команду.",
                 parse_mode="HTML",
             )
         return
