@@ -50,7 +50,6 @@ class Match(Base):
     sets_data = Column(JSON, nullable=True)
     rating_change = Column(Float, nullable=True)
     reminder_sent = Column(Boolean, default=False, nullable=False)
-    challenge_reminder_sent = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     accepted_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)

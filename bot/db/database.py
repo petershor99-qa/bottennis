@@ -37,8 +37,6 @@ async def _migrate_db() -> None:
         "ALTER TABLE matches ADD COLUMN accepted_at DATETIME",
         # v2.12.0
         "ALTER TABLE players ADD COLUMN last_menu_message_id INTEGER",
-        # v2.22.0
-        "ALTER TABLE matches ADD COLUMN challenge_reminder_sent BOOLEAN NOT NULL DEFAULT 0",
         # v2.30.0
         "ALTER TABLE players ADD COLUMN peak_rating REAL",
         "UPDATE players SET peak_rating = rating WHERE peak_rating IS NULL",
