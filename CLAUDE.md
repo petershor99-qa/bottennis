@@ -179,6 +179,7 @@ delta = round(base_delta × score_mult × short_match_mult × newcomer_bonus × 
 - Callback data формат: `action_id` или `action_subaction_id` (например `cancel_match_42`)
 - Новый функционал → новый хендлер в подходящем роутере, не в `start.py`
 - Запрещено: хардкод токенов, Markdown вместо HTML, `int(rating)` вместо `round(rating, 1)`
+- **Описания релизов** (GitHub Release и новые записи `RELEASE_NOTES.md`) — **без эмодзи**, сухо и по делу, как в реальном инженерном проекте. Только суть изменений: что сделано, почему, что затронуто. Никаких смайлов, восклицаний и «воды».
 
 ---
 
