@@ -442,8 +442,7 @@ async def send_monthly_summary(bot: Bot) -> None:
 
         lines = [
             f"📆 <b>Итоги месяца — {month_label}</b>\n",
-            f"⚡ Сыграно: <b>{len(matches)}</b> {pluralize_matches(len(matches))}, "
-            f"<b>{total_sets}</b> партий\n",
+            f"⚡ Сыграно: <b>{len(matches)}</b> матчей, <b>{total_sets}</b> партий\n",
             "🏆 <b>Топ месяца:</b>",
         ]
 
