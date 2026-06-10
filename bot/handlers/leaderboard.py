@@ -252,7 +252,7 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
     if match_count:
         most_id = max(match_count, key=match_count.get)
         lines.append(
-            f"🏓 Больше всего матчей — <b>{h(name_map[most_id])}</b>: "
+            f"🏓 Больше всего матчей — <b>{h(name_map.get(most_id, '?'))}</b>: "
             f"{pluralize_matches(match_count[most_id])}"
         )
 
@@ -272,7 +272,7 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
 
     if best_streak_pid and best_streak_n >= 2:
         lines.append(
-            f"🔥 Лучшая серия побед — <b>{h(name_map[best_streak_pid])}</b>: "
+            f"🔥 Лучшая серия побед — <b>{h(name_map.get(best_streak_pid, '?'))}</b>: "
             f"{best_streak_n} подряд"
         )
 

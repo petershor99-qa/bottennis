@@ -383,7 +383,12 @@ async def show_my_matches(callback: CallbackQuery, session: AsyncSession):
             since = m.accepted_at or m.created_at
             if since:
                 total_h = int((now - since).total_seconds() / 3600)
-                time_str = f"{total_h}ч" if total_h < 24 else f"{total_h // 24}д {total_h % 24}ч"
+                if total_h == 0:
+                    time_str = "< 1ч"
+                elif total_h < 24:
+                    time_str = f"{total_h}ч"
+                else:
+                    time_str = f"{total_h // 24}д {total_h % 24}ч"
                 warn = "⚠ " if total_h >= 24 else ""
             else:
                 time_str, warn = "?", ""
