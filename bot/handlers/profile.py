@@ -15,7 +15,7 @@ from bot.keyboards.inline import (
     player_profile_kb,
     stats_kb,
 )
-from bot.services.achievements import ACHIEVEMENTS_LIST, get_achievements
+from bot.services.achievements import ACHIEVEMENTS_LIST, ACHIEVEMENTS_MAP, get_achievements
 from bot.utils import _match_line, get_player, match_rating_delta
 
 router = Router()
@@ -119,6 +119,8 @@ def _compute_player_stats(player, all_matches: list) -> dict:
             if m.winner_id == player.id:
                 first_set_then_match_wins += 1
 
+    beaten_opponents_count = sum(1 for v in opp_stats.values() if v["wins"] > 0)
+
     format_counter = Counter(len(m.sets_data) for m in all_matches if m.sets_data)
     fav_format = format_counter.most_common(1)[0] if format_counter else None
 
@@ -146,6 +148,7 @@ def _compute_player_stats(player, all_matches: list) -> dict:
         "first_set_conv": int(first_set_then_match_wins / first_set_wins * 100) if first_set_wins else None,
         "fav_format": fav_format,
         "best_day": best_day, "best_day_count": best_day_count,
+        "beaten_opponents_count": beaten_opponents_count,
     }
 
 
@@ -214,6 +217,45 @@ def _render_stats_lines(player, s: dict) -> list[str]:
     return lines
 
 
+# ── Achievement progress ──────────────────────────────────────────────────────
+
+def _nearest_achievement_progress(player, s: dict, total_players: int) -> str | None:
+    """Возвращает строку прогресса до ближайшей незаработанной счётной ачивки или None."""
+    earned = set(get_achievements(player))
+    total_matches = s["wins"] + s["draws"] + s["losses"]
+    if total_matches == 0:
+        return None
+    streak = s["streak"]
+    candidates: list[tuple[float, str]] = []
+
+    def _add(ach_id: str, current: int, target: int, unit: str) -> None:
+        if ach_id in earned:
+            return
+        a = ACHIEVEMENTS_MAP.get(ach_id)
+        if not a:
+            return
+        candidates.append((current / target, f"{a.emoji} {a.name}: {current}/{target} {unit}"))
+
+    if streak > 0:
+        _add("hat_trick", streak, 3, "побед подряд")
+        _add("im_on_fire", streak, 5, "побед подряд")
+        _add("god_mode", streak, 10, "побед подряд")
+    _add("fifty", total_matches, 50, "матчей")
+    _add("veteran", total_matches, 100, "матчей")
+    _add("legend", total_matches, 200, "матчей")
+    if s["draws"] > 0:
+        _add("diplomat", s["draws"], 5, "ничьих")
+    opp_count = max(total_players - 1, 1)
+    _add("collector", s["beaten_opponents_count"], opp_count, "соперников")
+    _add("rating_1200", int(player.rating), 1200, "pts рейтинга")
+
+    valid = [(r, t) for r, t in candidates if r < 1.0]
+    if not valid:
+        return None
+    _, text = max(valid, key=lambda x: x[0])
+    return f"⏳ Цель: {text}"
+
+
 # ── My stats ──────────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "menu_stats")
@@ -268,6 +310,10 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
     peak = player.peak_rating
     if peak and peak > player.rating:
         lines.append(f"📈 Пик рейтинга: <b>{round(peak, 1)}</b> pts")
+
+    progress = _nearest_achievement_progress(player, s, total)
+    if progress:
+        lines.append(progress)
 
     if matches:
         lines.append("\n<b>Последние матчи:</b>")

@@ -19,6 +19,7 @@ from sqlalchemy.orm import sessionmaker
 from bot.db.models import Base, Match, MatchStatus, Player
 from bot.handlers.challenge import do_cancel_match, send_challenge
 from bot.handlers.match_result import confirm_result, handle_direct_score, process_set_score
+from bot.handlers.profile import _nearest_achievement_progress
 from bot.services.achievements import get_achievements
 from bot.states.states import MatchResultStates
 from bot.utils import MSK_OFFSET, compute_alltime_streak, get_rec_signal, msk_day_start
@@ -391,3 +392,66 @@ def test_alltime_streak_all_wins():
 def test_alltime_streak_no_wins():
     ms = [_match_result(_OID)] * 3
     assert compute_alltime_streak(ms, _VID) == 0
+
+
+# ── _nearest_achievement_progress ────────────────────────────────────────────────
+
+def _p_ach(achievements: list[str], rating: float = 1000.0):
+    """Минимальный мок Player для _nearest_achievement_progress."""
+    return SimpleNamespace(achievements=str(achievements).replace("'", '"'), rating=rating)
+
+
+def _stats(wins=0, draws=0, losses=0, streak=0, beaten=0):
+    return {
+        "wins": wins, "draws": draws, "losses": losses,
+        "streak": streak, "beaten_opponents_count": beaten,
+    }
+
+
+def test_ach_progress_no_matches():
+    """Нет матчей → None."""
+    p = _p_ach([])
+    assert _nearest_achievement_progress(p, _stats(), total_players=3) is None
+
+
+def test_ach_progress_streak_hat_trick():
+    """Серия 2 побед, hat_trick не заработан → показывает hat_trick 2/3."""
+    # rating_1200 уже «заработан» в earned, чтобы оно не перебивало hat_trick (ratio 2/3)
+    p = _p_ach(["rating_1200"])
+    result = _nearest_achievement_progress(p, _stats(wins=2, streak=2), total_players=3)
+    assert result is not None
+    assert "2/3" in result
+    assert "Хет-трик" in result
+
+
+def test_ach_progress_skips_earned():
+    """hat_trick уже заработан → показывает следующую по прогрессу."""
+    p = _p_ach(["press_start", "first_blood", "hat_trick", "rating_1200"])
+    result = _nearest_achievement_progress(p, _stats(wins=2, streak=2), total_players=3)
+    # hat_trick пропущен, im_on_fire (2/5) или fifty (2/50) — берётся лучший по ratio
+    assert result is not None
+    assert "Я горяч нахуй" in result  # im_on_fire: 2/5 = 0.4 > fifty: 2/50 = 0.04
+
+
+def test_ach_progress_all_earned_returns_none():
+    """Все счётные ачивки заработаны → None."""
+    all_ids = [
+        "hat_trick", "im_on_fire", "god_mode",
+        "fifty", "veteran", "legend",
+        "diplomat", "collector", "rating_1200",
+    ]
+    p = _p_ach(all_ids, rating=1300.0)
+    s = _stats(wins=200, draws=5, losses=10, streak=10, beaten=4)
+    result = _nearest_achievement_progress(p, s, total_players=5)
+    assert result is None
+
+
+def test_ach_progress_collector():
+    """beaten_opponents_count=2 из 3 → показывает collector 2/3."""
+    # rating_1200 уже «заработан», чтобы collector (2/3=0.67) выиграл
+    p = _p_ach(["rating_1200"])
+    s = _stats(wins=10, losses=5, beaten=2)
+    result = _nearest_achievement_progress(p, s, total_players=4)
+    assert result is not None
+    assert "2/3" in result
+    assert "Со всеми" in result

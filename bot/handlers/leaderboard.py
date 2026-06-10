@@ -324,3 +324,89 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+# ── Матрица доминирования ─────────────────────────────────────────────────────
+
+@router.callback_query(F.data == "dominance_matrix")
+async def show_dominance_matrix(callback: CallbackQuery, session: AsyncSession):
+    players_r = await session.execute(select(Player).order_by(desc(Player.rating)))
+    all_players = players_r.scalars().all()
+
+    matches_r = await session.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+    )
+    all_matches = matches_r.scalars().all()
+
+    if not all_players:
+        await callback.message.edit_text(
+            "⚔️ <b>Матрица доминирования</b>\n\nИгроков пока нет.",
+            reply_markup=back_to_leaderboard_kb(),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+
+    match_count: dict[int, int] = {}
+    for m in all_matches:
+        for pid in (m.challenger_id, m.challenged_id):
+            match_count[pid] = match_count.get(pid, 0) + 1
+
+    players_sorted = sorted(all_players, key=lambda p: (match_count.get(p.id, 0) == 0, -p.rating))
+
+    cap = 8
+    capped = len(players_sorted) > cap
+    top = players_sorted[:cap]
+    n = len(top)
+
+    if n < 2:
+        await callback.message.edit_text(
+            "⚔️ <b>Матрица доминирования</b>\n\nНедостаточно игроков.",
+            reply_markup=back_to_leaderboard_kb(),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+
+    pid_idx = {p.id: i for i, p in enumerate(top)}
+    wins = [[0] * n for _ in range(n)]
+    for m in all_matches:
+        if m.winner_id is None:
+            continue
+        wi = pid_idx.get(m.winner_id)
+        li_id = m.challenged_id if m.winner_id == m.challenger_id else m.challenger_id
+        li = pid_idx.get(li_id)
+        if wi is not None and li is not None:
+            wins[wi][li] += 1
+
+    names = [p.display_name[:7] for p in top]
+    max_cell_len = max(
+        len(f"{wins[i][j]}-{wins[j][i]}")
+        for i in range(n) for j in range(n) if i != j
+    )
+    col_w = max(max(len(nm) for nm in names), max_cell_len, 3)
+    row_w = max(len(nm) for nm in names)
+
+    header = " " * (row_w + 1) + "  ".join(nm.center(col_w) for nm in names)
+    rows = [header]
+    for i in range(n):
+        cells = []
+        for j in range(n):
+            cell = "—" if i == j else f"{wins[i][j]}-{wins[j][i]}"
+            cells.append(cell.center(col_w))
+        rows.append(names[i].ljust(row_w) + " " + "  ".join(cells))
+
+    table = "\n".join(rows)
+    cap_note = "\n<i>Показаны топ-8 по рейтингу</i>" if capped else ""
+    text = (
+        f"⚔️ <b>Матрица доминирования</b>{cap_note}\n\n"
+        f"<code>{table}</code>\n\n"
+        f"<i>Строка: сколько раз победил соперника (победы-поражения).</i>"
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=back_to_leaderboard_kb(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
