@@ -242,6 +242,69 @@ def compute_h2h(matches: list[Match], viewer_id: int, opponent_id: int) -> dict:
     }
 
 
+def get_rec_signal(
+    viewer_rating: float,
+    viewer_id: int,
+    opponent_rating: float,
+    opponent_id: int,
+    h2h: list,
+    now: datetime,
+) -> str:
+    """Сигнал-рекомендация для соперника на экране 'С кем сыграть?'.
+
+    h2h: завершённые матчи viewer vs opponent, desc по completed_at.
+    Приоритет: серия поражений ≥ 2 → последний матч проигран → давно не играли (3+ дн.)
+    → соперник сильнее на 30+ pts → нет сигнала.
+    """
+    if not h2h:
+        return "ещё не встречались"
+
+    streak = 0
+    for m in h2h:
+        if m.winner_id == opponent_id:
+            streak += 1
+        else:
+            break
+
+    if streak >= 2:
+        return f"серия поражений — {streak} подряд"
+
+    if h2h[0].winner_id == opponent_id:
+        return "ты проиграл последний матч"
+
+    if h2h[0].completed_at:
+        days = (now - h2h[0].completed_at).days
+        if days >= 3:
+            rem = days % 10
+            if 11 <= days % 100 <= 14:
+                days_str = f"{days} дней"
+            elif rem == 1:
+                days_str = f"{days} день"
+            elif 2 <= rem <= 4:
+                days_str = f"{days} дня"
+            else:
+                days_str = f"{days} дней"
+            return f"не играли {days_str}"
+
+    if opponent_rating - viewer_rating >= 30:
+        return f"он сильнее на +{int(opponent_rating - viewer_rating)}"
+
+    return ""
+
+
+def compute_alltime_streak(matches_asc: list, player_id: int) -> int:
+    """Максимальная серия побед игрока за всё время. matches_asc — от старых к новым."""
+    best = cur = 0
+    for m in matches_asc:
+        if m.winner_id == player_id:
+            cur += 1
+            if cur > best:
+                best = cur
+        else:
+            cur = 0
+    return best
+
+
 def match_rating_delta(match: Match, player_id: int) -> float:
     """Возвращает изменение рейтинга игрока в матче (+ или -).
 

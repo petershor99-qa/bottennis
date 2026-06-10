@@ -21,7 +21,7 @@ from bot.handlers.challenge import do_cancel_match, send_challenge
 from bot.handlers.match_result import confirm_result, handle_direct_score, process_set_score
 from bot.services.achievements import get_achievements
 from bot.states.states import MatchResultStates
-from bot.utils import MSK_OFFSET, msk_day_start
+from bot.utils import MSK_OFFSET, compute_alltime_streak, get_rec_signal, msk_day_start
 
 # ── Фикстуры и хелперы ──────────────────────────────────────────────────────────
 
@@ -308,3 +308,86 @@ def test_msk_day_start_is_msk_midnight():
     assert (msk.hour, msk.minute, msk.second) == (0, 0, 0)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     assert start <= now < start + timedelta(days=1)
+
+
+# ── get_rec_signal — рекомендация соперника ──────────────────────────────────────
+
+_NOW = datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _h2h(winner_id, days_ago):
+    """Мок матча для get_rec_signal: только winner_id + completed_at."""
+    return SimpleNamespace(winner_id=winner_id, completed_at=_NOW - timedelta(days=days_ago))
+_VID, _OID = 1, 2
+_V_RATING, _O_RATING = 1000.0, 1000.0
+
+
+def test_rec_signal_no_history():
+    assert get_rec_signal(_V_RATING, _VID, _O_RATING, _OID, [], _NOW) == "ещё не встречались"
+
+
+def test_rec_signal_loss_streak_2():
+    h2h = [_h2h(_OID, 0), _h2h(_OID, 1)]
+    assert get_rec_signal(_V_RATING, _VID, _O_RATING, _OID, h2h, _NOW) == "серия поражений — 2 подряд"
+
+
+def test_rec_signal_loss_streak_3():
+    h2h = [_h2h(_OID, 0), _h2h(_OID, 1), _h2h(_OID, 2)]
+    assert get_rec_signal(_V_RATING, _VID, _O_RATING, _OID, h2h, _NOW) == "серия поражений — 3 подряд"
+
+
+def test_rec_signal_single_loss():
+    """Последний матч проигран, но не серия (до этого была победа)."""
+    h2h = [_h2h(_OID, 0), _h2h(_VID, 1)]
+    assert get_rec_signal(_V_RATING, _VID, _O_RATING, _OID, h2h, _NOW) == "ты проиграл последний матч"
+
+
+def test_rec_signal_days_since():
+    """Последний матч выигран 5 дней назад — показываем паузу."""
+    h2h = [_h2h(_VID, 5)]
+    result = get_rec_signal(_V_RATING, _VID, _O_RATING, _OID, h2h, _NOW)
+    assert result == "не играли 5 дней"
+
+
+def test_rec_signal_stronger_opponent():
+    """Нет давней паузы, но соперник на 40 pts сильнее."""
+    h2h = [_h2h(_VID, 1)]
+    result = get_rec_signal(_V_RATING, _VID, _V_RATING + 40, _OID, h2h, _NOW)
+    assert result == "он сильнее на +40"
+
+
+def test_rec_signal_no_signal():
+    """Последний матч выигран вчера, соперник близок по рейтингу — нет сигнала."""
+    h2h = [_h2h(_VID, 1)]
+    assert get_rec_signal(_V_RATING, _VID, _V_RATING + 10, _OID, h2h, _NOW) == ""
+
+
+def test_rec_signal_draw_breaks_streak():
+    """Ничья прерывает серию поражений — одиночный флаг не показывается."""
+    h2h = [_h2h(None, 0), _h2h(_OID, 1)]  # последний — ничья, до этого проигрыш
+    result = get_rec_signal(_V_RATING, _VID, _V_RATING + 10, _OID, h2h, _NOW)
+    # ничья не проигрыш → не "ты проиграл", не серия; пауза 0 дней → нет сигнала
+    assert result == ""
+
+
+# ── compute_alltime_streak ────────────────────────────────────────────────────────
+
+def _match_result(winner_id):
+    return SimpleNamespace(winner_id=winner_id)
+
+
+def test_alltime_streak_basic():
+    """W W L W W W → лучшая серия 3."""
+    ms = [_match_result(_VID), _match_result(_VID), _match_result(_OID),
+          _match_result(_VID), _match_result(_VID), _match_result(_VID)]
+    assert compute_alltime_streak(ms, _VID) == 3
+
+
+def test_alltime_streak_all_wins():
+    ms = [_match_result(_VID)] * 5
+    assert compute_alltime_streak(ms, _VID) == 5
+
+
+def test_alltime_streak_no_wins():
+    ms = [_match_result(_OID)] * 3
+    assert compute_alltime_streak(ms, _VID) == 0

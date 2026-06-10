@@ -9,7 +9,15 @@ from sqlalchemy.orm import selectinload
 
 from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import back_to_leaderboard_kb, back_to_menu_kb, leaderboard_kb
-from bot.utils import get_player, msk_day_start, pluralize_matches
+from bot.utils import (
+    compute_alltime_streak,
+    get_player,
+    match_drama_reason,
+    match_drama_score,
+    match_score_challenger_first,
+    msk_day_start,
+    pluralize_matches,
+)
 
 router = Router()
 
@@ -200,6 +208,115 @@ async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
     if inactive:
         inactive_names = ", ".join(h(p.display_name) for p in inactive)
         lines.append(f"\n😴 Не играли: {inactive_names}")
+
+    await callback.message.edit_text(
+        "\n".join(lines),
+        reply_markup=back_to_leaderboard_kb(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+# ── Рекорды клуба ─────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data == "club_records")
+async def show_club_records(callback: CallbackQuery, session: AsyncSession):
+    matches_r = await session.execute(
+        select(Match)
+        .where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+        .order_by(Match.completed_at)
+    )
+    all_matches = matches_r.scalars().all()
+
+    if not all_matches:
+        await callback.message.edit_text(
+            "🏆 <b>Рекорды клуба</b>\n\nМатчей ещё не было.",
+            reply_markup=back_to_leaderboard_kb(),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+
+    players_r = await session.execute(select(Player))
+    players = players_r.scalars().all()
+    name_map = {p.id: p.display_name for p in players}
+
+    lines = ["🏆 <b>Рекорды клуба</b>\n"]
+
+    # Больше всего матчей
+    match_count: dict[int, int] = {}
+    for m in all_matches:
+        for pid in (m.challenger_id, m.challenged_id):
+            match_count[pid] = match_count.get(pid, 0) + 1
+    if match_count:
+        most_id = max(match_count, key=match_count.get)
+        lines.append(
+            f"🏓 Больше всего матчей — <b>{h(name_map[most_id])}</b>: "
+            f"{pluralize_matches(match_count[most_id])}"
+        )
+
+    # Лучшая серия побед за всё время
+    player_matches_asc: dict[int, list] = {}
+    for m in all_matches:
+        for pid in (m.challenger_id, m.challenged_id):
+            player_matches_asc.setdefault(pid, []).append(m)
+
+    best_streak_n = 0
+    best_streak_pid = None
+    for pid, ms in player_matches_asc.items():
+        s = compute_alltime_streak(ms, pid)
+        if s > best_streak_n:
+            best_streak_n = s
+            best_streak_pid = pid
+
+    if best_streak_pid and best_streak_n >= 2:
+        lines.append(
+            f"🔥 Лучшая серия побед — <b>{h(name_map[best_streak_pid])}</b>: "
+            f"{best_streak_n} подряд"
+        )
+
+    # Самый длинный матч (больше всего партий)
+    with_sets = [m for m in all_matches if m.sets_data]
+    if with_sets:
+        longest = max(with_sets, key=lambda m: len(m.sets_data))
+        ch = name_map.get(longest.challenger_id, "?")
+        cd = name_map.get(longest.challenged_id, "?")
+        score_str = match_score_challenger_first(longest)
+        date_str = longest.completed_at.strftime("%d.%m.%y") if longest.completed_at else ""
+        lines.append(
+            f"🎯 Самый длинный матч — <b>{h(ch)}</b> vs <b>{h(cd)}</b>: "
+            f"{len(longest.sets_data)} партий  <i>{score_str}  {date_str}</i>"
+        )
+
+    # Крупнейший апсет (наибольшая дельта рейтинга)
+    upsets = [m for m in all_matches if m.rating_change is not None and m.winner_id is not None]
+    if upsets:
+        biggest = max(upsets, key=lambda m: m.rating_change)
+        if biggest.rating_change >= 15:
+            w_name = name_map.get(biggest.winner_id, "?")
+            l_id = biggest.challenged_id if biggest.winner_id == biggest.challenger_id else biggest.challenger_id
+            l_name = name_map.get(l_id, "?")
+            score_str = match_score_challenger_first(biggest)
+            lines.append(
+                f"💥 Крупнейший апсет — <b>{h(w_name)}</b> победил <b>{h(l_name)}</b>: "
+                f"+{biggest.rating_change} pts  <i>{score_str}</i>"
+            )
+
+    # Самый эпичный матч (максимальный drama score)
+    if with_sets:
+        best_drama = max(with_sets, key=match_drama_score)
+        if match_drama_score(best_drama) >= 4.0:
+            ch = name_map.get(best_drama.challenger_id, "?")
+            cd = name_map.get(best_drama.challenged_id, "?")
+            score_str = match_score_challenger_first(best_drama)
+            reason = match_drama_reason(best_drama)
+            date_str = best_drama.completed_at.strftime("%d.%m.%y") if best_drama.completed_at else ""
+            lines.append(
+                f"\n🌟 <b>Самый эпичный матч</b>\n"
+                f"<b>{h(ch)}</b> vs <b>{h(cd)}</b> — {score_str}  <i>{date_str}</i>\n"
+                f"<i>{reason}</i>"
+            )
 
     await callback.message.edit_text(
         "\n".join(lines),
