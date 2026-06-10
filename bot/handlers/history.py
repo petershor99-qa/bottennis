@@ -136,7 +136,11 @@ async def show_match_history(callback: CallbackQuery, session: AsyncSession):
         await callback.answer("Сначала напиши /start", show_alert=True)
         return
 
-    page = int(callback.data.split("_")[1])
+    try:
+        page = int(callback.data.split("_")[1])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
 
     r = await session.execute(
         select(Match)
@@ -182,8 +186,12 @@ async def show_match_history(callback: CallbackQuery, session: AsyncSession):
 async def show_player_match_history(callback: CallbackQuery, session: AsyncSession):
     parts = callback.data.split("_")
     # format: player_history_{player_id}_{page}
-    target_id = int(parts[2])
-    page = int(parts[3])
+    try:
+        target_id = int(parts[2])
+        page = int(parts[3])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
 
     tp_r = await session.execute(select(Player).where(Player.id == target_id))
     player = tp_r.scalar_one_or_none()
@@ -238,8 +246,12 @@ async def show_player_match_history(callback: CallbackQuery, session: AsyncSessi
 @router.callback_query(F.data.startswith("h2h_"))
 async def show_h2h(callback: CallbackQuery, session: AsyncSession):
     parts = callback.data.split("_")
-    target_id = int(parts[1])
-    page = int(parts[2]) if len(parts) > 2 else 0
+    try:
+        target_id = int(parts[1])
+        page = int(parts[2]) if len(parts) > 2 else 0
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
 
     viewer = await get_player(session, callback.from_user.id)
     if not viewer:

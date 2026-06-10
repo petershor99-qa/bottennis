@@ -286,7 +286,11 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
 
 @router.callback_query(F.data.startswith("player_profile_"))
 async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
-    target_id = int(callback.data.split("_")[2])
+    try:
+        target_id = int(callback.data.split("_")[2])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
 
     tp_r = await session.execute(select(Player).where(Player.id == target_id))
     player = tp_r.scalar_one_or_none()
@@ -392,7 +396,11 @@ async def show_my_achievements(callback: CallbackQuery, session: AsyncSession):
 
 @router.callback_query(F.data.startswith("player_achievements_"))
 async def show_player_achievements(callback: CallbackQuery, session: AsyncSession):
-    target_id = int(callback.data.removeprefix("player_achievements_"))
+    try:
+        target_id = int(callback.data.removeprefix("player_achievements_"))
+    except ValueError:
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
     tp_r = await session.execute(select(Player).where(Player.id == target_id))
     player = tp_r.scalar_one_or_none()
     if not player:

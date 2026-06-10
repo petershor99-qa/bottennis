@@ -5,7 +5,7 @@
 настоящие FSM (MemoryStorage) и in-memory SQLite — чтобы проверять
 реальный путь пользователя: вызов → ввод счёта → отмена.
 """
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -18,9 +18,10 @@ from sqlalchemy.orm import sessionmaker
 
 from bot.db.models import Base, Match, MatchStatus, Player
 from bot.handlers.challenge import do_cancel_match, send_challenge
-from bot.handlers.match_result import handle_direct_score, process_set_score
+from bot.handlers.match_result import confirm_result, handle_direct_score, process_set_score
 from bot.services.achievements import get_achievements
 from bot.states.states import MatchResultStates
+from bot.utils import MSK_OFFSET, msk_day_start
 
 # ── Фикстуры и хелперы ──────────────────────────────────────────────────────────
 
@@ -227,3 +228,83 @@ async def test_cancel_match_declines_and_notifies(db):
     # «Дух Анкориджа» — обоим участникам
     assert "anchorage_spirit" in get_achievements(p1)
     assert "anchorage_spirit" in get_achievements(p2)
+
+
+async def test_cancel_completed_match_is_blocked(db):
+    """Завершённый матч нельзя отменить — рейтинг уже начислен."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m = Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=p1.id,
+        sets_data=[{"w": 11, "l": 7}], rating_change=10.0,
+        completed_at=datetime(2026, 6, 1, 12, 0, 0),
+    )
+    db.add(m)
+    await db.commit()
+
+    cb, bot = _callback(1, f"cancel_yes_{m.id}"), AsyncMock()
+    await do_cancel_match(cb, db, bot)
+
+    assert m.status == MatchStatus.completed   # статус не затёрт
+    bot.send_message.assert_not_called()
+
+
+# ── confirm_result: пороги новичок/ветеран не сдвинуты текущим матчем ──────────
+
+async def _confirming_state(match_id: int, reporter_id: int, sets: list[dict]) -> FSMContext:
+    st = _state(1)
+    await st.set_state(MatchResultStates.confirming)
+    await st.update_data(
+        match_id=match_id, reporter_player_id=reporter_id,
+        sets_data=sets, is_draw=False,
+    )
+    return st
+
+
+async def test_confirm_result_current_match_excluded_from_counts(db):
+    """РЕГРЕССИЯ v2.55.0: CAS-guard переводит матч в completed ДО подсчётов,
+    из-за чего текущий матч попадал в кол-во завершённых:
+      - проигравший с 14 прошлыми матчами считался ветераном (пол 900 вместо 1000)
+      - первая встреча соперников получала repeat-штраф ×0.95 вместо ×1.0
+    """
+    p1 = _player(1, "Winner", rating=1000.0)
+    p2 = _player(2, "Loser", rating=1001.0)
+    p3 = _player(3, "Filler")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    # У проигравшего ровно 14 завершённых матчей → он ещё новичок (пол 1000)
+    for i in range(14):
+        db.add(Match(
+            challenger_id=p2.id, challenged_id=p3.id,
+            status=MatchStatus.completed, winner_id=p3.id,
+            sets_data=[{"w": 11, "l": 5}], rating_change=5.0,
+            completed_at=datetime(2026, 5, 1 + i, 12, 0, 0),
+        ))
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 0}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    # Дельта: base≈16.0 × mult 1.4 × short 0.75 = 16.8 → ×1.2 новичок ×1.0 repeat = 20.2
+    # (с багом repeat был бы ×0.95 → 19.2)
+    assert p1.rating == 1020.2
+    # Пол новичка 1000 (с багом — ветеранский 900 → рейтинг упал бы до 980.8)
+    assert p2.rating == 1000.0
+    assert m.status == MatchStatus.completed
+    assert m.winner_id == p1.id
+
+
+# ── Граница дня по МСК ──────────────────────────────────────────────────────────
+
+def test_msk_day_start_is_msk_midnight():
+    """msk_day_start() — полночь по МСК, выраженная в naive-UTC."""
+    start = msk_day_start()
+    msk = start + MSK_OFFSET
+    assert (msk.hour, msk.minute, msk.second) == (0, 0, 0)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    assert start <= now < start + timedelta(days=1)

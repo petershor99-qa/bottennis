@@ -1,12 +1,25 @@
 import json
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from html import escape as h
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Match, Player
+
+MSK_OFFSET = timedelta(hours=3)
+
+
+def msk_day_start() -> datetime:
+    """Начало текущего дня по МСК в naive-UTC (как хранятся даты в БД).
+
+    Единая граница «сегодня» для экрана Сегодня, итогов дня и пасхалок —
+    иначе день считался то по UTC (с 03:00 МСК), то по МСК.
+    """
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    msk_midnight = (now + MSK_OFFSET).replace(hour=0, minute=0, second=0, microsecond=0)
+    return msk_midnight - MSK_OFFSET
 
 
 def _match_line(m: Match, player_id: int) -> str:

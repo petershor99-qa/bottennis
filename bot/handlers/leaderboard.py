@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import back_to_leaderboard_kb, back_to_menu_kb, leaderboard_kb
-from bot.utils import get_player, pluralize_matches
+from bot.utils import get_player, msk_day_start, pluralize_matches
 
 router = Router()
 
@@ -136,9 +136,7 @@ async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
 
 @router.callback_query(F.data == "menu_today")
 async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
-    today_start = datetime.now(timezone.utc).replace(tzinfo=None).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    today_start = msk_day_start()   # день по МСК — как в итогах дня
 
     matches_r = await session.execute(
         select(Match)

@@ -3,7 +3,7 @@ from html import escape as h
 
 from aiogram import Bot, F, Router
 from aiogram.types import CallbackQuery
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Match, MatchStatus, Player
@@ -129,7 +129,11 @@ async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSess
     F.data.startswith("challenge_") | F.data.startswith("rematch_")
 )
 async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bot):
-    opponent_db_id = int(callback.data.split("_")[-1])
+    try:
+        opponent_db_id = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
 
     challenger = await get_player(session, callback.from_user.id)
     if not challenger:
@@ -303,7 +307,16 @@ async def do_cancel_match(callback: CallbackQuery, session: AsyncSession, bot: B
     r2 = await session.execute(select(Player).where(Player.id == opponent_id))
     opponent = r2.scalar_one()
 
-    match.status = MatchStatus.declined
+    # Атомарный guard (CAS) — как при внесении результата: если соперник успел
+    # завершить матч между проверкой выше и этой строкой, отмена не затрёт completed.
+    guard = await session.execute(
+        update(Match)
+        .where(Match.id == match_id, Match.status == MatchStatus.accepted)
+        .values(status=MatchStatus.declined)
+    )
+    if guard.rowcount == 0:
+        await callback.answer("Матч уже завершён или не найден.", show_alert=True)
+        return
     await session.commit()
 
     await callback.message.edit_text(

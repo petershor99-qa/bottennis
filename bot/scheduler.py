@@ -1,27 +1,29 @@
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from html import escape as h
 
 from aiogram import Bot
+from aiogram.types import FSInputFile
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import selectinload
 
-from bot.db.database import async_session
+from bot.db.database import DATABASE_URL, async_session
 from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import active_match_kb
 from bot.utils import (
+    MSK_OFFSET,
     _match_line,
     match_drama_reason,
     match_rating_delta,
     match_score_challenger_first,
+    msk_day_start,
     pick_match_of_day,
     pluralize_matches,
 )
-
-MSK_OFFSET = timedelta(hours=3)
 
 logger = logging.getLogger(__name__)
 
@@ -260,10 +262,8 @@ async def send_weekly_digest(bot: Bot) -> None:
 async def send_daily_summary(bot: Bot) -> None:
     """Каждый день в 21:30 МСК отправляет игрокам сводку за день + «матч дня»."""
     async with async_session() as session:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        msk_now = now + MSK_OFFSET
-        msk_midnight = msk_now.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_start = msk_midnight - MSK_OFFSET   # граница дня по МСК в UTC-naive
+        msk_now = datetime.now(timezone.utc).replace(tzinfo=None) + MSK_OFFSET
+        day_start = msk_day_start()   # граница дня по МСК в UTC-naive
 
         r = await session.execute(
             select(Match)
@@ -350,6 +350,34 @@ async def send_daily_summary(bot: Bot) -> None:
     logger.info("Итоги дня отправлены")
 
 
+# ── Еженедельный offsite-бэкап БД админу в личку ─────────────────────────────
+
+async def send_db_backup(bot: Bot) -> None:
+    """Раз в неделю шлёт файл БД админу в Telegram.
+
+    Offsite-страховка: серверные бэкапы лежат на том же VPS, что и база, —
+    при потере сервера пропадает всё. Файл маленький (десятки КБ).
+    ADMIN_ID читаем лениво — на момент импорта .env может быть ещё не загружен.
+    """
+    admin_id = int(os.getenv("ADMIN_ID", "0"))
+    if not admin_id:
+        return
+    db_path = DATABASE_URL.split("///")[-1]
+    if not os.path.exists(db_path):
+        logger.warning("Бэкап БД: файл %s не найден", db_path)
+        return
+    date_str = (datetime.now(timezone.utc) + MSK_OFFSET).strftime("%Y-%m-%d")
+    try:
+        await bot.send_document(
+            admin_id,
+            FSInputFile(db_path, filename=f"bottennis_{date_str}.db"),
+            caption=f"💾 Еженедельный бэкап базы — {date_str}",
+        )
+        logger.info("Бэкап БД отправлен админу")
+    except Exception:
+        logger.exception("Не удалось отправить бэкап БД админу")
+
+
 # ── Инициализация планировщика ────────────────────────────────────────────────
 
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
@@ -377,6 +405,14 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         CronTrigger(hour=18, minute=30),
         args=[bot],
         id="daily_summary",
+    )
+
+    # Offsite-бэкап БД админу — каждый понедельник в 9:30 МСК (06:30 UTC)
+    scheduler.add_job(
+        send_db_backup,
+        CronTrigger(day_of_week="mon", hour=6, minute=30),
+        args=[bot],
+        id="db_backup",
     )
 
     return scheduler

@@ -20,7 +20,7 @@ from bot.services.achievements import (
 from bot.services.rating import calculate_draw_rating_change, calculate_rating_change
 from bot.services.validation import validate_set_score
 from bot.states.states import MatchResultStates
-from bot.utils import get_player
+from bot.utils import get_player, msk_day_start
 
 router = Router()
 
@@ -287,7 +287,7 @@ async def _send_easter_eggs(
             except Exception:
                 pass
 
-    today_start = datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = msk_day_start()
     for p in (winner, loser):
         today_r = await session.execute(
             select(func.count()).select_from(Match).where(
@@ -712,17 +712,21 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             final_sets = [{"w": s["l"], "l": s["w"]} for s in final_sets]
             sets_str = ", ".join(f"{s['w']}:{s['l']}" for s in final_sets)
 
-        # Полы для ничьей — определяем по кол-ву матчей каждого игрока
+        # Полы для ничьей — определяем по кол-ву матчей каждого игрока.
+        # Match.id != match_id: CAS-guard выше уже перевёл текущий матч в completed,
+        # без исключения он попал бы в подсчёт и сдвинул порог новичок/ветеран на 1.
         ch_count_r = await session.execute(
             select(func.count()).select_from(Match).where(
                 or_(Match.challenger_id == challenger.id, Match.challenged_id == challenger.id),
                 Match.status == MatchStatus.completed,
+                Match.id != match_id,
             )
         )
         cd_count_r = await session.execute(
             select(func.count()).select_from(Match).where(
                 or_(Match.challenger_id == challenged.id, Match.challenged_id == challenged.id),
                 Match.status == MatchStatus.completed,
+                Match.id != match_id,
             )
         )
         challenger_floor = NEWCOMER_FLOOR if ch_count_r.scalar() < NEWCOMER_THRESHOLD else VETERAN_FLOOR
@@ -819,7 +823,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                     pass
 
         # Пасхалка — 7 матчей за день (ничья)
-        today_start = datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = msk_day_start()
         for p in (challenger, challenged):
             today_count_r = await session.execute(
                 select(func.count()).select_from(Match).where(
@@ -861,12 +865,15 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
         old_winner_rating = winner.rating
         old_loser_rating = loser.rating
 
-        # ── Все матчи победителя до коммита (для стрика и кол-ва матчей) ──────
+        # ── Все матчи победителя ДО текущего (для стрика и кол-ва матчей) ──────
+        # Match.id != match_id: текущий матч уже completed после CAS-guard —
+        # иначе порог бонуса новичка и repeat-стрик завышались бы на 1.
         winner_prev_r = await session.execute(
             select(Match)
             .where(
                 or_(Match.challenger_id == winner.id, Match.challenged_id == winner.id),
                 Match.status == MatchStatus.completed,
+                Match.id != match_id,
             )
             .order_by(desc(Match.completed_at))
         )
@@ -883,11 +890,12 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             else:
                 break
 
-        # Кол-во матчей проигравшего (для определения пола)
+        # Кол-во матчей проигравшего до текущего (для определения пола)
         loser_count_r = await session.execute(
             select(func.count()).select_from(Match).where(
                 or_(Match.challenger_id == loser.id, Match.challenged_id == loser.id),
                 Match.status == MatchStatus.completed,
+                Match.id != match_id,
             )
         )
         loser_match_count = loser_count_r.scalar()
