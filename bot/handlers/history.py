@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from html import escape as h
 
 from aiogram import Bot, F, Router
@@ -21,6 +22,7 @@ from bot.utils import (
     build_rating_series,
     compute_h2h,
     get_player,
+    get_rec_signal,
     match_rating_delta,
     rating_chart_url,
 )
@@ -136,7 +138,11 @@ async def show_match_history(callback: CallbackQuery, session: AsyncSession):
         await callback.answer("Сначала напиши /start", show_alert=True)
         return
 
-    page = int(callback.data.split("_")[1])
+    try:
+        page = int(callback.data.split("_")[1])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
 
     r = await session.execute(
         select(Match)
@@ -182,8 +188,12 @@ async def show_match_history(callback: CallbackQuery, session: AsyncSession):
 async def show_player_match_history(callback: CallbackQuery, session: AsyncSession):
     parts = callback.data.split("_")
     # format: player_history_{player_id}_{page}
-    target_id = int(parts[2])
-    page = int(parts[3])
+    try:
+        target_id = int(parts[2])
+        page = int(parts[3])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
 
     tp_r = await session.execute(select(Player).where(Player.id == target_id))
     player = tp_r.scalar_one_or_none()
@@ -238,8 +248,12 @@ async def show_player_match_history(callback: CallbackQuery, session: AsyncSessi
 @router.callback_query(F.data.startswith("h2h_"))
 async def show_h2h(callback: CallbackQuery, session: AsyncSession):
     parts = callback.data.split("_")
-    target_id = int(parts[1])
-    page = int(parts[2]) if len(parts) > 2 else 0
+    try:
+        target_id = int(parts[1])
+        page = int(parts[2]) if len(parts) > 2 else 0
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
 
     viewer = await get_player(session, callback.from_user.id)
     if not viewer:
@@ -318,7 +332,7 @@ async def show_h2h(callback: CallbackQuery, session: AsyncSession):
     await callback.answer()
 
 
-# ── Активные матчи ────────────────────────────────────────────────────────────
+# ── Матчи клуба + рекомендации ────────────────────────────────────────────────
 
 @router.callback_query(F.data == "menu_matches")
 async def show_my_matches(callback: CallbackQuery, session: AsyncSession):
@@ -327,40 +341,95 @@ async def show_my_matches(callback: CallbackQuery, session: AsyncSession):
         await callback.answer("Сначала напиши /start", show_alert=True)
         return
 
-    accepted_r = await session.execute(
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    # Все активные матчи клуба
+    all_active_r = await session.execute(
+        select(Match)
+        .where(Match.status == MatchStatus.accepted)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+    )
+    all_active = all_active_r.scalars().all()
+
+    my_matches = [m for m in all_active if player.id in (m.challenger_id, m.challenged_id)]
+    busy_ids: set[int] = {pid for m in all_active for pid in (m.challenger_id, m.challenged_id)}
+
+    # Все соперники
+    others_r = await session.execute(
+        select(Player).where(Player.id != player.id).order_by(desc(Player.rating))
+    )
+    opponents = others_r.scalars().all()
+
+    # Завершённые матчи viewer'а для H2H-сигналов
+    h2h_r = await session.execute(
         select(Match)
         .where(
             or_(Match.challenger_id == player.id, Match.challenged_id == player.id),
-            Match.status == MatchStatus.accepted,
+            Match.status == MatchStatus.completed,
         )
-        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+        .order_by(desc(Match.completed_at))
     )
-    accepted = accepted_r.scalars().all()
+    my_completed = h2h_r.scalars().all()
+    h2h_by_opp: dict[int, list] = {}
+    for m in my_completed:
+        opp_id = m.challenged_id if m.challenger_id == player.id else m.challenger_id
+        h2h_by_opp.setdefault(opp_id, []).append(m)
 
-    if not accepted:
-        await callback.message.edit_text(
-            "У тебя нет активных матчей.\nВызови кого-нибудь! 🏓",
-            reply_markup=back_to_menu_kb(),
-        )
-        await callback.answer()
-        return
+    # ── Текст ─────────────────────────────────────────────────────────────────
+    lines: list[str] = ["🏓 <b>Активные матчи клуба</b>\n"]
+
+    if all_active:
+        for m in all_active:
+            since = m.accepted_at or m.created_at
+            if since:
+                total_h = int((now - since).total_seconds() / 3600)
+                if total_h == 0:
+                    time_str = "< 1ч"
+                elif total_h < 24:
+                    time_str = f"{total_h}ч"
+                else:
+                    time_str = f"{total_h // 24}д {total_h % 24}ч"
+                warn = "⚠ " if total_h >= 24 else ""
+            else:
+                time_str, warn = "?", ""
+            lines.append(
+                f"{warn}{h(m.challenger.display_name)} vs {h(m.challenged.display_name)} — {time_str}"
+            )
+    else:
+        lines.append("Активных матчей нет")
+
+    lines.append("\n🎯 <b>С кем сыграть?</b>\n")
 
     builder = InlineKeyboardBuilder()
-    lines = ["🎮 <b>Активные матчи:</b>\n"]
 
-    for m in accepted:
-        opponent = m.challenged if m.challenger_id == player.id else m.challenger
-        lines.append(f"🏓 vs {h(opponent.display_name)}")
+    for m in my_matches:
+        opp = m.challenged if m.challenger_id == player.id else m.challenger
         builder.row(InlineKeyboardButton(
-            text=f"📋 Внести результат — vs {opponent.display_name}",
+            text=f"📋 Внести результат — vs {opp.display_name}",
             callback_data=f"report_{m.id}",
         ))
         builder.row(InlineKeyboardButton(
-            text=f"❌ Отменить — vs {opponent.display_name}",
+            text=f"❌ Отменить — vs {opp.display_name}",
             callback_data=f"cancel_match_{m.id}",
         ))
 
-    builder.row(InlineKeyboardButton(text="« Назад", callback_data="back_to_menu"))
+    for opp in opponents:
+        h2h = h2h_by_opp.get(opp.id, [])
+        signal = get_rec_signal(player.rating, player.id, opp.rating, opp.id, h2h, now)
+        diff = opp.rating - player.rating
+        diff_str = f"+{int(diff)}" if diff >= 0 else str(int(diff))
+
+        if opp.id in busy_ids:
+            lines.append(f"{h(opp.display_name)}  — сейчас играет 🔒  ({diff_str} pts)")
+        else:
+            signal_part = f"  — {signal}" if signal else ""
+            lines.append(f"{h(opp.display_name)}{signal_part}  ({diff_str} pts)")
+            builder.row(InlineKeyboardButton(
+                text=f"Вызвать {opp.display_name}",
+                callback_data=f"challenge_{opp.id}",
+            ))
+
+    builder.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
 
     await callback.message.edit_text(
         "\n".join(lines),

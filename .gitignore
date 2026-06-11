@@ -8,3 +8,4 @@ venv/
 
 # личные заметки (не для публичного репо)
 STUDY_NOTES.md
+pip_packages/

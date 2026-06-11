@@ -1,27 +1,29 @@
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from html import escape as h
 
 from aiogram import Bot
+from aiogram.types import FSInputFile
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import selectinload
 
-from bot.db.database import async_session
+from bot.db.database import DATABASE_URL, async_session
 from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import active_match_kb
 from bot.utils import (
+    MSK_OFFSET,
     _match_line,
     match_drama_reason,
     match_rating_delta,
     match_score_challenger_first,
+    msk_day_start,
     pick_match_of_day,
     pluralize_matches,
 )
-
-MSK_OFFSET = timedelta(hours=3)
 
 logger = logging.getLogger(__name__)
 
@@ -260,10 +262,8 @@ async def send_weekly_digest(bot: Bot) -> None:
 async def send_daily_summary(bot: Bot) -> None:
     """Каждый день в 21:30 МСК отправляет игрокам сводку за день + «матч дня»."""
     async with async_session() as session:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        msk_now = now + MSK_OFFSET
-        msk_midnight = msk_now.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_start = msk_midnight - MSK_OFFSET   # граница дня по МСК в UTC-naive
+        msk_now = datetime.now(timezone.utc).replace(tzinfo=None) + MSK_OFFSET
+        day_start = msk_day_start()   # граница дня по МСК в UTC-naive
 
         r = await session.execute(
             select(Match)
@@ -350,6 +350,163 @@ async def send_daily_summary(bot: Bot) -> None:
     logger.info("Итоги дня отправлены")
 
 
+# ── Еженедельный offsite-бэкап БД админу в личку ─────────────────────────────
+
+async def send_db_backup(bot: Bot) -> None:
+    """Раз в неделю шлёт файл БД админу в Telegram.
+
+    Offsite-страховка: серверные бэкапы лежат на том же VPS, что и база, —
+    при потере сервера пропадает всё. Файл маленький (десятки КБ).
+    ADMIN_ID читаем лениво — на момент импорта .env может быть ещё не загружен.
+    """
+    admin_id = int(os.getenv("ADMIN_ID", "0"))
+    if not admin_id:
+        return
+    db_path = DATABASE_URL.split("///")[-1]
+    if not os.path.exists(db_path):
+        logger.warning("Бэкап БД: файл %s не найден", db_path)
+        return
+    date_str = (datetime.now(timezone.utc) + MSK_OFFSET).strftime("%Y-%m-%d")
+    try:
+        await bot.send_document(
+            admin_id,
+            FSInputFile(db_path, filename=f"bottennis_{date_str}.db"),
+            caption=f"💾 Еженедельный бэкап базы — {date_str}",
+        )
+        logger.info("Бэкап БД отправлен админу")
+    except Exception:
+        logger.exception("Не удалось отправить бэкап БД админу")
+
+
+MONTH_NAMES_GEN = {
+    1: "января", 2: "февраля", 3: "марта", 4: "апреля",
+    5: "мая", 6: "июня", 7: "июля", 8: "августа",
+    9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
+}
+
+
+# ── Итоги месяца (1-е число, 10:00 МСК) ──────────────────────────────────────
+
+async def send_monthly_summary(bot: Bot) -> None:
+    """1-го числа в 10:00 МСК отправляет всем игрокам итоги прошлого месяца."""
+    async with async_session() as session:
+        msk_now = datetime.now(timezone.utc).replace(tzinfo=None) + MSK_OFFSET
+        # Граница: начало текущего месяца по МСК = конец прошлого
+        month_end_msk = msk_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        prev_last_day = month_end_msk - timedelta(days=1)
+        month_start_msk = prev_last_day.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        month_start_utc = month_start_msk - MSK_OFFSET
+        month_end_utc = month_end_msk - MSK_OFFSET
+
+        month_label = f"{MONTH_NAMES_GEN[month_start_msk.month]} {month_start_msk.year}"
+
+        matches_r = await session.execute(
+            select(Match)
+            .where(
+                Match.status == MatchStatus.completed,
+                Match.completed_at >= month_start_utc,
+                Match.completed_at < month_end_utc,
+            )
+            .options(selectinload(Match.challenger), selectinload(Match.challenged))
+        )
+        matches = matches_r.scalars().all()
+
+        if not matches:
+            logger.info("Итоги месяца %s: матчей не было, пропускаем", month_label)
+            return
+
+        players_r = await session.execute(select(Player))
+        players = players_r.scalars().all()
+        name_map = {p.id: p.display_name for p in players}
+
+        wins: dict[int, int] = {}
+        losses: dict[int, int] = {}
+        draws: dict[int, int] = {}
+        match_count: dict[int, int] = {}
+        delta_sum: dict[int, float] = {}
+
+        for m in matches:
+            for pid in (m.challenger_id, m.challenged_id):
+                match_count[pid] = match_count.get(pid, 0) + 1
+                delta_sum[pid] = delta_sum.get(pid, 0.0) + match_rating_delta(m, pid)
+            if m.winner_id is None:
+                draws[m.challenger_id] = draws.get(m.challenger_id, 0) + 1
+                draws[m.challenged_id] = draws.get(m.challenged_id, 0) + 1
+            else:
+                wins[m.winner_id] = wins.get(m.winner_id, 0) + 1
+                lid = m.challenged_id if m.winner_id == m.challenger_id else m.challenger_id
+                losses[lid] = losses.get(lid, 0) + 1
+
+        total_sets = sum(len(m.sets_data) if m.sets_data else 0 for m in matches)
+
+        lines = [
+            f"📆 <b>Итоги месяца — {month_label}</b>\n",
+            f"⚡ Сыграно: <b>{len(matches)}</b> матчей, <b>{total_sets}</b> партий\n",
+            "🏆 <b>Топ месяца:</b>",
+        ]
+
+        sorted_ids = sorted(
+            match_count,
+            key=lambda pid: (wins.get(pid, 0), match_count.get(pid, 0)),
+            reverse=True,
+        )
+        medals = ["🥇", "🥈", "🥉"]
+        for i, pid in enumerate(sorted_ids):
+            prefix = medals[i] if i < 3 else f"{i + 1}."
+            w = wins.get(pid, 0)
+            lo = losses.get(pid, 0)
+            d = draws.get(pid, 0)
+            total = match_count[pid]
+            wr = int(w / total * 100) if total else 0
+            draws_str = f"–{d}🤝" if d else ""
+            lines.append(
+                f"{prefix} <b>{h(name_map.get(pid, '?'))}</b> — "
+                f"{w}–{lo}{draws_str}  <i>({wr}%)</i>"
+            )
+
+        if delta_sum:
+            best_id = max(delta_sum, key=delta_sum.get)
+            if delta_sum[best_id] > 0:
+                lines.append(
+                    f"\n📈 Лучший рост — <b>{h(name_map.get(best_id, '?'))}</b>: "
+                    f"+{round(delta_sum[best_id], 1)} pts"
+                )
+            worst_id = min(delta_sum, key=delta_sum.get)
+            if delta_sum[worst_id] < 0:
+                lines.append(
+                    f"📉 Тяжелее всех — <b>{h(name_map.get(worst_id, '?'))}</b>: "
+                    f"{round(delta_sum[worst_id], 1)} pts"
+                )
+
+        most_active_id = max(match_count, key=match_count.get)
+        lines.append(
+            f"🏓 Главный теннисист — <b>{h(name_map.get(most_active_id, '?'))}</b>: "
+            f"{pluralize_matches(match_count[most_active_id])}"
+        )
+
+        mod = pick_match_of_day(matches)
+        if mod:
+            ch = name_map.get(mod.challenger_id, "?")
+            cd = name_map.get(mod.challenged_id, "?")
+            score_str = match_score_challenger_first(mod)
+            reason = match_drama_reason(mod)
+            lines.append(
+                f"\n🌟 <b>Матч месяца</b>\n"
+                f"<b>{h(ch)}</b> vs <b>{h(cd)}</b> — {score_str}\n"
+                f"<i>{reason}</i>"
+            )
+
+        text = "\n".join(lines)
+        for p in players:
+            try:
+                await bot.send_message(p.telegram_id, text, parse_mode="HTML")
+            except Exception:
+                pass
+
+    logger.info("Итоги месяца за %s отправлены", month_label)
+
+
 # ── Инициализация планировщика ────────────────────────────────────────────────
 
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
@@ -377,6 +534,22 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         CronTrigger(hour=18, minute=30),
         args=[bot],
         id="daily_summary",
+    )
+
+    # Offsite-бэкап БД админу — каждый понедельник в 9:30 МСК (06:30 UTC)
+    scheduler.add_job(
+        send_db_backup,
+        CronTrigger(day_of_week="mon", hour=6, minute=30),
+        args=[bot],
+        id="db_backup",
+    )
+
+    # Итоги месяца — 1-го числа в 10:00 МСК (07:00 UTC)
+    scheduler.add_job(
+        send_monthly_summary,
+        CronTrigger(day=1, hour=7, minute=0),
+        args=[bot],
+        id="monthly_summary",
     )
 
     return scheduler

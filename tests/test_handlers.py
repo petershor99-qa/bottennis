@@ -5,7 +5,7 @@
 настоящие FSM (MemoryStorage) и in-memory SQLite — чтобы проверять
 реальный путь пользователя: вызов → ввод счёта → отмена.
 """
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -18,9 +18,11 @@ from sqlalchemy.orm import sessionmaker
 
 from bot.db.models import Base, Match, MatchStatus, Player
 from bot.handlers.challenge import do_cancel_match, send_challenge
-from bot.handlers.match_result import handle_direct_score, process_set_score
+from bot.handlers.match_result import confirm_result, handle_direct_score, process_set_score
+from bot.handlers.profile import _nearest_achievement_progress
 from bot.services.achievements import get_achievements
 from bot.states.states import MatchResultStates
+from bot.utils import MSK_OFFSET, compute_alltime_streak, get_rec_signal, msk_day_start
 
 # ── Фикстуры и хелперы ──────────────────────────────────────────────────────────
 
@@ -227,3 +229,229 @@ async def test_cancel_match_declines_and_notifies(db):
     # «Дух Анкориджа» — обоим участникам
     assert "anchorage_spirit" in get_achievements(p1)
     assert "anchorage_spirit" in get_achievements(p2)
+
+
+async def test_cancel_completed_match_is_blocked(db):
+    """Завершённый матч нельзя отменить — рейтинг уже начислен."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m = Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=p1.id,
+        sets_data=[{"w": 11, "l": 7}], rating_change=10.0,
+        completed_at=datetime(2026, 6, 1, 12, 0, 0),
+    )
+    db.add(m)
+    await db.commit()
+
+    cb, bot = _callback(1, f"cancel_yes_{m.id}"), AsyncMock()
+    await do_cancel_match(cb, db, bot)
+
+    assert m.status == MatchStatus.completed   # статус не затёрт
+    bot.send_message.assert_not_called()
+
+
+# ── confirm_result: пороги новичок/ветеран не сдвинуты текущим матчем ──────────
+
+async def _confirming_state(match_id: int, reporter_id: int, sets: list[dict]) -> FSMContext:
+    st = _state(1)
+    await st.set_state(MatchResultStates.confirming)
+    await st.update_data(
+        match_id=match_id, reporter_player_id=reporter_id,
+        sets_data=sets, is_draw=False,
+    )
+    return st
+
+
+async def test_confirm_result_current_match_excluded_from_counts(db):
+    """РЕГРЕССИЯ v2.55.0: CAS-guard переводит матч в completed ДО подсчётов,
+    из-за чего текущий матч попадал в кол-во завершённых:
+      - проигравший с 14 прошлыми матчами считался ветераном (пол 900 вместо 1000)
+      - первая встреча соперников получала repeat-штраф ×0.95 вместо ×1.0
+    """
+    p1 = _player(1, "Winner", rating=1000.0)
+    p2 = _player(2, "Loser", rating=1001.0)
+    p3 = _player(3, "Filler")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    # У проигравшего ровно 14 завершённых матчей → он ещё новичок (пол 1000)
+    for i in range(14):
+        db.add(Match(
+            challenger_id=p2.id, challenged_id=p3.id,
+            status=MatchStatus.completed, winner_id=p3.id,
+            sets_data=[{"w": 11, "l": 5}], rating_change=5.0,
+            completed_at=datetime(2026, 5, 1 + i, 12, 0, 0),
+        ))
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 0}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    # Дельта: base≈16.0 × mult 1.4 × short 0.75 = 16.8 → ×1.2 новичок ×1.0 repeat = 20.2
+    # (с багом repeat был бы ×0.95 → 19.2)
+    assert p1.rating == 1020.2
+    # Пол новичка 1000 (с багом — ветеранский 900 → рейтинг упал бы до 980.8)
+    assert p2.rating == 1000.0
+    assert m.status == MatchStatus.completed
+    assert m.winner_id == p1.id
+
+
+# ── Граница дня по МСК ──────────────────────────────────────────────────────────
+
+def test_msk_day_start_is_msk_midnight():
+    """msk_day_start() — полночь по МСК, выраженная в naive-UTC."""
+    start = msk_day_start()
+    msk = start + MSK_OFFSET
+    assert (msk.hour, msk.minute, msk.second) == (0, 0, 0)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    assert start <= now < start + timedelta(days=1)
+
+
+# ── get_rec_signal — рекомендация соперника ──────────────────────────────────────
+
+_NOW = datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _h2h(winner_id, days_ago):
+    """Мок матча для get_rec_signal: только winner_id + completed_at."""
+    return SimpleNamespace(winner_id=winner_id, completed_at=_NOW - timedelta(days=days_ago))
+_VID, _OID = 1, 2
+_V_RATING, _O_RATING = 1000.0, 1000.0
+
+
+def test_rec_signal_no_history():
+    assert get_rec_signal(_V_RATING, _VID, _O_RATING, _OID, [], _NOW) == "ещё не встречались"
+
+
+def test_rec_signal_loss_streak_2():
+    h2h = [_h2h(_OID, 0), _h2h(_OID, 1)]
+    assert get_rec_signal(_V_RATING, _VID, _O_RATING, _OID, h2h, _NOW) == "серия поражений — 2 подряд"
+
+
+def test_rec_signal_loss_streak_3():
+    h2h = [_h2h(_OID, 0), _h2h(_OID, 1), _h2h(_OID, 2)]
+    assert get_rec_signal(_V_RATING, _VID, _O_RATING, _OID, h2h, _NOW) == "серия поражений — 3 подряд"
+
+
+def test_rec_signal_single_loss():
+    """Последний матч проигран, но не серия (до этого была победа)."""
+    h2h = [_h2h(_OID, 0), _h2h(_VID, 1)]
+    assert get_rec_signal(_V_RATING, _VID, _O_RATING, _OID, h2h, _NOW) == "ты проиграл последний матч"
+
+
+def test_rec_signal_days_since():
+    """Последний матч выигран 5 дней назад — показываем паузу."""
+    h2h = [_h2h(_VID, 5)]
+    result = get_rec_signal(_V_RATING, _VID, _O_RATING, _OID, h2h, _NOW)
+    assert result == "не играли 5 дней"
+
+
+def test_rec_signal_stronger_opponent():
+    """Нет давней паузы, но соперник на 40 pts сильнее."""
+    h2h = [_h2h(_VID, 1)]
+    result = get_rec_signal(_V_RATING, _VID, _V_RATING + 40, _OID, h2h, _NOW)
+    assert result == "он сильнее на +40"
+
+
+def test_rec_signal_no_signal():
+    """Последний матч выигран вчера, соперник близок по рейтингу — нет сигнала."""
+    h2h = [_h2h(_VID, 1)]
+    assert get_rec_signal(_V_RATING, _VID, _V_RATING + 10, _OID, h2h, _NOW) == ""
+
+
+def test_rec_signal_draw_breaks_streak():
+    """Ничья прерывает серию поражений — одиночный флаг не показывается."""
+    h2h = [_h2h(None, 0), _h2h(_OID, 1)]  # последний — ничья, до этого проигрыш
+    result = get_rec_signal(_V_RATING, _VID, _V_RATING + 10, _OID, h2h, _NOW)
+    # ничья не проигрыш → не "ты проиграл", не серия; пауза 0 дней → нет сигнала
+    assert result == ""
+
+
+# ── compute_alltime_streak ────────────────────────────────────────────────────────
+
+def _match_result(winner_id):
+    return SimpleNamespace(winner_id=winner_id)
+
+
+def test_alltime_streak_basic():
+    """W W L W W W → лучшая серия 3."""
+    ms = [_match_result(_VID), _match_result(_VID), _match_result(_OID),
+          _match_result(_VID), _match_result(_VID), _match_result(_VID)]
+    assert compute_alltime_streak(ms, _VID) == 3
+
+
+def test_alltime_streak_all_wins():
+    ms = [_match_result(_VID)] * 5
+    assert compute_alltime_streak(ms, _VID) == 5
+
+
+def test_alltime_streak_no_wins():
+    ms = [_match_result(_OID)] * 3
+    assert compute_alltime_streak(ms, _VID) == 0
+
+
+# ── _nearest_achievement_progress ────────────────────────────────────────────────
+
+def _p_ach(achievements: list[str], rating: float = 1000.0):
+    """Минимальный мок Player для _nearest_achievement_progress."""
+    return SimpleNamespace(achievements=str(achievements).replace("'", '"'), rating=rating)
+
+
+def _stats(wins=0, draws=0, losses=0, streak=0, beaten=0):
+    return {
+        "wins": wins, "draws": draws, "losses": losses,
+        "streak": streak, "beaten_opponents_count": beaten,
+    }
+
+
+def test_ach_progress_no_matches():
+    """Нет матчей → None."""
+    p = _p_ach([])
+    assert _nearest_achievement_progress(p, _stats(), total_players=3) is None
+
+
+def test_ach_progress_streak_hat_trick():
+    """Серия 2 побед, hat_trick не заработан → показывает hat_trick 2/3."""
+    # rating_1200 уже «заработан» в earned, чтобы оно не перебивало hat_trick (ratio 2/3)
+    p = _p_ach(["rating_1200"])
+    result = _nearest_achievement_progress(p, _stats(wins=2, streak=2), total_players=3)
+    assert result is not None
+    assert "2/3" in result
+    assert "Хет-трик" in result
+
+
+def test_ach_progress_skips_earned():
+    """hat_trick уже заработан → показывает следующую по прогрессу."""
+    p = _p_ach(["press_start", "first_blood", "hat_trick", "rating_1200"])
+    result = _nearest_achievement_progress(p, _stats(wins=2, streak=2), total_players=3)
+    # hat_trick пропущен, im_on_fire (2/5) или fifty (2/50) — берётся лучший по ratio
+    assert result is not None
+    assert "Я горяч нахуй" in result  # im_on_fire: 2/5 = 0.4 > fifty: 2/50 = 0.04
+
+
+def test_ach_progress_all_earned_returns_none():
+    """Все счётные ачивки заработаны → None."""
+    all_ids = [
+        "hat_trick", "im_on_fire", "god_mode",
+        "fifty", "veteran", "legend",
+        "diplomat", "collector", "rating_1200",
+    ]
+    p = _p_ach(all_ids, rating=1300.0)
+    s = _stats(wins=200, draws=5, losses=10, streak=10, beaten=4)
+    result = _nearest_achievement_progress(p, s, total_players=5)
+    assert result is None
+
+
+def test_ach_progress_collector():
+    """beaten_opponents_count=2 из 3 → показывает collector 2/3."""
+    # rating_1200 уже «заработан», чтобы collector (2/3=0.67) выиграл
+    p = _p_ach(["rating_1200"])
+    s = _stats(wins=10, losses=5, beaten=2)
+    result = _nearest_achievement_progress(p, s, total_players=4)
+    assert result is not None
+    assert "2/3" in result
+    assert "Со всеми" in result
