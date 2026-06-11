@@ -228,13 +228,15 @@ def _nearest_achievement_progress(player, s: dict, total_players: int) -> str | 
     streak = s["streak"]
     candidates: list[tuple[float, str]] = []
 
-    def _add(ach_id: str, current: int, target: int, unit: str) -> None:
+    def _add(ach_id: str, current: int, target: int, unit: str, ratio: float | None = None) -> None:
         if ach_id in earned:
             return
         a = ACHIEVEMENTS_MAP.get(ach_id)
         if not a:
             return
-        candidates.append((current / target, f"{a.emoji} {a.name}: {current}/{target} {unit}"))
+        if ratio is None:
+            ratio = current / target
+        candidates.append((ratio, f"{a.emoji} {a.name}: {current}/{target} {unit}"))
 
     if streak > 0:
         _add("hat_trick", streak, 3, "побед подряд")
@@ -247,7 +249,12 @@ def _nearest_achievement_progress(player, s: dict, total_players: int) -> str | 
         _add("diplomat", s["draws"], 5, "ничьих")
     opp_count = max(total_players - 1, 1)
     _add("collector", s["beaten_opponents_count"], opp_count, "соперников")
-    _add("rating_1200", int(player.rating), 1200, "pts рейтинга")
+    # Прогресс рейтинга считаем от стартовой 1000, а не от нуля: иначе ratio
+    # 1000/1200 = 0.83 почти всегда побеждает и цель «Рейтинг 1200» вытесняет все остальные.
+    _add(
+        "rating_1200", int(player.rating), 1200, "pts рейтинга",
+        ratio=(player.rating - 1000.0) / 200.0,
+    )
 
     valid = [(r, t) for r, t in candidates if r < 1.0]
     if not valid:
