@@ -5,7 +5,6 @@
 /myid     — показать свой Telegram ID (для настройки ADMIN_ID)
 """
 import json
-import os
 from collections import defaultdict
 
 from aiogram import Router
@@ -15,10 +14,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Match, MatchStatus, Player
+from bot.utils import env_int
 
 router = Router()
 
-ADMIN_ID: int = int(os.getenv("ADMIN_ID", "0"))
+ADMIN_ID: int = env_int("ADMIN_ID")
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────

@@ -17,12 +17,14 @@ from bot.keyboards.inline import active_match_kb
 from bot.utils import (
     MSK_OFFSET,
     _match_line,
+    env_int,
     match_drama_reason,
     match_rating_delta,
     match_score_challenger_first,
     msk_day_start,
     pick_match_of_day,
     pluralize_matches,
+    pluralize_sets,
 )
 
 logger = logging.getLogger(__name__)
@@ -138,12 +140,12 @@ async def send_weekly_digest(bot: Bot) -> None:
                 diff = cur_count - prev_week_count
                 diff_str = f"+{diff}" if diff >= 0 else str(diff)
                 activity_line = (
-                    f"⚡ Сыграно за неделю: <b>{cur_count}</b> матчей, <b>{total_sets}</b> партий"
+                    f"⚡ Сыграно за неделю: <b>{pluralize_matches(cur_count)}</b>, <b>{pluralize_sets(total_sets)}</b>"
                     f"  <i>({diff_str} к прошлой)</i>"
                 )
             else:
                 activity_line = (
-                    f"⚡ Сыграно за неделю: <b>{cur_count}</b> матчей, <b>{total_sets}</b> партий"
+                    f"⚡ Сыграно за неделю: <b>{pluralize_matches(cur_count)}</b>, <b>{pluralize_sets(total_sets)}</b>"
                 )
 
             hero_lines = [
@@ -305,7 +307,7 @@ async def send_daily_summary(bot: Bot) -> None:
 
         lines = [
             f"📅 <b>Итоги дня — {date_str}</b>\n",
-            f"⚡ Сыграно: <b>{len(matches)}</b> матчей, <b>{total_sets}</b> партий\n",
+            f"⚡ Сыграно: <b>{pluralize_matches(len(matches))}</b>, <b>{pluralize_sets(total_sets)}</b>\n",
             "🏆 <b>Топ дня:</b>",
         ]
 
@@ -359,7 +361,7 @@ async def send_db_backup(bot: Bot) -> None:
     при потере сервера пропадает всё. Файл маленький (десятки КБ).
     ADMIN_ID читаем лениво — на момент импорта .env может быть ещё не загружен.
     """
-    admin_id = int(os.getenv("ADMIN_ID", "0"))
+    admin_id = env_int("ADMIN_ID")
     if not admin_id:
         return
     db_path = DATABASE_URL.split("///")[-1]
@@ -442,7 +444,7 @@ async def send_monthly_summary(bot: Bot) -> None:
 
         lines = [
             f"📆 <b>Итоги месяца — {month_label}</b>\n",
-            f"⚡ Сыграно: <b>{len(matches)}</b> матчей, <b>{total_sets}</b> партий\n",
+            f"⚡ Сыграно: <b>{pluralize_matches(len(matches))}</b>, <b>{pluralize_sets(total_sets)}</b>\n",
             "🏆 <b>Топ месяца:</b>",
         ]
 

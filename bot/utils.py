@@ -1,4 +1,5 @@
 import json
+import os
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from html import escape as h
@@ -9,6 +10,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.db.models import Match, Player
 
 MSK_OFFSET = timedelta(hours=3)
+
+
+def env_int(name: str, default: int = 0) -> int:
+    """Безопасно читает целочисленную переменную окружения.
+
+    int(os.getenv(name, "0")) падает с ValueError, если переменная задана,
+    но пустая (ADMIN_ID=) или содержит мусор — getenv возвращает "" вместо
+    дефолта. Здесь любое некорректное значение тихо превращается в default.
+    """
+    raw = os.getenv(name, "")
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return default
 
 
 def msk_day_start() -> datetime:
@@ -68,6 +83,18 @@ def pluralize_matches(n: int) -> str:
     if 2 <= r <= 4:
         return f"{n} матча"
     return f"{n} матчей"
+
+
+def pluralize_sets(n: int) -> str:
+    """1 партия / 2 партии / 5 партий"""
+    if 11 <= n % 100 <= 14:
+        return f"{n} партий"
+    r = n % 10
+    if r == 1:
+        return f"{n} партия"
+    if 2 <= r <= 4:
+        return f"{n} партии"
+    return f"{n} партий"
 
 
 async def get_player(session: AsyncSession, telegram_id: int) -> Player | None:

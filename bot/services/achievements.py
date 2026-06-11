@@ -12,12 +12,12 @@
 import json
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Match, MatchStatus, Player
+from bot.utils import MSK_OFFSET, msk_day_start
 
 
 @dataclass
@@ -206,7 +206,8 @@ async def check_win_achievements(
         maybe("legend")
 
     # ── Теннисный маньячелло: 10+ матчей за сегодня ──────────────────────────
-    today_start = datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
+    # Граница «сегодня» — полночь по МСК (единое бизнес-правило, как в экранах и пасхалках)
+    today_start = msk_day_start()
     today_r = await session.execute(
         select(func.count()).select_from(Match).where(
             or_(Match.challenger_id == winner.id, Match.challenged_id == winner.id),
@@ -340,7 +341,8 @@ async def check_loss_achievements(
         maybe("legend")
 
     # Теннисный маньячелло: 10+ матчей за сегодня
-    today_start = datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
+    # Граница «сегодня» — полночь по МСК (единое бизнес-правило, как в экранах и пасхалках)
+    today_start = msk_day_start()
     today_r = await session.execute(
         select(func.count()).select_from(Match).where(
             or_(Match.challenger_id == loser.id, Match.challenged_id == loser.id),
@@ -432,7 +434,8 @@ async def check_draw_achievements(
         maybe("legend")
 
     # Теннисный маньячелло: 10+ матчей за сегодня
-    today_start = datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
+    # Граница «сегодня» — полночь по МСК (единое бизнес-правило, как в экранах и пасхалках)
+    today_start = msk_day_start()
     today_r = await session.execute(
         select(func.count()).select_from(Match).where(
             or_(Match.challenger_id == player.id, Match.challenged_id == player.id),
@@ -613,11 +616,12 @@ async def backfill_achievements(session: AsyncSession) -> None:
         if max_loss_streak >= 5:
             _add_new(earned, "fk_tyumen")
 
-        # Неистого: любой день, где все матчи (от 3) — победы
+        # Неистого: любой день, где все матчи (от 3) — победы.
+        # День считаем по МСК (даты в БД — naive-UTC), как и в realtime-проверках.
         day_groups: dict = {}
         for m in matches:
             if m.completed_at:
-                day_groups.setdefault(m.completed_at.date(), []).append(m)
+                day_groups.setdefault((m.completed_at + MSK_OFFSET).date(), []).append(m)
         for day_matches in day_groups.values():
             if len(day_matches) >= 3 and all(mm.winner_id == player.id for mm in day_matches):
                 _add_new(earned, "relentless")
@@ -635,9 +639,9 @@ async def backfill_achievements(session: AsyncSession) -> None:
         if total >= 200:
             _add_new(earned, "legend")
 
-        # Теннисный маньячелло: любой день с 10+ матчами
+        # Теннисный маньячелло: любой день (по МСК) с 10+ матчами
         day_counts = Counter(
-            m.completed_at.date() for m in matches if m.completed_at
+            (m.completed_at + MSK_OFFSET).date() for m in matches if m.completed_at
         )
         if any(cnt >= 10 for cnt in day_counts.values()):
             _add_new(earned, "maniac")

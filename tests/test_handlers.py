@@ -22,7 +22,14 @@ from bot.handlers.match_result import confirm_result, handle_direct_score, proce
 from bot.handlers.profile import _nearest_achievement_progress
 from bot.services.achievements import get_achievements
 from bot.states.states import MatchResultStates
-from bot.utils import MSK_OFFSET, compute_alltime_streak, get_rec_signal, msk_day_start
+from bot.utils import (
+    MSK_OFFSET,
+    compute_alltime_streak,
+    env_int,
+    get_rec_signal,
+    msk_day_start,
+    pluralize_sets,
+)
 
 # ── Фикстуры и хелперы ──────────────────────────────────────────────────────────
 
@@ -455,3 +462,56 @@ def test_ach_progress_collector():
     assert result is not None
     assert "2/3" in result
     assert "Со всеми" in result
+
+
+def test_ach_progress_rating_ratio_from_baseline():
+    """Прогресс рейтинга считается от 1000: игрок с 1000.0 не получает цель «Рейтинг 1200»
+    при наличии любой другой цели с положительным прогрессом."""
+    p = _p_ach([])
+    # fifty: 10/50 = 0.2 > rating_1200: (1000-1000)/200 = 0.0
+    s = _stats(wins=5, losses=5)
+    result = _nearest_achievement_progress(p, s, total_players=2)
+    assert result is not None
+    assert "Рейтинг 1200" not in result
+
+
+def test_ach_progress_rating_high_wins():
+    """Рейтинг 1150 → ratio (1150-1000)/200 = 0.75 — рейтинговая цель побеждает."""
+    p = _p_ach([], rating=1150.0)
+    s = _stats(wins=5, losses=5)
+    result = _nearest_achievement_progress(p, s, total_players=2)
+    assert result is not None
+    assert "Рейтинг 1200" in result
+    assert "1150/1200" in result
+
+
+# ── env_int / pluralize_sets ─────────────────────────────────────────────────────
+
+def test_env_int_missing(monkeypatch):
+    monkeypatch.delenv("X_TEST_INT", raising=False)
+    assert env_int("X_TEST_INT") == 0
+
+
+def test_env_int_empty(monkeypatch):
+    """ADMIN_ID= (пустое значение) не должен ронять бот."""
+    monkeypatch.setenv("X_TEST_INT", "")
+    assert env_int("X_TEST_INT") == 0
+
+
+def test_env_int_garbage(monkeypatch):
+    monkeypatch.setenv("X_TEST_INT", "123  # комментарий")
+    assert env_int("X_TEST_INT") == 0
+
+
+def test_env_int_valid(monkeypatch):
+    monkeypatch.setenv("X_TEST_INT", " 42 ")
+    assert env_int("X_TEST_INT") == 42
+
+
+def test_pluralize_sets():
+    assert pluralize_sets(1) == "1 партия"
+    assert pluralize_sets(2) == "2 партии"
+    assert pluralize_sets(5) == "5 партий"
+    assert pluralize_sets(11) == "11 партий"
+    assert pluralize_sets(21) == "21 партия"
+    assert pluralize_sets(22) == "22 партии"
