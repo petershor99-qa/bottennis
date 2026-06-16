@@ -317,9 +317,9 @@ def _confirm_kb(match_id: int) -> InlineKeyboardMarkup:
 
 @router.callback_query(F.data == "cancel_report")
 async def cancel_report(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
     await state.clear()
     await callback.message.edit_text("Отменено.", reply_markup=back_to_menu_kb())
-    await callback.answer()
 
 
 # ── Step 1: "Я победил" ───────────────────────────────────────────────────────

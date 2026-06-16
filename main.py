@@ -11,7 +11,7 @@ import logging
 import os
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.filters import ExceptionTypeFilter
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import ErrorEvent
@@ -62,6 +62,18 @@ async def on_telegram_bad_request(event: ErrorEvent) -> bool:
     return True
 
 
+async def on_telegram_rate_limit(event: ErrorEvent) -> bool:
+    """RetryAfter (429) — Telegram rate-limit на редактирование сообщений.
+    Снимаем спиннер, пользователь может нажать кнопку ещё раз."""
+    callback = event.update.callback_query if event.update else None
+    if callback:
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+    return True
+
+
 async def main() -> None:
     token = os.getenv("BOT_TOKEN")
     if not token:
@@ -73,6 +85,7 @@ async def main() -> None:
     dp.update.middleware(DatabaseMiddleware(async_session))
 
     dp.error.register(on_telegram_bad_request, ExceptionTypeFilter(TelegramBadRequest))
+    dp.error.register(on_telegram_rate_limit, ExceptionTypeFilter(TelegramRetryAfter))
 
     # Бот работает только в личных чатах — в группах молчит
     dp.message.filter(F.chat.type == "private")

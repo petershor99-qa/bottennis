@@ -272,6 +272,8 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
         await callback.answer("Сначала напиши /start", show_alert=True)
         return
 
+    await callback.answer()
+
     rank_r = await session.execute(
         select(func.count()).select_from(Player).where(Player.rating > player.rating)
     )
@@ -298,7 +300,6 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
             reply_markup=stats_kb(),
             parse_mode="HTML",
         )
-        await callback.answer()
         return
 
     matches = all_matches[:5]
@@ -332,7 +333,6 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
         reply_markup=stats_kb(),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 # ── Player profile (public view) ──────────────────────────────────────────────
@@ -350,6 +350,8 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
     if not player:
         await callback.answer("Игрок не найден.", show_alert=True)
         return
+
+    await callback.answer()
 
     viewer = await get_player(session, callback.from_user.id)
     viewer_id = viewer.id if viewer else None
@@ -413,7 +415,6 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
         reply_markup=player_profile_kb(player.id, viewer_id=viewer_id, can_challenge=can_challenge),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 # ── Achievements ──────────────────────────────────────────────────────────────
@@ -441,10 +442,10 @@ async def show_my_achievements(callback: CallbackQuery, session: AsyncSession):
     if not player:
         await callback.answer("Сначала напиши /start", show_alert=True)
         return
+    await callback.answer()
     earned = get_achievements(player)
     text = _render_achievements(earned, "Мои достижения")
     await callback.message.edit_text(text, reply_markup=achievements_kb(), parse_mode="HTML")
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("player_achievements_"))
@@ -459,6 +460,7 @@ async def show_player_achievements(callback: CallbackQuery, session: AsyncSessio
     if not player:
         await callback.answer("Игрок не найден.", show_alert=True)
         return
+    await callback.answer()
     earned = get_achievements(player)
     text = _render_achievements(earned, f"Достижения — {h(player.display_name)}")
     await callback.message.edit_text(
@@ -466,4 +468,3 @@ async def show_player_achievements(callback: CallbackQuery, session: AsyncSessio
         reply_markup=player_achievements_kb(target_id),
         parse_mode="HTML",
     )
-    await callback.answer()
