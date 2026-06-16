@@ -25,6 +25,7 @@ from bot.utils import (
     pick_match_of_day,
     pluralize_matches,
     pluralize_sets,
+    pluralize_wins,
 )
 
 logger = logging.getLogger(__name__)
@@ -302,6 +303,18 @@ async def send_daily_summary(bot: Bot) -> None:
                 lid = m.challenged_id if m.winner_id == m.challenger_id else m.challenger_id
                 stats[lid]["l"] += 1
 
+        # Полоска формы за день: исход каждого матча игрока в хронологии (matches asc)
+        player_form: dict[int, list[str]] = {}
+        for m in matches:
+            for pid in (m.challenger_id, m.challenged_id):
+                if m.winner_id is None:
+                    icon = "🟨"
+                elif m.winner_id == pid:
+                    icon = "🟩"
+                else:
+                    icon = "🟥"
+                player_form.setdefault(pid, []).append(icon)
+
         total_sets = sum(len(m.sets_data) if m.sets_data else 0 for m in matches)
         date_str = msk_now.strftime("%d.%m")
 
@@ -318,15 +331,63 @@ async def send_daily_summary(bot: Bot) -> None:
         for i, (pid, st) in enumerate(sorted_players):
             prefix = medals[i] if i < 3 else f"{i + 1}."
             draws_str = f"–{st['d']}🤝" if st["d"] else ""
-            lines.append(f"{prefix} <b>{h(name_map.get(pid, '?'))}</b> — {st['w']}–{st['l']}{draws_str}")
+            # Полоска формы — максимум 7 последних, чтобы строка не переносилась
+            form = "".join(player_form.get(pid, [])[-7:])
+            lines.append(
+                f"{prefix} <b>{h(name_map.get(pid, '?'))}</b> — "
+                f"{st['w']}–{st['l']}{draws_str}  {form}"
+            )
 
-        # Лучший рост рейтинга за день (если положительный)
+        # Рост рейтинга за день: лучший (+) и отрицательный (−)
         if delta_sum:
             best_id = max(delta_sum, key=delta_sum.get)
+            worst_id = min(delta_sum, key=delta_sum.get)
+            growth_lines = []
             if delta_sum[best_id] > 0:
-                lines.append(
-                    f"\n📈 Лучший рост: <b>{h(name_map.get(best_id, '?'))}</b> "
+                growth_lines.append(
+                    f"📈 Лучший рост: <b>{h(name_map.get(best_id, '?'))}</b> "
                     f"(+{round(delta_sum[best_id], 1)} pts)"
+                )
+            if delta_sum[worst_id] < 0:
+                growth_lines.append(
+                    f"📉 Отрицательный рост: <b>{h(name_map.get(worst_id, '?'))}</b> "
+                    f"({round(delta_sum[worst_id], 1)} pts)"
+                )
+            if growth_lines:
+                lines.append("")
+                lines.extend(growth_lines)
+
+        # Нагибатель дня — самая длинная серия побед за день
+        run_pid = None
+        run_best = 0
+        for pid, outcomes in player_form.items():
+            run = cur = 0
+            for o in outcomes:
+                if o == "🟩":
+                    cur += 1
+                    run = max(run, cur)
+                else:
+                    cur = 0
+            if run > run_best:
+                run_best = run
+                run_pid = pid
+        if run_pid and run_best >= 2:
+            lines.append(
+                f"\n🔥 Нагибатель дня — <b>{h(name_map.get(run_pid, '?'))}</b>: "
+                f"{pluralize_wins(run_best)} подряд"
+            )
+
+        # Чаще всего самбовались — пара, сыгравшая больше всех за день
+        pair_today: dict[tuple[int, int], int] = {}
+        for m in matches:
+            key = (min(m.challenger_id, m.challenged_id), max(m.challenger_id, m.challenged_id))
+            pair_today[key] = pair_today.get(key, 0) + 1
+        if pair_today:
+            (pa, pb), pn = max(pair_today.items(), key=lambda kv: kv[1])
+            if pn >= 2:
+                lines.append(
+                    f"🤼 Чаще всего самбовались — <b>{h(name_map.get(pa, '?'))}</b> vs "
+                    f"<b>{h(name_map.get(pb, '?'))}</b>: {pluralize_matches(pn)}"
                 )
 
         # Матч дня

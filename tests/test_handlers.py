@@ -678,3 +678,178 @@ async def test_my_matches_fresh_active_valid_html(db):
     text = cb.message.edit_text.call_args[0][0]
     assert "до 1ч" in text
     assert "< 1" not in text  # сырой '<' не должен попасть в HTML-сообщение
+
+
+# ── «Сегодня» — личный мини-итог ────────────────────────────────────────────────
+
+async def test_today_shows_personal_summary(db):
+    """Экран «Сегодня» показывает зрителю его личный счёт и дельту за день."""
+    from bot.handlers.leaderboard import show_today_stats
+
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.add(_completed(p1, p2, p1.id, 10.0, now))   # Alice +10
+    db.add(_completed(p1, p2, p1.id, 8.0, now))    # Alice +8
+    db.add(_completed(p1, p2, p2.id, 12.0, now))   # Alice −12
+    db.add(_completed(p2, p3, p2.id, 20.0, now))   # Alice не участвует — в её дельту не идёт
+    await db.commit()
+
+    cb = _callback(1, "menu_today")  # смотрит Alice
+    await show_today_stats(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Ты сегодня:" in text
+    assert "2–1" in text            # 2 победы, 1 поражение
+    assert "+6.0 pts" in text       # 10 + 8 − 12 (чужой матч Bob–Cara не учитывается)
+
+
+async def test_today_personal_not_played(db):
+    """Зритель сегодня не играл — личная строка это отражает, без падений."""
+    from bot.handlers.leaderboard import show_today_stats
+
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.add(_completed(p2, p3, p2.id, 10.0, now))   # Alice не играла
+    await db.commit()
+
+    cb = _callback(1, "menu_today")  # смотрит Alice
+    await show_today_stats(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "ещё не играл" in text
+
+
+# ── Рекорды клуба: новые рекорды ────────────────────────────────────────────────
+
+async def test_club_records_shows_peak_rating(db):
+    """Высший рейтинг в истории — по peak_rating среди игравших."""
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2 = _player(1, "Alice", 1050.0), _player(2, "Bob", 980.0)
+    p1.peak_rating = 1075.0
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Высший рейтинг в истории" in text
+    assert "1075.0" in text
+
+
+async def test_club_records_shows_nagibator(db):
+    """Нагибатор клуба — самое одностороннее противостояние (≥3 побед, есть перевес)."""
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(4):  # Alice над Bob 4–0
+        db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1 + i, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Нагибатор клуба" in text
+    assert "4–0" in text
+
+
+async def test_club_records_shows_current_streak(db):
+    """В ударе сейчас — текущая активная серия побед (от последнего матча назад)."""
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p2.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))  # Bob
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 2, 12, 0, 0)))  # Alice
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 3, 12, 0, 0)))  # Alice
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 4, 12, 0, 0)))  # Alice
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "В ударе сейчас" in text  # текущая серия Alice = 3
+
+
+# ── Пик рейтинга обновляется при ничьей (баг-фикс) ──────────────────────────────
+
+async def test_peak_rating_updated_on_draw(db):
+    """РЕГРЕССИЯ: при ничьей андердог растёт, но peak_rating не обновлялся."""
+    p1 = _player(1, "Underdog", rating=1000.0)
+    p2 = _player(2, "Favourite", rating=1200.0)
+    p1.peak_rating = 1000.0
+    p2.peak_rating = 1200.0
+    db.add_all([p1, p2])
+    await db.flush()
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    # Ничья 1:1 — андердог-challenger получает плюс к рейтингу
+    st = _state(1)
+    await st.set_state(MatchResultStates.confirming)
+    await st.update_data(
+        match_id=m.id, reporter_player_id=p1.id,
+        sets_data=[{"reporter": 11, "opponent": 5}, {"reporter": 5, "opponent": 11}],
+        is_draw=True,
+    )
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert p1.rating > 1000.0            # андердог вырос
+    assert p1.peak_rating == p1.rating   # пик обновился вместе с рейтингом
+
+
+# ── pluralize_wins ──────────────────────────────────────────────────────────────
+
+def test_pluralize_wins():
+    from bot.utils import pluralize_wins
+    assert pluralize_wins(1) == "1 победа"
+    assert pluralize_wins(2) == "2 победы"
+    assert pluralize_wins(5) == "5 побед"
+    assert pluralize_wins(11) == "11 побед"
+    assert pluralize_wins(21) == "21 победа"
+
+
+# ── Итоги дня: новые секции ─────────────────────────────────────────────────────
+
+async def test_daily_summary_new_sections(monkeypatch):
+    """Итоги дня содержат полоску формы, Нагибателя дня и Дерби дня."""
+    import bot.scheduler as sched
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    async with factory() as s:
+        p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+        s.add_all([p1, p2])
+        await s.flush()
+        for _ in range(3):  # Alice 3–0 над Bob сегодня
+            s.add(_completed(p1, p2, p1.id, 10.0, now))
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.send_daily_summary(bot)
+    await engine.dispose()
+
+    text = bot.send_message.call_args_list[0][0][1]
+    assert "🟩" in text                    # полоска формы
+    assert "Нагибатель дня" in text
+    assert "Чаще всего самбовались" in text
+    assert "3 победы подряд" in text       # текущая серия Alice
+    assert "Отрицательный рост" in text     # Bob ушёл в минус

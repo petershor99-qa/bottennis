@@ -14,9 +14,11 @@ from bot.utils import (
     get_player,
     match_drama_reason,
     match_drama_score,
+    match_rating_delta,
     match_score_challenger_first,
     msk_day_start,
     pluralize_matches,
+    pluralize_wins,
 )
 
 router = Router()
@@ -205,14 +207,35 @@ async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
     inactive = [p for p in all_players if p.id not in stats]
 
     medals = ["🥇", "🥈", "🥉"]
-    lines = ["📅 <b>Сегодня</b>\n", f"⚡ Сыграно матчей: <b>{len(matches)}</b>\n"]
+    lines = ["📅 <b>Сегодня</b>\n", f"⚡ Сыграно матчей: <b>{len(matches)}</b>"]
+
+    # Личный мини-итог зрителя — сразу под общим счётчиком
+    viewer = await get_player(session, callback.from_user.id)
+    if viewer:
+        if viewer.id in stats:
+            vs = stats[viewer.id]
+            v_delta = round(sum(
+                match_rating_delta(m, viewer.id)
+                for m in matches
+                if viewer.id in (m.challenger_id, m.challenged_id)
+            ), 1)
+            v_draws = f"–{vs['draws']}🤝" if vs["draws"] else ""
+            d_icon = " 📈" if v_delta > 0 else (" 📉" if v_delta < 0 else "")
+            sign = "+" if v_delta >= 0 else ""
+            lines.append(
+                f"👤 <b>Ты сегодня:</b> {vs['wins']}–{vs['losses']}{v_draws}, "
+                f"{sign}{v_delta} pts{d_icon}"
+            )
+        else:
+            lines.append("👤 <b>Ты сегодня</b> ещё не играл 🏓")
+    lines.append("")  # пустая строка-разделитель перед «Топ дня»
 
     for i, (pid, s) in enumerate(sorted_players):
         prefix = medals[i] if i < 3 else f"{i + 1}."
         draws_str = f"–{s['draws']}🤝" if s["draws"] else ""
         lines.append(
             f"{prefix} <b>{h(names[pid])}</b> — "
-            f"{s['wins']}–{s['losses']}{draws_str}  <i>({s['total']} матчей)</i>"
+            f"{s['wins']}–{s['losses']}{draws_str}  <i>({pluralize_matches(s['total'])})</i>"
         )
 
     if inactive:
@@ -266,6 +289,22 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
             f"{pluralize_matches(match_count[most_id])}"
         )
 
+    # Высший рейтинг в истории — пик среди игравших (peak_rating, fallback на текущий)
+    peak_pid = None
+    peak_val = 0.0
+    for p in players:
+        if match_count.get(p.id, 0) == 0:
+            continue
+        pv = p.peak_rating if p.peak_rating is not None else p.rating
+        if pv > peak_val:
+            peak_val = pv
+            peak_pid = p.id
+    if peak_pid is not None:
+        lines.append(
+            f"📈 Высший рейтинг в истории — <b>{h(name_map.get(peak_pid, '?'))}</b>: "
+            f"{round(peak_val, 1)} pts"
+        )
+
     # Дерби клуба — самая играющая пара
     pair_count: dict[tuple[int, int], int] = {}
     for m in all_matches:
@@ -278,6 +317,35 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
                 f"🤼 Дерби клуба — <b>{h(name_map.get(a_id, '?'))}</b> vs "
                 f"<b>{h(name_map.get(b_id, '?'))}</b>: {pluralize_matches(pair_n)}"
             )
+
+    # Нагибатор клуба — самое одностороннее противостояние (победы только)
+    pair_wins: dict[tuple[int, int], dict[int, int]] = {}
+    for m in all_matches:
+        if m.winner_id is None:
+            continue
+        key = (min(m.challenger_id, m.challenged_id), max(m.challenger_id, m.challenged_id))
+        wd = pair_wins.setdefault(key, {})
+        wd[m.winner_id] = wd.get(m.winner_id, 0) + 1
+
+    best_dom = None  # (gap, dom_w, dom_id, vic_id, vic_w)
+    for (pa_id, pb_id), wd in pair_wins.items():
+        a_w, b_w = wd.get(pa_id, 0), wd.get(pb_id, 0)
+        if a_w >= b_w:
+            dom_id, vic_id, dom_w, vic_w = pa_id, pb_id, a_w, b_w
+        else:
+            dom_id, vic_id, dom_w, vic_w = pb_id, pa_id, b_w, a_w
+        gap = dom_w - vic_w
+        # Порог: доминирующий выиграл ≥3 раза и ведёт — иначе не «нагибатор»
+        if dom_w >= 3 and gap >= 1:
+            cand = (gap, dom_w, dom_id, vic_id, vic_w)
+            if best_dom is None or cand[:2] > best_dom[:2]:
+                best_dom = cand
+    if best_dom:
+        _, dom_w, dom_id, vic_id, vic_w = best_dom
+        lines.append(
+            f"😈 Нагибатор клуба — <b>{h(name_map.get(dom_id, '?'))}</b> над "
+            f"<b>{h(name_map.get(vic_id, '?'))}</b>: {dom_w}–{vic_w}"
+        )
 
     # Лучшая серия побед за всё время
     player_matches_asc: dict[int, list] = {}
@@ -297,6 +365,25 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
         lines.append(
             f"🔥 Лучшая серия побед — <b>{h(name_map.get(best_streak_pid, '?'))}</b>: "
             f"{best_streak_n} подряд"
+        )
+
+    # В ударе сейчас — текущая активная серия побед (от последнего матча назад)
+    cur_streak_n = 0
+    cur_streak_pid = None
+    for pid, ms in player_matches_asc.items():
+        s = 0
+        for m in reversed(ms):
+            if m.winner_id == pid:
+                s += 1
+            else:
+                break
+        if s > cur_streak_n:
+            cur_streak_n = s
+            cur_streak_pid = pid
+    if cur_streak_pid and cur_streak_n >= 2:
+        lines.append(
+            f"🚀 В ударе сейчас — <b>{h(name_map.get(cur_streak_pid, '?'))}</b>: "
+            f"{pluralize_wins(cur_streak_n)} подряд"
         )
 
     # Самый длинный матч (больше всего партий)
