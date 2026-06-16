@@ -605,3 +605,52 @@ async def test_player_chart_sends_photo(db):
     cb, bot = _callback(9, f"player_chart_{p1.id}"), AsyncMock()
     await show_player_rating_chart(cb, db, bot)
     bot.send_photo.assert_awaited()
+
+
+# ── Мемная фраза под прогнозом ──────────────────────────────────────────────────
+
+def test_match_phrase_buckets():
+    from bot.utils import (
+        EVEN_PHRASES,
+        FAVORITE_PHRASES,
+        UNDERDOG_PHRASES,
+        match_phrase,
+    )
+    assert match_phrase(70, 0) in FAVORITE_PHRASES
+    assert match_phrase(66, 0) in FAVORITE_PHRASES
+    assert match_phrase(65, 0) in EVEN_PHRASES      # граница 65 → равны
+    assert match_phrase(50, 0) in EVEN_PHRASES
+    assert match_phrase(35, 0) in EVEN_PHRASES      # граница 35 → равны
+    assert match_phrase(34, 0) in UNDERDOG_PHRASES
+    assert match_phrase(5, 0) in UNDERDOG_PHRASES
+
+
+def test_match_phrase_deterministic():
+    from bot.utils import EVEN_PHRASES, match_phrase
+    # Стабильна для одного match_id — не «прыгает» при перерисовке экрана
+    assert match_phrase(50, 7) == match_phrase(50, 7)
+    # Индекс по match_id
+    n = len(EVEN_PHRASES)
+    assert match_phrase(50, 0) == EVEN_PHRASES[0]
+    assert match_phrase(50, n + 1) == EVEN_PHRASES[1]
+
+
+# ── Дерби клуба ─────────────────────────────────────────────────────────────────
+
+async def test_club_records_shows_derby(db):
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    for i in range(3):  # самая играющая пара — Alice vs Bob
+        db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1 + i, 12, 0, 0)))
+    db.add(_completed(p1, p3, p1.id, 10.0, datetime(2026, 6, 9, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Дерби клуба" in text
+    assert "Alice" in text and "Bob" in text

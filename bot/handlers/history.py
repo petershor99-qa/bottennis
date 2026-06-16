@@ -86,6 +86,11 @@ async def show_rating_history(callback: CallbackQuery, session: AsyncSession):
 
 # ── График рейтинга ───────────────────────────────────────────────────────────
 
+# Последнее отправленное сообщение-график на чат — чтобы удалять предыдущее при
+# построении нового. В памяти (как FSM): сбрасывается при рестарте, это норм.
+_last_chart_msg: dict[int, int] = {}
+
+
 async def _send_rating_chart(
     target: Player, session: AsyncSession, callback: CallbackQuery, bot: Bot
 ) -> None:
@@ -107,12 +112,21 @@ async def _send_rating_chart(
 
     labels, values = build_rating_series(matches, target.id, target.rating)
     url = rating_chart_url(target.display_name, labels, values)
+    chat_id = callback.message.chat.id
+
+    # Удаляем предыдущий график в этом чате, чтобы они не копились в переписке.
+    prev_id = _last_chart_msg.get(chat_id)
+    if prev_id is not None:
+        try:
+            await bot.delete_message(chat_id, prev_id)
+        except Exception:
+            pass
 
     # Картинку скачивает сам Telegram по URL. Исходное текстовое сообщение с
     # навигацией не трогаем — график приходит отдельным сообщением ниже.
     try:
-        await bot.send_photo(
-            callback.message.chat.id,
+        sent = await bot.send_photo(
+            chat_id,
             url,
             caption=(
                 f"📊 Динамика рейтинга — <b>{h(target.display_name)}</b>\n"
@@ -121,6 +135,7 @@ async def _send_rating_chart(
             ),
             parse_mode="HTML",
         )
+        _last_chart_msg[chat_id] = sent.message_id
         await callback.answer()
     except Exception:
         await callback.answer("Не удалось построить график, попробуй позже 🙁", show_alert=True)
