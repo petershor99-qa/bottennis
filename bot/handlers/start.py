@@ -219,6 +219,6 @@ async def cmd_fix_rating(message: Message, session: AsyncSession):
 
 @router.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
     await state.clear()
     await callback.message.edit_text("Главное меню 🏓", reply_markup=main_menu_kb())
-    await callback.answer()

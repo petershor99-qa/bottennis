@@ -26,6 +26,8 @@ router = Router()
 
 @router.callback_query(F.data == "menu_leaderboard")
 async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
+    await callback.answer()
+
     viewer = await get_player(session, callback.from_user.id)
     viewer_id = viewer.id if viewer else None
 
@@ -34,7 +36,6 @@ async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
 
     if not players:
         await callback.message.edit_text("Пока нет игроков.", reply_markup=back_to_menu_kb())
-        await callback.answer()
         return
 
     matches_r = await session.execute(
@@ -76,7 +77,6 @@ async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
         await callback.message.edit_text(
             "Пока нет сыгранных матчей. 🏓", reply_markup=back_to_menu_kb()
         )
-        await callback.answer()
         return
 
     week_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
@@ -147,13 +147,14 @@ async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
         reply_markup=leaderboard_kb(players),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 # ── Today stats ───────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "menu_today")
 async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
+    await callback.answer()
+
     today_start = msk_day_start()   # день по МСК — как в итогах дня
 
     matches_r = await session.execute(
@@ -173,7 +174,6 @@ async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
             reply_markup=back_to_leaderboard_kb(),
             parse_mode="HTML",
         )
-        await callback.answer()
         return
 
     stats: dict[int, dict] = {}
@@ -224,13 +224,14 @@ async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
         reply_markup=back_to_leaderboard_kb(),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 # ── Рекорды клуба ─────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "club_records")
 async def show_club_records(callback: CallbackQuery, session: AsyncSession):
+    await callback.answer()
+
     matches_r = await session.execute(
         select(Match)
         .where(Match.status == MatchStatus.completed)
@@ -245,7 +246,6 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
             reply_markup=back_to_leaderboard_kb(),
             parse_mode="HTML",
         )
-        await callback.answer()
         return
 
     players_r = await session.execute(select(Player))
@@ -346,13 +346,14 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
         reply_markup=back_to_leaderboard_kb(),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 # ── Матрица доминирования ─────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "dominance_matrix")
 async def show_dominance_matrix(callback: CallbackQuery, session: AsyncSession):
+    await callback.answer()
+
     players_r = await session.execute(select(Player).order_by(desc(Player.rating)))
     all_players = players_r.scalars().all()
 
@@ -367,7 +368,6 @@ async def show_dominance_matrix(callback: CallbackQuery, session: AsyncSession):
             reply_markup=back_to_leaderboard_kb(),
             parse_mode="HTML",
         )
-        await callback.answer()
         return
 
     match_count: dict[int, int] = {}
@@ -392,7 +392,6 @@ async def show_dominance_matrix(callback: CallbackQuery, session: AsyncSession):
             reply_markup=back_to_leaderboard_kb(),
             parse_mode="HTML",
         )
-        await callback.answer()
         return
 
     pid_idx = {p.id: i for i, p in enumerate(top)}
@@ -438,4 +437,3 @@ async def show_dominance_matrix(callback: CallbackQuery, session: AsyncSession):
         reply_markup=back_to_leaderboard_kb(),
         parse_mode="HTML",
     )
-    await callback.answer()

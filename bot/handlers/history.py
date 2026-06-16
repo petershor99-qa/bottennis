@@ -41,6 +41,8 @@ async def show_rating_history(callback: CallbackQuery, session: AsyncSession):
         await callback.answer("Сначала напиши /start", show_alert=True)
         return
 
+    await callback.answer()
+
     r = await session.execute(
         select(Match)
         .where(
@@ -59,7 +61,6 @@ async def show_rating_history(callback: CallbackQuery, session: AsyncSession):
             "У тебя пока нет сыгранных матчей. 🏓",
             reply_markup=rating_history_kb(),
         )
-        await callback.answer()
         return
 
     lines = [f"📈 <b>История рейтинга</b>  <i>(последние {len(matches)} матчей)</i>\n"]
@@ -81,7 +82,6 @@ async def show_rating_history(callback: CallbackQuery, session: AsyncSession):
         reply_markup=rating_history_kb(),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 # ── График рейтинга ───────────────────────────────────────────────────────────
@@ -181,6 +181,8 @@ async def show_match_history(callback: CallbackQuery, session: AsyncSession):
         await callback.answer("Некорректные данные.", show_alert=True)
         return
 
+    await callback.answer()
+
     r = await session.execute(
         select(Match)
         .where(
@@ -197,7 +199,6 @@ async def show_match_history(callback: CallbackQuery, session: AsyncSession):
             "У тебя пока нет сыгранных матчей. 🏓",
             reply_markup=back_to_menu_kb(),
         )
-        await callback.answer()
         return
 
     total_pages = max(1, (len(all_matches) + PAGE_SIZE - 1) // PAGE_SIZE)
@@ -216,7 +217,6 @@ async def show_match_history(callback: CallbackQuery, session: AsyncSession):
         reply_markup=history_kb(page, total_pages),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 # ── История матчей другого игрока ─────────────────────────────────────────────
@@ -238,6 +238,8 @@ async def show_player_match_history(callback: CallbackQuery, session: AsyncSessi
         await callback.answer("Игрок не найден.", show_alert=True)
         return
 
+    await callback.answer()
+
     viewer = await get_player(session, callback.from_user.id)
     viewer_id = viewer.id if viewer else None
 
@@ -258,7 +260,6 @@ async def show_player_match_history(callback: CallbackQuery, session: AsyncSessi
             reply_markup=player_profile_kb(target_id, viewer_id=viewer_id),
             parse_mode="HTML",
         )
-        await callback.answer()
         return
 
     total_pages = max(1, (len(all_matches) + PAGE_SIZE - 1) // PAGE_SIZE)
@@ -277,7 +278,6 @@ async def show_player_match_history(callback: CallbackQuery, session: AsyncSessi
         reply_markup=player_history_kb(target_id, page, total_pages),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 # ── Личные встречи (H2H) ──────────────────────────────────────────────────────
@@ -306,6 +306,8 @@ async def show_h2h(callback: CallbackQuery, session: AsyncSession):
         await callback.answer("С собой не сыграешь 🙂", show_alert=True)
         return
 
+    await callback.answer()
+
     r = await session.execute(
         select(Match)
         .where(
@@ -328,7 +330,6 @@ async def show_h2h(callback: CallbackQuery, session: AsyncSession):
             reply_markup=h2h_kb(target_id),
             parse_mode="HTML",
         )
-        await callback.answer()
         return
 
     s = compute_h2h(matches, viewer.id, opponent.id)
@@ -366,7 +367,6 @@ async def show_h2h(callback: CallbackQuery, session: AsyncSession):
         reply_markup=h2h_kb(target_id, page, total_pages),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 # ── Матчи клуба + рекомендации ────────────────────────────────────────────────
@@ -377,6 +377,8 @@ async def show_my_matches(callback: CallbackQuery, session: AsyncSession):
     if not player:
         await callback.answer("Сначала напиши /start", show_alert=True)
         return
+
+    await callback.answer()
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -487,4 +489,3 @@ async def show_my_matches(callback: CallbackQuery, session: AsyncSession):
         reply_markup=builder.as_markup(),
         parse_mode="HTML",
     )
-    await callback.answer()

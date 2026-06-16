@@ -25,6 +25,8 @@ router = Router()
 
 @router.callback_query(F.data == "menu_play")
 async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSession):
+    await callback.answer()
+
     r = await session.execute(select(Player).order_by(Player.rating.desc()))
     players = r.scalars().all()
 
@@ -57,7 +59,6 @@ async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSess
         else:
             msg = "Пока нет других игроков. Позови друзей! 😅"
         await callback.message.edit_text(msg, reply_markup=back_to_menu_kb())
-        await callback.answer()
         return
 
     rank_map = {p.id: i + 1 for i, p in enumerate(players)}
@@ -120,7 +121,6 @@ async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSess
         ),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 # ── Send challenge → match immediately active ─────────────────────────────────
@@ -273,6 +273,8 @@ async def cancel_match(callback: CallbackQuery, session: AsyncSession):
         await callback.answer("Это не твой матч.", show_alert=True)
         return
 
+    await callback.answer()
+
     opponent_id = match.challenged_id if player.id == match.challenger_id else match.challenger_id
     r2 = await session.execute(select(Player).where(Player.id == opponent_id))
     opponent = r2.scalar_one()
@@ -282,7 +284,6 @@ async def cancel_match(callback: CallbackQuery, session: AsyncSession):
         reply_markup=cancel_match_confirm_kb(match_id),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 # ── Cancel match — шаг 2: фактическая отмена ─────────────────────────────────
