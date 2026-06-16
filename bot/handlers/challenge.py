@@ -16,7 +16,7 @@ from bot.keyboards.inline import (
 )
 from bot.services.achievements import ACHIEVEMENTS_MAP, check_cancel_achievements
 from bot.services.rating import win_probability
-from bot.utils import get_player
+from bot.utils import get_player, match_phrase
 
 router = Router()
 
@@ -199,6 +199,7 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
     await session.refresh(match)
 
     opponent_chance = round(win_probability(opponent.rating, challenger.rating) * 100)
+    opponent_phrase = match_phrase(opponent_chance, match.id)
 
     try:
         await bot.send_message(
@@ -207,7 +208,8 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
             f"Рейтинг соперника: <b>{round(challenger.rating, 1)}</b> pts\n"
             f"Твой рейтинг: <b>{round(opponent.rating, 1)}</b> pts"
             f"{h2h_op}\n\n"
-            f"⚡ Твои шансы на победу: <b>~{opponent_chance}%</b>\n\n"
+            f"⚡ Твои шансы на победу: <b>~{opponent_chance}%</b>\n"
+            f"<i>«{opponent_phrase}»</i>\n\n"
             f"<i>После игры напиши счёт сюда — например: <code>11:7 9:11 11:5</code></i>",
             reply_markup=active_match_kb(match.id),
             parse_mode="HTML",
@@ -224,11 +226,13 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
         return
 
     win_chance = round(win_probability(challenger.rating, opponent.rating) * 100)
+    win_phrase = match_phrase(win_chance, match.id)
 
     await callback.message.edit_text(
         f"🏓 Матч с <b>{h(opponent.display_name)}</b> начат!\n"
         f"{h2h_ch}\n\n"
-        f"⚡ Твои шансы на победу: <b>~{win_chance}%</b>\n\n"
+        f"⚡ Твои шансы на победу: <b>~{win_chance}%</b>\n"
+        f"<i>«{win_phrase}»</i>\n\n"
         f"<i>После игры напиши счёт сюда — например: <code>11:7 9:11 11:5</code></i>",
         reply_markup=active_match_kb(match.id),
         parse_mode="HTML",

@@ -266,6 +266,19 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
             f"{pluralize_matches(match_count[most_id])}"
         )
 
+    # Дерби клуба — самая играющая пара
+    pair_count: dict[tuple[int, int], int] = {}
+    for m in all_matches:
+        key = (min(m.challenger_id, m.challenged_id), max(m.challenger_id, m.challenged_id))
+        pair_count[key] = pair_count.get(key, 0) + 1
+    if pair_count:
+        (a_id, b_id), pair_n = max(pair_count.items(), key=lambda kv: kv[1])
+        if pair_n >= 2:
+            lines.append(
+                f"🤼 Дерби клуба — <b>{h(name_map.get(a_id, '?'))}</b> vs "
+                f"<b>{h(name_map.get(b_id, '?'))}</b>: {pluralize_matches(pair_n)}"
+            )
+
     # Лучшая серия побед за всё время
     player_matches_asc: dict[int, list] = {}
     for m in all_matches:
