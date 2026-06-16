@@ -16,7 +16,7 @@ from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import active_match_kb
 from bot.utils import (
     MSK_OFFSET,
-    _match_line,
+    compute_alltime_streak,
     env_int,
     match_drama_reason,
     match_rating_delta,
@@ -29,6 +29,44 @@ from bot.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ── Общие блоки для итогов недели/месяца ──────────────────────────────────────
+
+def _most_played_pair(matches: list, name_map: dict) -> str | None:
+    """«Чаще всего самбовались» — самая играющая пара за период (от 2 матчей)."""
+    pair: dict[tuple[int, int], int] = {}
+    for m in matches:
+        key = (min(m.challenger_id, m.challenged_id), max(m.challenger_id, m.challenged_id))
+        pair[key] = pair.get(key, 0) + 1
+    if not pair:
+        return None
+    (a, b), n = max(pair.items(), key=lambda kv: kv[1])
+    if n < 2:
+        return None
+    return (
+        f"🤼 Чаще всего самбовались — <b>{h(name_map.get(a, '?'))}</b> vs "
+        f"<b>{h(name_map.get(b, '?'))}</b>: {pluralize_matches(n)}"
+    )
+
+
+def _longest_streak(matches: list, name_map: dict, period: str) -> str | None:
+    """«Нагибатель периода» — самая длинная серия побед внутри периода (от 2)."""
+    by_player: dict[int, list] = {}
+    for m in sorted(matches, key=lambda m: m.completed_at or datetime.min):
+        for pid in (m.challenger_id, m.challenged_id):
+            by_player.setdefault(pid, []).append(m)
+    best_pid, best_n = None, 0
+    for pid, ms in by_player.items():
+        n = compute_alltime_streak(ms, pid)
+        if n > best_n:
+            best_n, best_pid = n, pid
+    if best_pid is None or best_n < 2:
+        return None
+    return (
+        f"🔥 Нагибатель {period} — <b>{h(name_map.get(best_pid, '?'))}</b>: "
+        f"{pluralize_wins(best_n)} подряд"
+    )
 
 
 # ── Напоминание о незавершённых матчах ────────────────────────────────────────
@@ -121,84 +159,115 @@ async def send_weekly_digest(bot: Bot) -> None:
         )
         prev_week_count = prev_week_r.scalar()
 
-        heroes_block = ""
-        if all_week_matches:
-            match_count: dict[int, int] = {}
-            wins_count: dict[int, int] = {}
-            delta_sum: dict[int, float] = {}
-
-            for m in all_week_matches:
-                for pid in (m.challenger_id, m.challenged_id):
-                    match_count[pid] = match_count.get(pid, 0) + 1
-                    delta_sum[pid] = delta_sum.get(pid, 0.0) + match_rating_delta(m, pid)
-                if m.winner_id:
-                    wins_count[m.winner_id] = wins_count.get(m.winner_id, 0) + 1
-
-            total_sets = sum(len(m.sets_data) if m.sets_data else 0 for m in all_week_matches)
-
-            cur_count = len(all_week_matches)
-            if prev_week_count > 0:
-                diff = cur_count - prev_week_count
-                diff_str = f"+{diff}" if diff >= 0 else str(diff)
-                activity_line = (
-                    f"⚡ Сыграно за неделю: <b>{pluralize_matches(cur_count)}</b>, <b>{pluralize_sets(total_sets)}</b>"
-                    f"  <i>({diff_str} к прошлой)</i>"
-                )
+        # ── Клубные агрегаты за неделю ─────────────────────────────────────────
+        match_count: dict[int, int] = {}
+        wins_count: dict[int, int] = {}
+        losses_count: dict[int, int] = {}
+        draws_count: dict[int, int] = {}
+        delta_sum: dict[int, float] = {}
+        for m in all_week_matches:
+            for pid in (m.challenger_id, m.challenged_id):
+                match_count[pid] = match_count.get(pid, 0) + 1
+                delta_sum[pid] = delta_sum.get(pid, 0.0) + match_rating_delta(m, pid)
+            if m.winner_id is None:
+                draws_count[m.challenger_id] = draws_count.get(m.challenger_id, 0) + 1
+                draws_count[m.challenged_id] = draws_count.get(m.challenged_id, 0) + 1
             else:
-                activity_line = (
-                    f"⚡ Сыграно за неделю: <b>{pluralize_matches(cur_count)}</b>, <b>{pluralize_sets(total_sets)}</b>"
-                )
+                wins_count[m.winner_id] = wins_count.get(m.winner_id, 0) + 1
+                lid = m.challenged_id if m.winner_id == m.challenger_id else m.challenger_id
+                losses_count[lid] = losses_count.get(lid, 0) + 1
 
-            hero_lines = [
-                "\n🏆 <b>Герои недели:</b>",
-                activity_line,
-            ]
+        total_sets = sum(len(m.sets_data) if m.sets_data else 0 for m in all_week_matches)
+        cur_count = len(all_week_matches)
 
-            # Главный теннисист недели — самый активный
-            most_active_id = max(match_count, key=match_count.get)
-            hero_lines.append(
-                f"🏅 Главный теннисист недели — <b>{h(player_name_map[most_active_id])}</b> "
-                f"({pluralize_matches(match_count[most_active_id])})"
+        # ── Топ недели (клубный стендинг — компактно, вместо длинного списка матчей) ─
+        medals = ["🥇", "🥈", "🥉"]
+        standings = ["🏆 <b>Топ недели:</b>"]
+        sorted_ids = sorted(
+            match_count,
+            key=lambda pid: (wins_count.get(pid, 0), match_count.get(pid, 0)),
+            reverse=True,
+        )
+        for i, pid in enumerate(sorted_ids):
+            prefix = medals[i] if i < 3 else f"{i + 1}."
+            w = wins_count.get(pid, 0)
+            lo = losses_count.get(pid, 0)
+            d = draws_count.get(pid, 0)
+            wr = int(w / match_count[pid] * 100) if match_count[pid] else 0
+            draws_str = f"–{d}🤝" if d else ""
+            standings.append(
+                f"{prefix} <b>{h(player_name_map.get(pid, '?'))}</b> — "
+                f"{w}–{lo}{draws_str}  <i>({wr}%)</i>"
             )
 
-            # Больше всех побед (только если были победы)
-            if wins_count:
-                most_wins_id = max(wins_count, key=wins_count.get)
-                hero_lines.append(
-                    f"🥇 Больше всех побед — <b>{h(player_name_map[most_wins_id])}</b> "
-                    f"({wins_count[most_wins_id]})"
-                )
+        # ── Герои недели ───────────────────────────────────────────────────────
+        if prev_week_count > 0:
+            diff = cur_count - prev_week_count
+            diff_str = f"+{diff}" if diff >= 0 else str(diff)
+            activity_line = (
+                f"⚡ Сыграно за неделю: <b>{pluralize_matches(cur_count)}</b>, "
+                f"<b>{pluralize_sets(total_sets)}</b>  <i>({diff_str} к прошлой)</i>"
+            )
+        else:
+            activity_line = (
+                f"⚡ Сыграно за неделю: <b>{pluralize_matches(cur_count)}</b>, "
+                f"<b>{pluralize_sets(total_sets)}</b>"
+            )
 
-            # Лучший рост рейтинга (только если положительный)
-            best_gain_id = max(delta_sum, key=delta_sum.get)
-            if delta_sum[best_gain_id] > 0:
-                hero_lines.append(
-                    f"📈 Лучший рост — <b>{h(player_name_map[best_gain_id])}</b> "
-                    f"(+{round(delta_sum[best_gain_id], 1)} pts)"
-                )
+        hero_lines = ["🏆 <b>Герои недели:</b>", activity_line]
 
-            # Наибольшее падение (только если отрицательное)
-            worst_id = min(delta_sum, key=delta_sum.get)
-            if delta_sum[worst_id] < 0:
-                hero_lines.append(
-                    f"📉 Тяжелее всех — <b>{h(player_name_map[worst_id])}</b> "
-                    f"({round(delta_sum[worst_id], 1)} pts)"
-                )
+        most_active_id = max(match_count, key=match_count.get)
+        hero_lines.append(
+            f"🏅 Главный теннисист недели — <b>{h(player_name_map[most_active_id])}</b> "
+            f"({pluralize_matches(match_count[most_active_id])})"
+        )
+        if wins_count:
+            most_wins_id = max(wins_count, key=wins_count.get)
+            hero_lines.append(
+                f"🥇 Больше всех побед — <b>{h(player_name_map[most_wins_id])}</b> "
+                f"({wins_count[most_wins_id]})"
+            )
+        best_gain_id = max(delta_sum, key=delta_sum.get)
+        if delta_sum[best_gain_id] > 0:
+            hero_lines.append(
+                f"📈 Лучший рост — <b>{h(player_name_map[best_gain_id])}</b> "
+                f"(+{round(delta_sum[best_gain_id], 1)} pts)"
+            )
+        worst_id = min(delta_sum, key=delta_sum.get)
+        if delta_sum[worst_id] < 0:
+            hero_lines.append(
+                f"📉 Отрицательный рост — <b>{h(player_name_map[worst_id])}</b> "
+                f"({round(delta_sum[worst_id], 1)} pts)"
+            )
+        derby = _most_played_pair(all_week_matches, player_name_map)
+        if derby:
+            hero_lines.append(derby)
+        streak = _longest_streak(all_week_matches, player_name_map, "недели")
+        if streak:
+            hero_lines.append(streak)
 
-            # Блок показываем только если есть хотя бы 2 строки (заголовок + хоть одна)
-            if len(hero_lines) > 1:
-                heroes_block = "\n".join(hero_lines)
+        # ── Матч недели ────────────────────────────────────────────────────────
+        match_week = ""
+        mod = pick_match_of_day(all_week_matches)
+        if mod:
+            mch = player_name_map.get(mod.challenger_id, "?")
+            mcd = player_name_map.get(mod.challenged_id, "?")
+            match_week = (
+                f"\n\n🌟 <b>Матч недели</b>\n"
+                f"<b>{h(mch)}</b> vs <b>{h(mcd)}</b> — {match_score_challenger_first(mod)}\n"
+                f"<i>{match_drama_reason(mod)}</i>"
+            )
 
-        # ── Персональные сообщения ────────────────────────────────────────────
+        club_block = "\n".join(standings) + "\n\n" + "\n".join(hero_lines) + match_week
+
+        # ── Персональные сообщения: личная шапка + общий клубный блок ───────────
         for player in players:
             matches_result = await session.execute(
-                select(Match)
-                .where(
+                select(Match).where(
                     or_(Match.challenger_id == player.id, Match.challenged_id == player.id),
                     Match.status == MatchStatus.completed,
                     Match.completed_at >= week_ago,
                 )
-                .options(selectinload(Match.challenger), selectinload(Match.challenged))
             )
             matches = matches_result.scalars().all()
 
@@ -206,7 +275,6 @@ async def send_weekly_digest(bot: Bot) -> None:
             wins = sum(1 for m in matches if m.winner_id == player.id)
             draws = sum(1 for m in matches if m.winner_id is None)
             losses = len(matches) - wins - draws
-
             rating_delta = sum(match_rating_delta(m, player.id) for m in matches)
             sign = "+" if rating_delta >= 0 else ""
 
@@ -226,31 +294,24 @@ async def send_weekly_digest(bot: Bot) -> None:
                     and last_m.completed_at is not None
                     and last_m.completed_at < two_weeks_ago
                 )
-                vanished_line = "\n👻 Куда пропал? Тебя давно не видели за столом!\n" if vanished else "\n"
-
-                text = (
+                vanished_line = "👻 Куда пропал? Тебя давно не видели за столом!\n" if vanished else ""
+                header = (
                     f"📊 <b>Итоги недели</b>\n\n"
                     f"На этой неделе матчей не было.\n"
-                    f"Твой рейтинг: <b>{round(player.rating, 1)}</b> pts — #{rank}"
-                    f"{vanished_line}\n"
-                    f"«Ты либо занят жизнью, либо занят умиранием.»"
-                    f"{heroes_block}"
+                    f"Твой рейтинг: <b>{round(player.rating, 1)}</b> pts — #{rank}\n"
+                    f"{vanished_line}"
+                    f"<i>«Ты либо занят жизнью, либо занят умиранием.»</i>\n"
                 )
             else:
                 draws_str = f"  |  🤝 Ничьих: <b>{draws}</b>" if draws > 0 else ""
-                lines = [
-                    "📊 <b>Итоги недели</b>\n",
-                    f"🏆 Побед: <b>{wins}</b>{draws_str}  |  💔 Поражений: <b>{losses}</b>",
+                header = (
+                    f"📊 <b>Итоги недели</b>\n\n"
+                    f"🏆 Побед: <b>{wins}</b>{draws_str}  |  💔 Поражений: <b>{losses}</b>\n"
                     f"📈 Рейтинг: <b>{round(player.rating, 1)}</b> pts "
-                    f"({sign}{round(rating_delta, 1)}) — #{rank}\n",
-                    "<b>Матчи:</b>",
-                ]
-                for m in matches:
-                    lines.append(_match_line(m, player.id))
-                if heroes_block:
-                    lines.append(heroes_block)
-                text = "\n".join(lines)
+                    f"({sign}{round(rating_delta, 1)}) — #{rank}\n"
+                )
 
+            text = header + "\n" + club_block
             try:
                 await bot.send_message(player.telegram_id, text, parse_mode="HTML")
             except Exception:
@@ -403,6 +464,21 @@ async def send_daily_summary(bot: Bot) -> None:
                 f"<i>{reason}</i>"
             )
 
+        # Матчи дня — общий лог клуба (нейтрально, счёт в перспективе challenger, победитель жирным)
+        log_lines = ["\n📋 <b>Матчи дня:</b>"]
+        for m in matches:
+            mch = h(name_map.get(m.challenger_id, "?"))
+            mcd = h(name_map.get(m.challenged_id, "?"))
+            score = match_score_challenger_first(m)
+            if m.winner_id == m.challenger_id:
+                pair = f"<b>{mch}</b> vs {mcd}"
+            elif m.winner_id == m.challenged_id:
+                pair = f"{mch} vs <b>{mcd}</b>"
+            else:
+                pair = f"{mch} vs {mcd} 🤝"
+            log_lines.append(f"{pair}  <i>{score}</i>")
+        lines.append("\n".join(log_lines))
+
         text = "\n".join(lines)
         for p in players:
             try:
@@ -538,7 +614,7 @@ async def send_monthly_summary(bot: Bot) -> None:
             worst_id = min(delta_sum, key=delta_sum.get)
             if delta_sum[worst_id] < 0:
                 lines.append(
-                    f"📉 Тяжелее всех — <b>{h(name_map.get(worst_id, '?'))}</b>: "
+                    f"📉 Отрицательный рост — <b>{h(name_map.get(worst_id, '?'))}</b>: "
                     f"{round(delta_sum[worst_id], 1)} pts"
                 )
 
@@ -547,6 +623,12 @@ async def send_monthly_summary(bot: Bot) -> None:
             f"🏓 Главный теннисист — <b>{h(name_map.get(most_active_id, '?'))}</b>: "
             f"{pluralize_matches(match_count[most_active_id])}"
         )
+        derby = _most_played_pair(matches, name_map)
+        if derby:
+            lines.append(derby)
+        streak = _longest_streak(matches, name_map, "месяца")
+        if streak:
+            lines.append(streak)
 
         mod = pick_match_of_day(matches)
         if mod:
