@@ -654,3 +654,27 @@ async def test_club_records_shows_derby(db):
     text = cb.message.edit_text.call_args[0][0]
     assert "Дерби клуба" in text
     assert "Alice" in text and "Bob" in text
+
+
+async def test_my_matches_fresh_active_valid_html(db):
+    """РЕГРЕССИЯ: активный матч моложе часа давал '< 1ч' — сырой '<' ломал
+    HTML-парсинг Telegram ('Unsupported start tag'), edit_text падал, спиннер
+    на кнопке висел ~15 сек ('query is too old'). Теперь рендерится 'до 1ч'."""
+    from bot.handlers.history import show_my_matches
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.accepted, accepted_at=now,
+    ))
+    await db.commit()
+
+    cb = _callback(1, "menu_matches")
+    await show_my_matches(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "до 1ч" in text
+    assert "< 1" not in text  # сырой '<' не должен попасть в HTML-сообщение

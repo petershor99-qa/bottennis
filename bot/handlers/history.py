@@ -432,7 +432,7 @@ async def show_my_matches(callback: CallbackQuery, session: AsyncSession):
             if since:
                 total_h = int((now - since).total_seconds() / 3600)
                 if total_h == 0:
-                    time_str = "< 1ч"
+                    time_str = "до 1ч"   # без '<' — иначе ломается HTML-парсинг Telegram
                 elif total_h < 24:
                     time_str = f"{total_h}ч"
                 else:

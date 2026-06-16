@@ -34,17 +34,32 @@ logging.basicConfig(
 
 
 async def on_telegram_bad_request(event: ErrorEvent) -> bool:
-    """Гасит "message is not modified" — двойной тап по кнопке, когда edit_text
-    получает тот же текст. Без этого хендлер падает до callback.answer()
-    и у пользователя зависает спиннер на кнопке."""
-    if "message is not modified" in str(event.exception):
-        if event.update.callback_query:
+    """Обрабатывает ошибки Telegram, чтобы НИКОГДА не вешать спиннер на кнопке.
+
+    Любой сбой рендера (двойной тап = "message is not modified", сломанный HTML
+    и т.п.) без ответа на callback оставляет крутящийся спиннер на ~15 секунд,
+    после чего Telegram отдаёт "query is too old". Поэтому на любой ошибке
+    снимаем спиннер и логируем причину — бот остаётся отзывчивым."""
+    msg = str(event.exception)
+    callback = event.update.callback_query if event.update else None
+
+    # Двойной тап по той же кнопке — штатная ситуация, гасим тихо.
+    if "message is not modified" in msg:
+        if callback:
             try:
-                await event.update.callback_query.answer()
+                await callback.answer()
             except Exception:
                 pass
         return True
-    raise event.exception
+
+    # Прочие ошибки (например сломанный HTML) — логируем с трейсом и снимаем спиннер.
+    logging.error("Ошибка обработки апдейта: %s", msg, exc_info=event.exception)
+    if callback:
+        try:
+            await callback.answer("Упс, что-то пошло не так. Попробуй ещё раз 🙏")
+        except Exception:
+            pass
+    return True
 
 
 async def main() -> None:
