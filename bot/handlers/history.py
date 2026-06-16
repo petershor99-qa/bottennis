@@ -86,17 +86,14 @@ async def show_rating_history(callback: CallbackQuery, session: AsyncSession):
 
 # ── График рейтинга ───────────────────────────────────────────────────────────
 
-@router.callback_query(F.data == "rating_chart")
-async def show_rating_chart(callback: CallbackQuery, session: AsyncSession, bot: Bot):
-    player = await get_player(session, callback.from_user.id)
-    if not player:
-        await callback.answer("Сначала напиши /start", show_alert=True)
-        return
-
+async def _send_rating_chart(
+    target: Player, session: AsyncSession, callback: CallbackQuery, bot: Bot
+) -> None:
+    """Строит и отправляет график динамики рейтинга для указанного игрока."""
     r = await session.execute(
         select(Match)
         .where(
-            or_(Match.challenger_id == player.id, Match.challenged_id == player.id),
+            or_(Match.challenger_id == target.id, Match.challenged_id == target.id),
             Match.status == MatchStatus.completed,
             Match.rating_change.isnot(None),
         )
@@ -108,8 +105,8 @@ async def show_rating_chart(callback: CallbackQuery, session: AsyncSession, bot:
         await callback.answer("Нужно минимум 2 матча для графика 🏓", show_alert=True)
         return
 
-    labels, values = build_rating_series(matches, player.id, player.rating)
-    url = rating_chart_url(player.display_name, labels, values)
+    labels, values = build_rating_series(matches, target.id, target.rating)
+    url = rating_chart_url(target.display_name, labels, values)
 
     # Картинку скачивает сам Telegram по URL. Исходное текстовое сообщение с
     # навигацией не трогаем — график приходит отдельным сообщением ниже.
@@ -118,8 +115,8 @@ async def show_rating_chart(callback: CallbackQuery, session: AsyncSession, bot:
             callback.message.chat.id,
             url,
             caption=(
-                f"📊 Динамика рейтинга — <b>{h(player.display_name)}</b>\n"
-                f"Сейчас: <b>{round(player.rating, 1)} pts</b>  "
+                f"📊 Динамика рейтинга — <b>{h(target.display_name)}</b>\n"
+                f"Сейчас: <b>{round(target.rating, 1)} pts</b>  "
                 f"<i>(последние {len(values)} матчей)</i>"
             ),
             parse_mode="HTML",
@@ -127,6 +124,31 @@ async def show_rating_chart(callback: CallbackQuery, session: AsyncSession, bot:
         await callback.answer()
     except Exception:
         await callback.answer("Не удалось построить график, попробуй позже 🙁", show_alert=True)
+
+
+@router.callback_query(F.data == "rating_chart")
+async def show_rating_chart(callback: CallbackQuery, session: AsyncSession, bot: Bot):
+    player = await get_player(session, callback.from_user.id)
+    if not player:
+        await callback.answer("Сначала напиши /start", show_alert=True)
+        return
+    await _send_rating_chart(player, session, callback, bot)
+
+
+@router.callback_query(F.data.startswith("player_chart_"))
+async def show_player_rating_chart(callback: CallbackQuery, session: AsyncSession, bot: Bot):
+    try:
+        target_id = int(callback.data.rsplit("_", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
+
+    tp_r = await session.execute(select(Player).where(Player.id == target_id))
+    target = tp_r.scalar_one_or_none()
+    if not target:
+        await callback.answer("Игрок не найден.", show_alert=True)
+        return
+    await _send_rating_chart(target, session, callback, bot)
 
 
 # ── Полная история матчей (своя) ──────────────────────────────────────────────
@@ -375,6 +397,17 @@ async def show_my_matches(callback: CallbackQuery, session: AsyncSession):
         opp_id = m.challenged_id if m.challenger_id == player.id else m.challenger_id
         h2h_by_opp.setdefault(opp_id, []).append(m)
 
+    # Игроки, у которых есть хотя бы один сыгранный матч (для пометки новичков)
+    played_r = await session.execute(
+        select(Match.challenger_id, Match.challenged_id).where(
+            Match.status == MatchStatus.completed
+        )
+    )
+    played_ids: set[int] = set()
+    for a, b in played_r.all():
+        played_ids.add(a)
+        played_ids.add(b)
+
     # ── Текст ─────────────────────────────────────────────────────────────────
     lines: list[str] = ["🏓 <b>Активные матчи клуба</b>\n"]
 
@@ -422,7 +455,10 @@ async def show_my_matches(callback: CallbackQuery, session: AsyncSession):
         if opp.id in busy_ids:
             lines.append(f"{h(opp.display_name)}  — сейчас играет 🔒  ({diff_str} pts)")
         else:
-            signal_part = f"  — {signal}" if signal else ""
+            if opp.id not in played_ids:
+                signal_part = "  — 🆕 ещё не играл"
+            else:
+                signal_part = f"  — {signal}" if signal else ""
             lines.append(f"{h(opp.display_name)}{signal_part}  ({diff_str} pts)")
             builder.row(InlineKeyboardButton(
                 text=f"Вызвать {opp.display_name}",

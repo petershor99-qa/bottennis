@@ -515,3 +515,93 @@ def test_pluralize_sets():
     assert pluralize_sets(11) == "11 партий"
     assert pluralize_sets(21) == "21 партия"
     assert pluralize_sets(22) == "22 партии"
+
+
+# ── Скрытие игроков с 0 матчей / график по игроку ───────────────────────────────
+
+def _completed(challenger, challenged, winner_id, rc, when):
+    return Match(
+        challenger_id=challenger.id, challenged_id=challenged.id,
+        status=MatchStatus.completed, winner_id=winner_id,
+        sets_data=[{"w": 11, "l": 5}], rating_change=rc, completed_at=when,
+    )
+
+
+async def test_leaderboard_hides_zero_match_players(db):
+    """Игрок без сыгранных матчей не показывается в рейтинге."""
+    from bot.handlers.leaderboard import show_leaderboard
+
+    p1, p2 = _player(1, "Alice", 1010.0), _player(2, "Bob", 990.0)
+    ghost = _player(3, "Ghost", 1000.0)  # 0 матчей
+    db.add_all([p1, p2, ghost])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "menu_leaderboard")
+    await show_leaderboard(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Alice" in text and "Bob" in text
+    assert "Ghost" not in text
+
+
+async def test_leaderboard_empty_when_no_completed_matches(db):
+    """Если ни у кого нет сыгранных матчей — показываем заглушку, не пустую таблицу."""
+    from bot.handlers.leaderboard import show_leaderboard
+
+    db.add_all([_player(1, "Alice"), _player(2, "Bob")])
+    await db.commit()
+
+    cb = _callback(1, "menu_leaderboard")
+    await show_leaderboard(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Пока нет сыгранных матчей" in text
+
+
+async def test_player_chart_invalid_id(db):
+    from bot.handlers.history import show_player_rating_chart
+
+    cb, bot = _callback(1, "player_chart_abc"), AsyncMock()
+    await show_player_rating_chart(cb, db, bot)
+    cb.answer.assert_awaited()
+    bot.send_photo.assert_not_called()
+
+
+async def test_player_chart_not_found(db):
+    from bot.handlers.history import show_player_rating_chart
+
+    cb, bot = _callback(1, "player_chart_999"), AsyncMock()
+    await show_player_rating_chart(cb, db, bot)
+    cb.answer.assert_awaited_with("Игрок не найден.", show_alert=True)
+    bot.send_photo.assert_not_called()
+
+
+async def test_player_chart_too_few_matches(db):
+    from bot.handlers.history import show_player_rating_chart
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+
+    cb, bot = _callback(9, f"player_chart_{p1.id}"), AsyncMock()
+    await show_player_rating_chart(cb, db, bot)
+    bot.send_photo.assert_not_called()  # нужно ≥2 матча
+
+
+async def test_player_chart_sends_photo(db):
+    from bot.handlers.history import show_player_rating_chart
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p1.id, 8.0, datetime(2026, 6, 2, 12, 0, 0)))
+    await db.commit()
+
+    cb, bot = _callback(9, f"player_chart_{p1.id}"), AsyncMock()
+    await show_player_rating_chart(cb, db, bot)
+    bot.send_photo.assert_awaited()
