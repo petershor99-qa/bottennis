@@ -97,6 +97,18 @@ def pluralize_sets(n: int) -> str:
     return f"{n} партий"
 
 
+def pluralize_wins(n: int) -> str:
+    """1 победа / 2 победы / 5 побед"""
+    if 11 <= n % 100 <= 14:
+        return f"{n} побед"
+    r = n % 10
+    if r == 1:
+        return f"{n} победа"
+    if 2 <= r <= 4:
+        return f"{n} победы"
+    return f"{n} побед"
+
+
 async def get_player(session: AsyncSession, telegram_id: int) -> Player | None:
     r = await session.execute(select(Player).where(Player.telegram_id == telegram_id))
     return r.scalar_one_or_none()

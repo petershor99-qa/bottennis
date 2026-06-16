@@ -746,6 +746,12 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
         challenger.rating = new_challenger_rating
         challenged.rating = new_challenged_rating
 
+        # Пик рейтинга обновляем и при ничьей: андердог может вырасти и побить рекорд
+        if challenger.peak_rating is None or challenger.rating > challenger.peak_rating:
+            challenger.peak_rating = challenger.rating
+        if challenged.peak_rating is None or challenged.rating > challenged.peak_rating:
+            challenged.peak_rating = challenged.rating
+
         match.status = MatchStatus.completed
         match.winner_id = None          # ничья
         match.sets_data = final_sets
