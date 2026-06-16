@@ -66,8 +66,18 @@ async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
                 break
         streak_map[pid] = s
 
-    # Игроки без матчей — в конец таблицы
-    players = sorted(players, key=lambda p: (match_count.get(p.id, 0) == 0, -p.rating))
+    # Игроки без сыгранных матчей в рейтинге не показываются
+    players = sorted(
+        (p for p in players if match_count.get(p.id, 0) > 0),
+        key=lambda p: -p.rating,
+    )
+
+    if not players:
+        await callback.message.edit_text(
+            "Пока нет сыгранных матчей. 🏓", reply_markup=back_to_menu_kb()
+        )
+        await callback.answer()
+        return
 
     week_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
     active_7day: set[int] = {
@@ -352,7 +362,11 @@ async def show_dominance_matrix(callback: CallbackQuery, session: AsyncSession):
         for pid in (m.challenger_id, m.challenged_id):
             match_count[pid] = match_count.get(pid, 0) + 1
 
-    players_sorted = sorted(all_players, key=lambda p: (match_count.get(p.id, 0) == 0, -p.rating))
+    # Игроки без сыгранных матчей в матрице не показываются
+    players_sorted = sorted(
+        (p for p in all_players if match_count.get(p.id, 0) > 0),
+        key=lambda p: -p.rating,
+    )
 
     cap = 8
     capped = len(players_sorted) > cap
