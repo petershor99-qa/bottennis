@@ -165,6 +165,10 @@ def player_profile_kb(
         callback_data=f"player_history_{player_id}_0",
     ))
     b.row(InlineKeyboardButton(
+        text="📊 График рейтинга",
+        callback_data=f"player_chart_{player_id}",
+    ))
+    b.row(InlineKeyboardButton(
         text="🏅 Достижения",
         callback_data=f"player_achievements_{player_id}",
     ))
