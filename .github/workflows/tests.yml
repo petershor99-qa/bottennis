@@ -60,3 +60,50 @@ jobs:
             cd /opt/bottennis
             git pull --ff-only
             systemctl restart bottennis
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [lint, pytest]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version and notes from RELEASE_NOTES.md
+        id: extract
+        run: |
+          python3 - <<'EOF'
+          import re, os, sys
+
+          text = open("RELEASE_NOTES.md").read()
+          m = re.search(r'^## (v[\d.]+)', text, re.MULTILINE)
+          if not m:
+              print("No version heading found in RELEASE_NOTES.md", file=sys.stderr)
+              sys.exit(1)
+          version = m.group(1)
+          start = m.end()
+          end = text.find('\n---', start)
+          notes = text[start:end].strip() if end != -1 else text[start:].strip()
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"version={version}\n")
+          with open('release_body.md', 'w') as f:
+              f.write(notes)
+          print(f"Extracted: {version}, notes length: {len(notes)}")
+          EOF
+
+      - name: Create GitHub Release (idempotent)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.extract.outputs.version }}"
+          if gh release view "$VERSION" > /dev/null 2>&1; then
+            echo "Release $VERSION already exists, skipping."
+          else
+            gh release create "$VERSION" \
+              --title "$VERSION" \
+              --notes-file release_body.md \
+              --latest
+          fi
