@@ -853,3 +853,79 @@ async def test_daily_summary_new_sections(monkeypatch):
     assert "Чаще всего самбовались" in text
     assert "3 победы подряд" in text       # текущая серия Alice
     assert "Отрицательный рост" in text     # Bob ушёл в минус
+    assert "Матчи дня:" in text             # общий лог матчей со счётом
+
+
+async def test_weekly_digest_standings_and_heroes(monkeypatch):
+    """Итоги недели: компактный «Топ недели» вместо списка матчей + новые герои."""
+    import bot.scheduler as sched
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    async with factory() as s:
+        p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+        s.add_all([p1, p2])
+        await s.flush()
+        for i in range(3):  # Alice 3–0 над Bob за неделю
+            s.add(_completed(p1, p2, p1.id, 10.0, now - timedelta(hours=5 - i)))
+        # драматичный матч недели — дьюсы, решилось в 3-й партии (drama ≥ 8)
+        s.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.completed, winner_id=p1.id,
+            sets_data=[{"w": 12, "l": 10}, {"w": 10, "l": 12}, {"w": 12, "l": 10}],
+            rating_change=10.0, completed_at=now - timedelta(hours=1),
+        ))
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.send_weekly_digest(bot)
+    await engine.dispose()
+
+    text = bot.send_message.call_args_list[0][0][1]
+    assert "Топ недели" in text                # стендинг вместо списка матчей
+    assert "Матчи:" not in text                # длинного списка матчей больше нет
+    assert "Чаще всего самбовались" in text     # дерби недели
+    assert "Нагибатель недели" in text          # серия за неделю
+    assert "Матч недели" in text
+    assert "Отрицательный рост" in text
+
+
+async def test_monthly_summary_renamed_and_heroes(monkeypatch):
+    """Итоги месяца: «Тяжелее всех» → «Отрицательный рост» + дерби/нагибатель."""
+    import bot.scheduler as sched
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    # Окно прошлого месяца вычисляем так же, как функция — чтобы тест не зависел от даты
+    msk_now = datetime.now(timezone.utc).replace(tzinfo=None) + sched.MSK_OFFSET
+    month_end = msk_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    prev_last = month_end - timedelta(days=1)
+    month_start = prev_last.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    inside = (month_start + timedelta(days=10)) - sched.MSK_OFFSET
+
+    async with factory() as s:
+        p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+        s.add_all([p1, p2])
+        await s.flush()
+        for i in range(3):  # Alice 3–0 над Bob в прошлом месяце
+            s.add(_completed(p1, p2, p1.id, 10.0, inside + timedelta(hours=i)))
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.send_monthly_summary(bot)
+    await engine.dispose()
+
+    text = bot.send_message.call_args_list[0][0][1]
+    assert "Отрицательный рост" in text
+    assert "Тяжелее всех" not in text
+    assert "Чаще всего самбовались" in text
+    assert "Нагибатель месяца" in text
