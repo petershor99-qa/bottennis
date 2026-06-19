@@ -485,39 +485,41 @@ async def show_dominance_matrix(callback: CallbackQuery, session: AsyncSession):
         if wi is not None and li is not None:
             wins[wi][li] += 1
 
-    # Сетку индексируем номерами (1..N): в моноширинном блоке ровно выравниваются
-    # только ASCII-цифры. Кириллические имена на мобильном Telegram рендерятся не
-    # моноширинно (шрифт-фолбэк), из-за чего столбцы «разъезжались». Имена вынесены
-    # в легенду над сеткой, а сама сетка использует <pre> (горизонтальный скролл,
-    # без переноса строк) вместо <code> (перенос ломал таблицу).
-    names = [p.display_name for p in top]
-    legend = "\n".join(f"<b>{i + 1}.</b> {h(nm)}" for i, nm in enumerate(names))
+    # Подписи игроков — обрезанные имена. Длину обрезки подбираем минимальной, при
+    # которой все подписи остаются уникальными (обычно 4 символа; больше — если есть
+    # тёзки по началу имени). Сетка идёт в <pre>: это настоящий моноширинный блок, в
+    # нём буквы (в т.ч. кириллица) выравниваются так же ровно, как цифры, и длинная
+    # строка скроллится вбок, а не переносится (в инлайн-<code> и то и другое ломало
+    # столбцы на мобильном).
+    full = [p.display_name for p in top]
+    label_len = 4
+    while label_len < 12 and len({nm[:label_len] for nm in full}) < n:
+        label_len += 1
+    labels = [nm[:label_len] for nm in full]
 
-    idx = [str(i + 1) for i in range(n)]
     max_cell_len = max(
         len(f"{wins[i][j]}-{wins[j][i]}")
         for i in range(n) for j in range(n) if i != j
     )
-    col_w = max(max_cell_len, len(idx[-1]))
-    row_w = len(idx[-1])
+    col_w = max(max_cell_len, max(len(lbl) for lbl in labels))
+    row_w = max(len(lbl) for lbl in labels)
 
-    header = " " * (row_w + 1) + " ".join(s.rjust(col_w) for s in idx)
+    header = " " * (row_w + 1) + " ".join(lbl.rjust(col_w) for lbl in labels)
     rows = [header]
     for i in range(n):
         cells = []
         for j in range(n):
             cell = "—" if i == j else f"{wins[i][j]}-{wins[j][i]}"
             cells.append(cell.rjust(col_w))
-        rows.append(idx[i].rjust(row_w) + " " + " ".join(cells))
+        rows.append(labels[i].ljust(row_w) + " " + " ".join(cells))
 
     table = "\n".join(rows)
     cap_note = "\n<i>Показаны топ-8 по рейтингу</i>" if capped else ""
     text = (
         f"⚔️ <b>Матрица доминирования</b>{cap_note}\n\n"
-        f"{legend}\n\n"
         f"<pre>{table}</pre>\n"
-        f"<i>Строка — игрок, столбец — соперник (по номерам выше): сколько раз "
-        f"обыграл его (победы-поражения).</i>"
+        f"<i>Строка — игрок, столбец — соперник: сколько раз обыграл его "
+        f"(победы-поражения).</i>"
     )
 
     await callback.message.edit_text(
