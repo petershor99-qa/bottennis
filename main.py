@@ -11,6 +11,8 @@ import logging
 import os
 
 from aiogram import Bot, Dispatcher, F
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.filters import ExceptionTypeFilter
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -79,7 +81,10 @@ async def main() -> None:
     if not token:
         raise RuntimeError("BOT_TOKEN не задан в .env файле")
 
-    bot = Bot(token=token)
+    # parse_mode="HTML" по умолчанию для всех сообщений — больше не нужно
+    # указывать его в каждом вызове send_message/edit_text. Защищает от класса
+    # багов «забыл parse_mode → сырые теги / сломанный рендер».
+    bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher(storage=MemoryStorage())
 
     dp.update.middleware(DatabaseMiddleware(async_session))

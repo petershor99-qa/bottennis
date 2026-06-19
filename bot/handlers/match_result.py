@@ -52,7 +52,7 @@ async def _notify_achievements(bot: Bot, player, new_ids: list[str]) -> None:
         lines = "\n".join(f"{a.emoji} <b>{a.name}</b> — <i>{a.desc}</i>" for a in achs)
         text = f"🏅 <b>Новые достижения!</b>\n\n{lines}"
     try:
-        await bot.send_message(player.telegram_id, text, parse_mode="HTML")
+        await bot.send_message(player.telegram_id, text)
     except Exception:
         pass
 
@@ -220,7 +220,7 @@ async def _send_winner_eggs(bot: Bot, winner: Player, loser: Player, ctx: dict) 
     if ctx["first_time_top1"]:
         await _msg("👑 Трон твой. Пока.")
     if ctx["first_blood"]:
-        await _msg(f"🩸 Первая кровь — <b>{h(loser.display_name)}</b>", parse_mode="HTML")
+        await _msg(f"🩸 Первая кровь — <b>{h(loser.display_name)}</b>")
     if ctx["loss_streak_before"] >= 3:
         await _msg("💪 Вылез из жопы")
 
@@ -231,7 +231,7 @@ async def _send_winner_eggs(bot: Bot, winner: Player, loser: Player, ctx: dict) 
             if total == 500
             else f"🎯 Юбилей! Это твой <b>{total}-й</b> матч!"
         )
-        await _msg(milestone, parse_mode="HTML")
+        await _msg(milestone)
 
 
 async def _send_loser_eggs(
@@ -259,7 +259,7 @@ async def _send_loser_eggs(
             if total == 500
             else f"🎯 Юбилей! Это твой <b>{total}-й</b> матч!"
         )
-        await _msg(milestone, parse_mode="HTML")
+        await _msg(milestone)
 
 
 async def _send_easter_eggs(
@@ -360,7 +360,6 @@ async def start_report(callback: CallbackQuery, session: AsyncSession, state: FS
         "Например: <code>11:7</code>\n"
         "<i>Или сразу все партии: <code>11:7 9:11 11:8</code></i>",
         reply_markup=after_set_kb(match_id, has_sets=False),
-        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -420,7 +419,6 @@ async def finish_sets(callback: CallbackQuery, state: FSMContext, session: Async
         await callback.message.edit_text(
             "⚠️ Матч уже завершён или отменён — возможно, соперник внёс результат раньше тебя.",
             reply_markup=main_menu_kb(),
-            parse_mode="HTML",
         )
         await callback.answer()
         return
@@ -450,7 +448,6 @@ async def finish_sets(callback: CallbackQuery, state: FSMContext, session: Async
         f"{summary}\n\n"
         f"Всё верно?",
         reply_markup=_confirm_kb(match_id),
-        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -470,7 +467,6 @@ async def undo_set(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         _sets_progress_text(sets_data),
         reply_markup=after_set_kb(match_id, has_sets=bool(sets_data)),
-        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -507,7 +503,6 @@ async def handle_direct_score(message: Message, session: AsyncSession, state: FS
             "У тебя несколько активных матчей. "
             "Выбери нужный через 🎮 <b>Мои матчи</b> → «📋 Внести результат».",
             reply_markup=main_menu_kb(),
-            parse_mode="HTML",
         )
         return
     match = active[0]
@@ -533,7 +528,7 @@ async def process_set_score(message: Message, state: FSMContext):
     match_id: int = data["match_id"]
 
     if not message.text:
-        await message.answer("Введи счёт текстом, например <code>11:7</code>:", parse_mode="HTML")
+        await message.answer("Введи счёт текстом, например <code>11:7</code>:")
         return
 
     # Принимаем и двоеточие, и дефис как разделитель: 11:7 или 11-7
@@ -544,7 +539,6 @@ async def process_set_score(message: Message, state: FSMContext):
         if len(sets_data) + len(tokens) > MAX_SETS:
             await message.answer(
                 f"⚠️ Максимум {MAX_SETS} партий в матче.",
-                parse_mode="HTML",
             )
             return
         new_sets = []
@@ -553,7 +547,6 @@ async def process_set_score(message: Message, state: FSMContext):
                 await message.answer(
                     f"⚠️ Не могу прочитать <code>{token}</code>.\n"
                     f"Формат: <code>11:7 9:11 11:8</code>",
-                    parse_mode="HTML",
                 )
                 return
             try:
@@ -561,21 +554,19 @@ async def process_set_score(message: Message, state: FSMContext):
             except ValueError:
                 await message.answer(
                     f"⚠️ Только цифры. Проблема в <code>{token}</code>",
-                    parse_mode="HTML",
                 )
                 return
             err = validate_set_score(my_s, op_s)
             if err == "negative":
-                await message.answer(f"⚠️ Отрицательный счёт: <code>{token}</code>", parse_mode="HTML")
+                await message.answer(f"⚠️ Отрицательный счёт: <code>{token}</code>")
                 return
             if err == "draw":
-                await message.answer(f"⚠️ В партии не может быть ничьей: <code>{token}</code>", parse_mode="HTML")
+                await message.answer(f"⚠️ В партии не может быть ничьей: <code>{token}</code>")
                 return
             if err == "invalid":
                 await message.answer(
                     f"⚠️ Некорректный счёт <code>{token}</code>\n"
                     f"Партия — до 11 с отрывом ≥2 (дьюс: 12:10, 13:11…)",
-                    parse_mode="HTML",
                 )
                 return
             new_sets.append({"reporter": my_s, "opponent": op_s})
@@ -584,7 +575,6 @@ async def process_set_score(message: Message, state: FSMContext):
         sent = await message.answer(
             _sets_progress_text(sets_data),
             reply_markup=after_set_kb(match_id, has_sets=True),
-            parse_mode="HTML",
         )
         await state.update_data(
             sets_data=sets_data,
@@ -598,14 +588,13 @@ async def process_set_score(message: Message, state: FSMContext):
     if ":" not in raw:
         await message.answer(
             "Неверный формат. Введи счёт через двоеточие, например <code>11:7</code>:",
-            parse_mode="HTML",
         )
         return
 
     try:
         my_score, opp_score = map(int, raw.split(":", 1))
     except ValueError:
-        await message.answer("Только цифры, например <code>11:7</code>:", parse_mode="HTML")
+        await message.answer("Только цифры, например <code>11:7</code>:")
         return
 
     error = validate_set_score(my_score, opp_score)
@@ -621,7 +610,6 @@ async def process_set_score(message: Message, state: FSMContext):
             "Партия играется до <b>11 очков</b> с отрывом ≥2.\n"
             "При дьюсе: <code>12:10</code>, <code>13:11</code> и т.д.\n\n"
             "Введи счёт ещё раз:",
-            parse_mode="HTML",
         )
         return
 
@@ -633,7 +621,6 @@ async def process_set_score(message: Message, state: FSMContext):
     sent = await message.answer(
         _sets_progress_text(sets_data),
         reply_markup=after_set_kb(match_id, has_sets=True),
-        parse_mode="HTML",
     )
     await state.update_data(
         sets_data=sets_data,
@@ -657,7 +644,6 @@ async def redo_result(callback: CallbackQuery, state: FSMContext):
         "Введи счёт <b>партии 1</b> — <b>твои:соперника</b>\n"
         "Например: <code>11:7</code>",
         reply_markup=after_set_kb(match_id, has_sets=False),
-        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -778,7 +764,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             f"<b>{round(challenged.rating, 1)}</b> ({_fmt_delta(actual_challenged_delta)})"
         )
         draw_opponent_id = challenged.id if reporter_player_id == match.challenger_id else challenger.id
-        await callback.message.edit_text(result_text, reply_markup=rematch_kb(draw_opponent_id), parse_mode="HTML")
+        await callback.message.edit_text(result_text, reply_markup=rematch_kb(draw_opponent_id))
 
         # Уведомляем второго участника (того, кто не вносил результат)
         notify_player = challenged if reporter_player_id == match.challenger_id else challenger
@@ -800,7 +786,6 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                 f"Счёт партий: {notify_sets_str}\n\n"
                 f"Твой рейтинг: {round(notify_old, 1)} → <b>{round(notify_player.rating, 1)}</b> ({_fmt_delta(notify_actual_delta)})",
                 reply_markup=main_menu_kb(),
-                parse_mode="HTML",
             )
         except Exception:
             pass
@@ -942,7 +927,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             f"  {h(loser.display_name)}: {round(old_loser_rating, 1)} → <b>{round(loser.rating, 1)}</b> ({loser_delta_str})"
         )
         reporter_opponent_id = loser_db_id if reporter_player_id == winner_db_id else winner_db_id
-        await callback.message.edit_text(result_text, reply_markup=rematch_kb(reporter_opponent_id), parse_mode="HTML")
+        await callback.message.edit_text(result_text, reply_markup=rematch_kb(reporter_opponent_id))
 
         if reporter_player_id == winner_db_id:
             # Репортёр — победитель: уведомляем проигравшего
@@ -954,7 +939,6 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                     f"Счёт партий: {sets_str}\n\n"
                     f"Твой рейтинг: {round(old_loser_rating, 1)} → <b>{round(loser.rating, 1)}</b> ({loser_delta_str})",
                     reply_markup=main_menu_kb(),
-                    parse_mode="HTML",
                 )
             except Exception:
                 pass
@@ -968,7 +952,6 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                     f"Счёт партий: {sets_str}\n\n"
                     f"Твой рейтинг: {round(old_winner_rating, 1)} → <b>{round(winner.rating, 1)}</b> (+{delta})",
                     reply_markup=main_menu_kb(),
-                    parse_mode="HTML",
                 )
             except Exception:
                 pass
@@ -1015,7 +998,6 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                     f"💀 <b>То что мертво — умереть не может.</b>\n\n"
                     f"Ты победил <b>{h(loser.display_name)}</b> уже {consecutive} раз подряд.\n"
                     f"Попробуй выбрать ещё какого-нибудь соперника 😏",
-                    parse_mode="HTML",
                 )
             except Exception:
                 pass

@@ -80,7 +80,6 @@ async def show_rating_history(callback: CallbackQuery, session: AsyncSession):
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=rating_history_kb(),
-        parse_mode="HTML",
     )
 
 
@@ -133,7 +132,6 @@ async def _send_rating_chart(
                 f"Сейчас: <b>{round(target.rating, 1)} pts</b>  "
                 f"<i>(последние {len(values)} матчей)</i>"
             ),
-            parse_mode="HTML",
         )
         _last_chart_msg[chat_id] = sent.message_id
         await callback.answer()
@@ -215,7 +213,6 @@ async def show_match_history(callback: CallbackQuery, session: AsyncSession):
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=history_kb(page, total_pages),
-        parse_mode="HTML",
     )
 
 
@@ -258,7 +255,6 @@ async def show_player_match_history(callback: CallbackQuery, session: AsyncSessi
         await callback.message.edit_text(
             f"У <b>{h(player.display_name)}</b> пока нет сыгранных матчей. 🏓",
             reply_markup=player_profile_kb(target_id, viewer_id=viewer_id),
-            parse_mode="HTML",
         )
         return
 
@@ -276,7 +272,6 @@ async def show_player_match_history(callback: CallbackQuery, session: AsyncSessi
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=player_history_kb(target_id, page, total_pages),
-        parse_mode="HTML",
     )
 
 
@@ -328,7 +323,6 @@ async def show_h2h(callback: CallbackQuery, session: AsyncSession):
         await callback.message.edit_text(
             f"{title}\nВы ещё не встречались за столом 🏓",
             reply_markup=h2h_kb(target_id),
-            parse_mode="HTML",
         )
         return
 
@@ -365,7 +359,6 @@ async def show_h2h(callback: CallbackQuery, session: AsyncSession):
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=h2h_kb(target_id, page, total_pages),
-        parse_mode="HTML",
     )
 
 
@@ -487,5 +480,4 @@ async def show_my_matches(callback: CallbackQuery, session: AsyncSession):
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=builder.as_markup(),
-        parse_mode="HTML",
     )

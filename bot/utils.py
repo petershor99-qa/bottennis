@@ -7,7 +7,7 @@ from html import escape as h
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import Match, Player
+from bot.db.models import Match, MatchStatus, Player
 
 MSK_OFFSET = timedelta(hours=3)
 
@@ -112,6 +112,46 @@ def pluralize_wins(n: int) -> str:
 async def get_player(session: AsyncSession, telegram_id: int) -> Player | None:
     r = await session.execute(select(Player).where(Player.telegram_id == telegram_id))
     return r.scalar_one_or_none()
+
+
+# ── Ранги игроков (единый источник правды) ───────────────────────────────────
+# Лидерборд показывает только игроков с ≥1 сыгранным матчем. Чтобы «#N из M»
+# совпадал на всех экранах (/start, профиль, статистика, список вызова, дайджест),
+# ранг считается ОДНОЙ функцией среди игравших — игроки с 0 матчей вне рейтинга.
+
+
+async def get_match_counts(session: AsyncSession) -> dict[int, int]:
+    """Число завершённых матчей у каждого игрока: {player_id: count}."""
+    r = await session.execute(
+        select(Match.challenger_id, Match.challenged_id).where(
+            Match.status == MatchStatus.completed
+        )
+    )
+    counts: dict[int, int] = {}
+    for a, b in r.all():
+        counts[a] = counts.get(a, 0) + 1
+        counts[b] = counts.get(b, 0) + 1
+    return counts
+
+
+def compute_ranks(players: list[Player], match_counts: dict[int, int]) -> dict[int, int]:
+    """Ранг среди игравших (рейтинг по убыванию). {player_id: rank}, rank с 1.
+
+    Игроки с 0 матчей в рейтинг-таблицу не входят (как на лидерборде) и в
+    результат не попадают. Не путать с проверками «кто #1 по рейтингу» в ачивках
+    и пасхалках — там сравнивается чистый рейтинг, а не место в таблице.
+    """
+    ranked = sorted(
+        (p for p in players if match_counts.get(p.id, 0) > 0),
+        key=lambda p: -p.rating,
+    )
+    return {p.id: i + 1 for i, p in enumerate(ranked)}
+
+
+def format_rank(ranks: dict[int, int], player_id: int) -> str:
+    """«#N из M» для игравшего, либо «вне рейтинга» для игрока с 0 матчей."""
+    r = ranks.get(player_id)
+    return f"#{r} из {len(ranks)}" if r else "вне рейтинга"
 
 
 # ── «Матч дня» — индекс драмы ────────────────────────────────────────────────

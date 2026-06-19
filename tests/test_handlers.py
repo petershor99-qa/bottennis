@@ -25,7 +25,10 @@ from bot.states.states import MatchResultStates
 from bot.utils import (
     MSK_OFFSET,
     compute_alltime_streak,
+    compute_ranks,
     env_int,
+    format_rank,
+    get_match_counts,
     get_rec_signal,
     msk_day_start,
     pluralize_sets,
@@ -399,6 +402,48 @@ def test_alltime_streak_all_wins():
 def test_alltime_streak_no_wins():
     ms = [_match_result(_OID)] * 3
     assert compute_alltime_streak(ms, _VID) == 0
+
+
+# ── Ранги: единый источник правды (только среди игравших) ─────────────────────
+
+def test_compute_ranks_excludes_zero_match_players():
+    players = [
+        SimpleNamespace(id=1, rating=1100.0),
+        SimpleNamespace(id=2, rating=1000.0),
+        SimpleNamespace(id=3, rating=1200.0),  # 0 матчей — вне рейтинга
+    ]
+    ranks = compute_ranks(players, {1: 5, 2: 3})  # у игрока 3 матчей нет
+    assert ranks == {1: 1, 2: 2}
+    assert 3 not in ranks  # самый высокий рейтинг, но без матчей — не ранжируется
+
+
+def test_compute_ranks_orders_by_rating_desc():
+    players = [SimpleNamespace(id=1, rating=950.0), SimpleNamespace(id=2, rating=1050.0)]
+    assert compute_ranks(players, {1: 1, 2: 1}) == {2: 1, 1: 2}
+
+
+def test_format_rank_ranked_and_unranked():
+    ranks = {1: 1, 2: 2}
+    assert format_rank(ranks, 1) == "#1 из 2"
+    assert format_rank(ranks, 2) == "#2 из 2"
+    assert format_rank(ranks, 99) == "вне рейтинга"  # нет матчей
+
+
+async def test_get_match_counts_ignores_non_completed(db):
+    a, b, c = _player(1, "A"), _player(2, "B"), _player(3, "C")
+    db.add_all([a, b, c])
+    await db.commit()
+    # завершённый матч a vs b — считается обоим
+    db.add(Match(
+        challenger_id=a.id, challenged_id=b.id,
+        status=MatchStatus.completed, winner_id=a.id,
+    ))
+    # активный матч a vs c — НЕ считается
+    db.add(Match(challenger_id=a.id, challenged_id=c.id, status=MatchStatus.accepted))
+    await db.commit()
+
+    counts = await get_match_counts(db)
+    assert counts == {a.id: 1, b.id: 1}  # accepted не в счёт; c без завершённых отсутствует
 
 
 # ── _nearest_achievement_progress ────────────────────────────────────────────────
