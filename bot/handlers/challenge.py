@@ -119,7 +119,6 @@ async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSess
             my_rating=my_rating, rank_map=rank_map,
             streak_map=streak_map, inactive_ids=inactive_ids,
         ),
-        parse_mode="HTML",
     )
 
 
@@ -212,7 +211,6 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
             f"<i>«{opponent_phrase}»</i>\n\n"
             f"<i>После игры напиши счёт сюда — например: <code>11:7 9:11 11:5</code></i>",
             reply_markup=active_match_kb(match.id),
-            parse_mode="HTML",
         )
     except Exception:
         await session.delete(match)
@@ -235,7 +233,6 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
         f"<i>«{win_phrase}»</i>\n\n"
         f"<i>После игры напиши счёт сюда — например: <code>11:7 9:11 11:5</code></i>",
         reply_markup=active_match_kb(match.id),
-        parse_mode="HTML",
     )
 
     # Пасхалка: вызвал текущего лидера рейтинга
@@ -282,7 +279,6 @@ async def cancel_match(callback: CallbackQuery, session: AsyncSession):
     await callback.message.edit_text(
         f"❓ Точно отменить матч с <b>{h(opponent.display_name)}</b>?",
         reply_markup=cancel_match_confirm_kb(match_id),
-        parse_mode="HTML",
     )
 
 
@@ -327,7 +323,6 @@ async def do_cancel_match(callback: CallbackQuery, session: AsyncSession, bot: B
     await callback.message.edit_text(
         f"❌ Матч с <b>{h(opponent.display_name)}</b> отменён.",
         reply_markup=back_to_menu_kb(),
-        parse_mode="HTML",
     )
 
     try:
@@ -335,7 +330,6 @@ async def do_cancel_match(callback: CallbackQuery, session: AsyncSession, bot: B
             opponent.telegram_id,
             f"❌ <b>{h(player.display_name)}</b> отменил матч с тобой.",
             reply_markup=main_menu_kb(),
-            parse_mode="HTML",
         )
     except Exception:
         pass
@@ -354,7 +348,6 @@ async def do_cancel_match(callback: CallbackQuery, session: AsyncSession, bot: B
                 await bot.send_message(
                     pl.telegram_id,
                     f"🏅 <b>Новое достижение!</b>\n\n{a.emoji} <b>{a.name}</b>\n<i>{a.desc}</i>",
-                    parse_mode="HTML",
                 )
             except Exception:
                 pass

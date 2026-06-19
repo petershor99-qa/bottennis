@@ -298,7 +298,6 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
             f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — #{rank} из {total}\n\n"
             f"Ты ещё не сыграл ни одного матча.\nВызови кого-нибудь! 🏓",
             reply_markup=stats_kb(),
-            parse_mode="HTML",
         )
         return
 
@@ -331,7 +330,6 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=stats_kb(),
-        parse_mode="HTML",
     )
 
 
@@ -413,7 +411,6 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=player_profile_kb(player.id, viewer_id=viewer_id, can_challenge=can_challenge),
-        parse_mode="HTML",
     )
 
 
@@ -445,7 +442,7 @@ async def show_my_achievements(callback: CallbackQuery, session: AsyncSession):
     await callback.answer()
     earned = get_achievements(player)
     text = _render_achievements(earned, "Мои достижения")
-    await callback.message.edit_text(text, reply_markup=achievements_kb(), parse_mode="HTML")
+    await callback.message.edit_text(text, reply_markup=achievements_kb())
 
 
 @router.callback_query(F.data.startswith("player_achievements_"))
@@ -466,5 +463,4 @@ async def show_player_achievements(callback: CallbackQuery, session: AsyncSessio
     await callback.message.edit_text(
         text,
         reply_markup=player_achievements_kb(target_id),
-        parse_mode="HTML",
     )

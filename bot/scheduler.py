@@ -105,7 +105,6 @@ async def send_match_reminders(bot: Bot) -> None:
                         f"Сыграйте и внесите результат! 🏓\n\n"
                         f"<i>Напиши счёт прямо сюда — например: <code>11:7 9:11 11:5</code></i>",
                         reply_markup=active_match_kb(match.id),
-                        parse_mode="HTML",
                     )
                 except Exception:
                     pass
@@ -313,7 +312,7 @@ async def send_weekly_digest(bot: Bot) -> None:
 
             text = header + "\n" + club_block
             try:
-                await bot.send_message(player.telegram_id, text, parse_mode="HTML")
+                await bot.send_message(player.telegram_id, text)
             except Exception:
                 pass
 
@@ -482,7 +481,7 @@ async def send_daily_summary(bot: Bot) -> None:
         text = "\n".join(lines)
         for p in players:
             try:
-                await bot.send_message(p.telegram_id, text, parse_mode="HTML")
+                await bot.send_message(p.telegram_id, text)
             except Exception:
                 pass
 
@@ -645,7 +644,7 @@ async def send_monthly_summary(bot: Bot) -> None:
         text = "\n".join(lines)
         for p in players:
             try:
-                await bot.send_message(p.telegram_id, text, parse_mode="HTML")
+                await bot.send_message(p.telegram_id, text)
             except Exception:
                 pass
 

@@ -30,7 +30,7 @@ def _is_admin(message: Message) -> bool:
 async def _send(message: Message, text: str) -> None:
     """Отправить длинный текст, при необходимости разбив на части."""
     for i in range(0, len(text), 4000):
-        await message.answer(text[i:i + 4000], parse_mode="HTML")
+        await message.answer(text[i:i + 4000])
 
 
 # ── /myid ──────────────────────────────────────────────────────────────────────
@@ -38,7 +38,7 @@ async def _send(message: Message, text: str) -> None:
 @router.message(Command("myid"))
 async def cmd_myid(message: Message) -> None:
     """Показывает Telegram ID текущего пользователя."""
-    await message.answer(f"Твой Telegram ID: <code>{message.from_user.id}</code>", parse_mode="HTML")
+    await message.answer(f"Твой Telegram ID: <code>{message.from_user.id}</code>")
 
 
 # ── /dbstats ──────────────────────────────────────────────────────────────────
@@ -52,7 +52,6 @@ async def cmd_dbstats(message: Message, session: AsyncSession) -> None:
                 f"Твой ID: <code>{message.from_user.id}</code>\n\n"
                 "Добавь переменную <code>ADMIN_ID</code> в <code>.env</code> с этим значением, "
                 "затем перезапусти бота и повтори команду.",
-                parse_mode="HTML",
             )
         return
 
