@@ -6,14 +6,14 @@ from aiogram.filters import Command, CommandStart
 from aiogram.filters.command import CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import back_to_menu_kb, main_menu_kb
 from bot.services.achievements import ACHIEVEMENTS_LIST
-from bot.utils import env_int, get_player
+from bot.utils import compute_ranks, env_int, format_rank, get_match_counts, get_player
 
 router = Router()
 
@@ -52,20 +52,15 @@ async def cmd_start(message: Message, command: CommandObject, session: AsyncSess
             except Exception:
                 pass
 
-        rank_r = await session.execute(
-            select(func.count()).select_from(Player).where(Player.rating > player.rating)
-        )
-        rank = rank_r.scalar() + 1
-        total_r = await session.execute(select(func.count()).select_from(Player))
-        total = total_r.scalar()
+        players_all = (await session.execute(select(Player))).scalars().all()
+        ranks = compute_ranks(players_all, await get_match_counts(session))
         active = await _active_matches_for(session, player)
         active_hint = "\n\n⚔️ <b>Есть активный матч!</b> Внеси результат ниже 👇" if active else ""
         sent = await message.answer(
             f"Привет, <b>{h(player.display_name)}</b>! 🏓\n"
-            f"Рейтинг: <b>{round(player.rating, 1)}</b> pts — #{rank} из {total}"
+            f"Рейтинг: <b>{round(player.rating, 1)}</b> pts — {format_rank(ranks, player.id)}"
             f"{active_hint}",
             reply_markup=main_menu_kb(active_matches=active),
-            parse_mode="HTML",
         )
         player.last_menu_message_id = sent.message_id
         await session.commit()
@@ -94,7 +89,6 @@ async def cmd_start(message: Message, command: CommandObject, session: AsyncSess
         f"Ты добавлен в список игроков с рейтингом <b>1000</b> pts. 🏓\n\n"
         f"Вызывай соперников и побеждай!",
         reply_markup=main_menu_kb(),
-        parse_mode="HTML",
     )
     player.last_menu_message_id = sent.message_id
     await session.commit()
@@ -158,7 +152,6 @@ async def cmd_help(message: Message):
         "<b>Рейтинг:</b> модифицированный ELO.\n"
         "Чем слабее соперник — тем меньше очков за победу.\n"
         "Разгром в партиях даёт больше очков, чем победа 3:2.",
-        parse_mode="HTML",
         reply_markup=main_menu_kb(),
     )
 
@@ -179,7 +172,6 @@ async def cmd_fix_rating(message: Message, session: AsyncSession):
         await message.answer(
             "Использование: <code>/fix_rating @username +18.3</code>\n"
             "Пример: <code>/fix_rating @petya -15.0</code>",
-            parse_mode="HTML",
         )
         return
 
@@ -189,7 +181,6 @@ async def cmd_fix_rating(message: Message, session: AsyncSession):
     except ValueError:
         await message.answer(
             "Неверный формат дельты. Пример: <code>+18.3</code> или <code>-15.0</code>",
-            parse_mode="HTML",
         )
         return
 
@@ -211,7 +202,6 @@ async def cmd_fix_rating(message: Message, session: AsyncSession):
         f"✅ <b>Рейтинг скорректирован</b>\n\n"
         f"👤 {h(player.display_name)} (@{username})\n"
         f"📊 {old_rating} → <b>{new_rating}</b> pts  <i>({sign}{delta})</i>",
-        parse_mode="HTML",
     )
 
 

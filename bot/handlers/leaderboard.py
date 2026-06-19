@@ -147,7 +147,6 @@ async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=leaderboard_kb(players),
-        parse_mode="HTML",
     )
 
 
@@ -174,7 +173,6 @@ async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
         await callback.message.edit_text(
             "📅 <b>Сегодня</b>\n\nМатчей пока не было. Первым сделай ход! 🏓",
             reply_markup=back_to_leaderboard_kb(),
-            parse_mode="HTML",
         )
         return
 
@@ -245,7 +243,6 @@ async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=back_to_leaderboard_kb(),
-        parse_mode="HTML",
     )
 
 
@@ -267,7 +264,6 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
         await callback.message.edit_text(
             "🏆 <b>Рекорды клуба</b>\n\nМатчей ещё не было.",
             reply_markup=back_to_leaderboard_kb(),
-            parse_mode="HTML",
         )
         return
 
@@ -431,7 +427,6 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=back_to_leaderboard_kb(),
-        parse_mode="HTML",
     )
 
 
@@ -453,7 +448,6 @@ async def show_dominance_matrix(callback: CallbackQuery, session: AsyncSession):
         await callback.message.edit_text(
             "⚔️ <b>Матрица доминирования</b>\n\nИгроков пока нет.",
             reply_markup=back_to_leaderboard_kb(),
-            parse_mode="HTML",
         )
         return
 
@@ -477,7 +471,6 @@ async def show_dominance_matrix(callback: CallbackQuery, session: AsyncSession):
         await callback.message.edit_text(
             "⚔️ <b>Матрица доминирования</b>\n\nНедостаточно игроков.",
             reply_markup=back_to_leaderboard_kb(),
-            parse_mode="HTML",
         )
         return
 
@@ -522,5 +515,4 @@ async def show_dominance_matrix(callback: CallbackQuery, session: AsyncSession):
     await callback.message.edit_text(
         text,
         reply_markup=back_to_leaderboard_kb(),
-        parse_mode="HTML",
     )
