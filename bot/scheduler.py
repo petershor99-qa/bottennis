@@ -666,34 +666,42 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         id="match_reminders",
     )
 
-    # Еженедельный дайджест — каждый понедельник в 9:00 МСК (06:00 UTC)
+    # ВАЖНО: каждому CronTrigger таймзона задаётся явно. CronTrigger без аргумента
+    # timezone берёт ЛОКАЛЬНУЮ tz сервера (get_localzone()), а не timezone самого
+    # AsyncIOScheduler — тот применяется только к триггерам, созданным из строки
+    # 'cron'. На сервере с локальной зоной Europe/Amsterdam расписание уезжало на
+    # 2 часа (итоги дня приходили в 19:30 вместо 21:30 МСК). Явный "Europe/Moscow"
+    # делает время независимым от настроек сервера, а часы заданы прямо в МСК.
+    msk = "Europe/Moscow"
+
+    # Еженедельный дайджест — каждый понедельник в 9:00 МСК
     scheduler.add_job(
         send_weekly_digest,
-        CronTrigger(day_of_week="mon", hour=6, minute=0),
+        CronTrigger(day_of_week="mon", hour=9, minute=0, timezone=msk),
         args=[bot],
         id="weekly_digest",
     )
 
-    # Итоги дня — каждый день в 21:30 МСК (18:30 UTC)
+    # Итоги дня — каждый день в 21:30 МСК
     scheduler.add_job(
         send_daily_summary,
-        CronTrigger(hour=18, minute=30),
+        CronTrigger(hour=21, minute=30, timezone=msk),
         args=[bot],
         id="daily_summary",
     )
 
-    # Offsite-бэкап БД админу — каждый понедельник в 9:30 МСК (06:30 UTC)
+    # Offsite-бэкап БД админу — каждый понедельник в 9:30 МСК
     scheduler.add_job(
         send_db_backup,
-        CronTrigger(day_of_week="mon", hour=6, minute=30),
+        CronTrigger(day_of_week="mon", hour=9, minute=30, timezone=msk),
         args=[bot],
         id="db_backup",
     )
 
-    # Итоги месяца — 1-го числа в 10:00 МСК (07:00 UTC)
+    # Итоги месяца — 1-го числа в 10:00 МСК
     scheduler.add_job(
         send_monthly_summary,
-        CronTrigger(day=1, hour=7, minute=0),
+        CronTrigger(day=1, hour=10, minute=0, timezone=msk),
         args=[bot],
         id="monthly_summary",
     )

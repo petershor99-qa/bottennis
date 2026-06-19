@@ -485,31 +485,39 @@ async def show_dominance_matrix(callback: CallbackQuery, session: AsyncSession):
         if wi is not None and li is not None:
             wins[wi][li] += 1
 
-    # Имена до 4 символов и один пробел между колонками: на телефоне <code>-блок
-    # переносится примерно после 30-35 символов, при 5 игроках строка должна влезть.
-    names = [p.display_name[:4] for p in top]
+    # Сетку индексируем номерами (1..N): в моноширинном блоке ровно выравниваются
+    # только ASCII-цифры. Кириллические имена на мобильном Telegram рендерятся не
+    # моноширинно (шрифт-фолбэк), из-за чего столбцы «разъезжались». Имена вынесены
+    # в легенду над сеткой, а сама сетка использует <pre> (горизонтальный скролл,
+    # без переноса строк) вместо <code> (перенос ломал таблицу).
+    names = [p.display_name for p in top]
+    legend = "\n".join(f"<b>{i + 1}.</b> {h(nm)}" for i, nm in enumerate(names))
+
+    idx = [str(i + 1) for i in range(n)]
     max_cell_len = max(
         len(f"{wins[i][j]}-{wins[j][i]}")
         for i in range(n) for j in range(n) if i != j
     )
-    col_w = max(max(len(nm) for nm in names), max_cell_len, 3)
-    row_w = max(len(nm) for nm in names)
+    col_w = max(max_cell_len, len(idx[-1]))
+    row_w = len(idx[-1])
 
-    header = " " * (row_w + 1) + " ".join(nm.center(col_w) for nm in names)
+    header = " " * (row_w + 1) + " ".join(s.rjust(col_w) for s in idx)
     rows = [header]
     for i in range(n):
         cells = []
         for j in range(n):
             cell = "—" if i == j else f"{wins[i][j]}-{wins[j][i]}"
-            cells.append(cell.center(col_w))
-        rows.append(names[i].ljust(row_w) + " " + " ".join(cells))
+            cells.append(cell.rjust(col_w))
+        rows.append(idx[i].rjust(row_w) + " " + " ".join(cells))
 
     table = "\n".join(rows)
     cap_note = "\n<i>Показаны топ-8 по рейтингу</i>" if capped else ""
     text = (
         f"⚔️ <b>Матрица доминирования</b>{cap_note}\n\n"
-        f"<code>{table}</code>\n\n"
-        f"<i>Строка: сколько раз победил соперника из столбца (победы-поражения).</i>"
+        f"{legend}\n\n"
+        f"<pre>{table}</pre>\n"
+        f"<i>Строка — игрок, столбец — соперник (по номерам выше): сколько раз "
+        f"обыграл его (победы-поражения).</i>"
     )
 
     await callback.message.edit_text(
