@@ -16,7 +16,7 @@ from bot.keyboards.inline import (
 )
 from bot.services.achievements import ACHIEVEMENTS_MAP, check_cancel_achievements
 from bot.services.rating import win_probability
-from bot.utils import get_player, match_phrase
+from bot.utils import compute_ranks, get_player, match_phrase
 
 router = Router()
 
@@ -61,7 +61,6 @@ async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSess
         await callback.message.edit_text(msg, reply_markup=back_to_menu_kb())
         return
 
-    rank_map = {p.id: i + 1 for i, p in enumerate(players)}
     my_rating = current_player.rating if current_player else None
 
     # Серии побед для 🔥
@@ -102,12 +101,15 @@ async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSess
             match_count_map[pid] = match_count_map.get(pid, 0) + 1
     others = sorted(others, key=lambda p: (match_count_map.get(p.id, 0) == 0, -p.rating))
 
+    # Ранг — единый для всех экранов: только среди игравших (как на лидерборде)
+    rank_map = compute_ranks(players, match_count_map)
+
     if current_player and current_player.id in rank_map:
         my_rank = rank_map[current_player.id]
         header = (
             f"Кого хочешь вызвать? 🏓\n"
             f"Твой рейтинг: <b>{round(current_player.rating, 1)}</b> pts "
-            f"(#{my_rank} из {len(players)})"
+            f"(#{my_rank} из {len(rank_map)})"
         )
     else:
         header = "Кого хочешь вызвать на матч? 🏓"

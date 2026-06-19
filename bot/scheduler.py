@@ -17,7 +17,9 @@ from bot.keyboards.inline import active_match_kb
 from bot.utils import (
     MSK_OFFSET,
     compute_alltime_streak,
+    compute_ranks,
     env_int,
+    get_match_counts,
     match_drama_reason,
     match_rating_delta,
     match_score_challenger_first,
@@ -128,9 +130,8 @@ async def send_weekly_digest(bot: Bot) -> None:
         players_result = await session.execute(select(Player))
         players = players_result.scalars().all()
 
-        # Ранжирование по рейтингу
-        sorted_players = sorted(players, key=lambda p: p.rating, reverse=True)
-        rank_map = {p.id: i + 1 for i, p in enumerate(sorted_players)}
+        # Ранжирование — единое с лидербордом: только среди игравших
+        rank_map = compute_ranks(players, await get_match_counts(session))
         player_name_map = {p.id: p.display_name for p in players}
 
         # ── Герои недели — агрегируем все матчи за неделю одним запросом ─────
@@ -270,7 +271,8 @@ async def send_weekly_digest(bot: Bot) -> None:
             )
             matches = matches_result.scalars().all()
 
-            rank = rank_map.get(player.id, 0)
+            rank = rank_map.get(player.id)
+            rank_suffix = f" — #{rank}" if rank else ""
             wins = sum(1 for m in matches if m.winner_id == player.id)
             draws = sum(1 for m in matches if m.winner_id is None)
             losses = len(matches) - wins - draws
@@ -297,7 +299,7 @@ async def send_weekly_digest(bot: Bot) -> None:
                 header = (
                     f"📊 <b>Итоги недели</b>\n\n"
                     f"На этой неделе матчей не было.\n"
-                    f"Твой рейтинг: <b>{round(player.rating, 1)}</b> pts — #{rank}\n"
+                    f"Твой рейтинг: <b>{round(player.rating, 1)}</b> pts{rank_suffix}\n"
                     f"{vanished_line}"
                     f"<i>«Ты либо занят жизнью, либо занят умиранием.»</i>\n"
                 )
@@ -307,7 +309,7 @@ async def send_weekly_digest(bot: Bot) -> None:
                     f"📊 <b>Итоги недели</b>\n\n"
                     f"🏆 Побед: <b>{wins}</b>{draws_str}  |  💔 Поражений: <b>{losses}</b>\n"
                     f"📈 Рейтинг: <b>{round(player.rating, 1)}</b> pts "
-                    f"({sign}{round(rating_delta, 1)}) — #{rank}\n"
+                    f"({sign}{round(rating_delta, 1)}){rank_suffix}\n"
                 )
 
             text = header + "\n" + club_block

@@ -6,14 +6,14 @@ from aiogram.filters import Command, CommandStart
 from aiogram.filters.command import CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import back_to_menu_kb, main_menu_kb
 from bot.services.achievements import ACHIEVEMENTS_LIST
-from bot.utils import env_int, get_player
+from bot.utils import compute_ranks, env_int, format_rank, get_match_counts, get_player
 
 router = Router()
 
@@ -52,17 +52,13 @@ async def cmd_start(message: Message, command: CommandObject, session: AsyncSess
             except Exception:
                 pass
 
-        rank_r = await session.execute(
-            select(func.count()).select_from(Player).where(Player.rating > player.rating)
-        )
-        rank = rank_r.scalar() + 1
-        total_r = await session.execute(select(func.count()).select_from(Player))
-        total = total_r.scalar()
+        players_all = (await session.execute(select(Player))).scalars().all()
+        ranks = compute_ranks(players_all, await get_match_counts(session))
         active = await _active_matches_for(session, player)
         active_hint = "\n\n⚔️ <b>Есть активный матч!</b> Внеси результат ниже 👇" if active else ""
         sent = await message.answer(
             f"Привет, <b>{h(player.display_name)}</b>! 🏓\n"
-            f"Рейтинг: <b>{round(player.rating, 1)}</b> pts — #{rank} из {total}"
+            f"Рейтинг: <b>{round(player.rating, 1)}</b> pts — {format_rank(ranks, player.id)}"
             f"{active_hint}",
             reply_markup=main_menu_kb(active_matches=active),
         )

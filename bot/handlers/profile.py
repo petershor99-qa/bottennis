@@ -4,7 +4,7 @@ from html import escape as h
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -16,7 +16,14 @@ from bot.keyboards.inline import (
     stats_kb,
 )
 from bot.services.achievements import ACHIEVEMENTS_LIST, ACHIEVEMENTS_MAP, get_achievements
-from bot.utils import _match_line, get_player, match_rating_delta
+from bot.utils import (
+    _match_line,
+    compute_ranks,
+    format_rank,
+    get_match_counts,
+    get_player,
+    match_rating_delta,
+)
 
 router = Router()
 
@@ -274,12 +281,9 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
 
     await callback.answer()
 
-    rank_r = await session.execute(
-        select(func.count()).select_from(Player).where(Player.rating > player.rating)
-    )
-    rank = rank_r.scalar() + 1
-    total_r = await session.execute(select(func.count()).select_from(Player))
-    total = total_r.scalar()
+    players_all = (await session.execute(select(Player))).scalars().all()
+    ranks = compute_ranks(players_all, await get_match_counts(session))
+    rank_str = format_rank(ranks, player.id)
 
     all_r = await session.execute(
         select(Match)
@@ -295,7 +299,7 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
     if not all_matches:
         await callback.message.edit_text(
             f"📈 <b>Статистика — {h(player.display_name)}</b>\n\n"
-            f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — #{rank} из {total}\n\n"
+            f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — {rank_str}\n\n"
             f"Ты ещё не сыграл ни одного матча.\nВызови кого-нибудь! 🏓",
             reply_markup=stats_kb(),
         )
@@ -307,7 +311,7 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
     draws_part = f"  |  🤝 Ничьих: <b>{s['draws']}</b>" if s["draws"] > 0 else ""
     lines = [
         f"📈 <b>Статистика — {h(player.display_name)}</b>\n",
-        f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — #{rank} из {total}",
+        f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — {rank_str}",
         f"🏆 Побед: <b>{s['wins']}</b>{draws_part}  |  💔 Поражений: <b>{s['losses']}</b>",
         f"📊 Матчи: <b>{s['win_rate']}%</b>  |  🎯 Партии: <b>{s['sets_win_rate']}%</b>",
     ]
@@ -318,7 +322,7 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
     if peak and peak > player.rating:
         lines.append(f"📈 Пик рейтинга: <b>{round(peak, 1)}</b> pts")
 
-    progress = _nearest_achievement_progress(player, s, total)
+    progress = _nearest_achievement_progress(player, s, len(players_all))
     if progress:
         lines.append(progress)
 
@@ -370,12 +374,9 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
         if active_r.scalar():
             can_challenge = False
 
-    rank_r = await session.execute(
-        select(func.count()).select_from(Player).where(Player.rating > player.rating)
-    )
-    rank = rank_r.scalar() + 1
-    total_r = await session.execute(select(func.count()).select_from(Player))
-    total = total_r.scalar()
+    players_all = (await session.execute(select(Player))).scalars().all()
+    ranks = compute_ranks(players_all, await get_match_counts(session))
+    rank_str = format_rank(ranks, player.id)
 
     all_r = await session.execute(
         select(Match)
@@ -394,7 +395,7 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
     draws_part = f"  |  🤝 Ничьих: <b>{s['draws']}</b>" if s["draws"] > 0 else ""
     lines = [
         f"👤 <b>{h(player.display_name)}</b>\n",
-        f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — #{rank} из {total}",
+        f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — {rank_str}",
         f"🏆 Побед: <b>{s['wins']}</b>{draws_part}  |  💔 Поражений: <b>{s['losses']}</b>",
         f"📊 Винрейт: <b>{s['win_rate']}%</b>",
     ]
