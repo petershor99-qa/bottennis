@@ -9,7 +9,7 @@
 
 **GitHub:** https://github.com/petershor99-qa/bottennis — публичный репозиторий, CI на GitHub Actions (pytest на каждый push/PR, файл `.github/workflows/tests.yml`)
 
-**VPS:** ⚠️ старый сервер FirstVDS (IP `188.120.228.39`) не может достучаться до Telegram API (таймауты) — бот там остановлен. Запланирован переезд на новый сервер FirstVDS в Нидерландах (чек-лист переезда — в памяти Claude, файл `migration-checklist`). После переезда: новый IP, перевыпущенный BOT_TOKEN, обновлённые секреты CI (`VPS_HOST`, `VPS_SSH_KEY`).
+**VPS:** ✅ переезд завершён. Бот работает на новом сервере FirstVDS (Нидерланды, Ubuntu, systemd-сервис `bottennis`, рабочая папка `/opt/bottennis`). Старый сервер (`188.120.228.39`) выведен из эксплуатации — не достукивался до Telegram API. При переезде: перевыпущен BOT_TOKEN, обновлены секреты CI (`VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`). Сам хост/IP нового сервера в публичный репозиторий не вписываем — он только в секретах GitHub Actions.
 
 ---
 
@@ -60,9 +60,9 @@ git push origin feature/название-задачи
 
 **Шаг 7 — Деплой в прод:** автоматический ✅ — мерж в `main` запускает job `deploy` (после зелёных `lint`+`pytest`), который сам делает `git pull` + `systemctl restart bottennis` на VPS. Ручное вмешательство не нужно.
 
-> Запасной ручной деплой (если автодеплой недоступен):
+> Запасной ручной деплой (если автодеплой недоступен). Хост — из секрета `VPS_HOST` (в публичный репо не пишем):
 > ```powershell
-> ssh root@188.120.228.39 "cd /opt/bottennis && git pull && systemctl restart bottennis"
+> ssh root@<VPS_HOST> "cd /opt/bottennis && git pull && systemctl restart bottennis"
 > ```
 
 **Шаг 8 — Обновить** `RELEASE_NOTES.md` + Mionika (см. ниже)
@@ -260,12 +260,15 @@ ssh root@НОВЫЙ_IP "cd /opt/bottennis && git pull && systemctl restart botte
 
 # Текущий статус (июнь 2026)
 
-**Готово:** всё перечисленное в разделе "Что умеет бот". Код в main, 154 теста, CI зелёный.
-**Хостинг:** ⚠️ в процессе переезда. Старый VPS FirstVDS (188.120.228.39) не достукивается до Telegram API — бот остановлен. Новый сервер FirstVDS (Нидерланды) — в планах; чек-лист переезда в памяти Claude (`migration-checklist`). При переезде: перевыпустить BOT_TOKEN (старый скомпрометирован), новый INVITE_CODE, восстановить БД из скачанной копии, обновить секреты CI.
-**Автодеплой:** ✅ с v2.55.0 — job `deploy` в `.github/workflows/tests.yml`. Мерж PR `develop→main` → при зелёных `lint`+`pytest` job по SSH делает `git pull` + `systemctl restart bottennis`. Секреты репозитория: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` (выделенный ed25519 deploy-ключ). После переезда секреты надо обновить под новый сервер.
+**Статус проекта:** maintenance mode (фич-фриз) с v2.63.2 (июнь 2026). Функционально проект завершён — всё перечисленное в разделе "Что умеет бот" работает в проде. Новые фичи не пилим; только баг-фиксы, патчи безопасности и поддержка. Идеи складываем в backlog, а не реализуем сразу.
+**Готово:** всё перечисленное в разделе "Что умеет бот". Код в main, 182 теста, CI зелёный.
+**Хостинг:** ✅ переезд завершён — бот живой на новом сервере FirstVDS (Нидерланды), systemd-сервис `bottennis`, БД в `/data/bottennis.db`. BOT_TOKEN перевыпущен, секреты CI обновлены под новый сервер.
+**Автодеплой:** ✅ с v2.55.0 — job `deploy` в `.github/workflows/tests.yml`. Мерж PR `develop→main` → при зелёных `lint`+`pytest` job по SSH делает `git pull` + `systemctl restart bottennis`. Секреты репозитория: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` (выделенный ed25519 deploy-ключ).
+**Авторелиз:** ✅ — job `release` в том же workflow при мерже в `main` создаёт GitHub Release из верхней секции `RELEASE_NOTES.md` (идемпотентно, по тегу).
 **Не реализовано:** PostgreSQL (при миграции учесть: `telegram_id` сейчас `Integer` — для PG нужен `BigInteger`).
 
 # Запланировано на будущее
 
-- Новых фич в ближайшее время не планируется — проект в режиме поддержки после полировки v2.58.0.
+- Новых фич не планируется — проект в режиме поддержки (фич-фриз с v2.63.2).
 - При росте нагрузки/группы: PostgreSQL (+ `BigInteger` для `telegram_id`).
+- Гигиена: периодически обновлять зависимости (можно подключить Dependabot), раз в какое-то время проверять, что offsite-бэкап реально восстанавливается.
