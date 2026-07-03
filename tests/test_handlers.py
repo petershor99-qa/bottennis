@@ -18,7 +18,12 @@ from sqlalchemy.orm import sessionmaker
 
 from bot.db.models import Base, Match, MatchStatus, Player
 from bot.handlers.challenge import do_cancel_match, send_challenge
-from bot.handlers.match_result import confirm_result, handle_direct_score, process_set_score
+from bot.handlers.match_result import (
+    confirm_result,
+    fsm_reset_notice,
+    handle_direct_score,
+    process_set_score,
+)
 from bot.handlers.profile import _nearest_achievement_progress
 from bot.services.achievements import get_achievements
 from bot.states.states import MatchResultStates
@@ -974,3 +979,27 @@ async def test_monthly_summary_renamed_and_heroes(monkeypatch):
     assert "Тяжелее всех" not in text
     assert "Чаще всего самбовались" in text
     assert "Нагибатель месяца" in text
+
+
+# ── fsm_reset_notice: сброс FSM рестартом бота (MemoryStorage) ─────────────────
+
+async def test_fsm_reset_notice_answers_callback_and_shows_message():
+    """При пустом состоянии (рестарт бота) нажатие кнопки шага ввода/подтверждения
+    не должно вешать спиннер — колбэк отвечен, пользователю показано объяснение."""
+    cb = _callback(1, "confirm_42")
+
+    await fsm_reset_notice(cb)
+
+    cb.answer.assert_awaited_once()
+    cb.message.edit_text.assert_awaited_once()
+    text = cb.message.edit_text.call_args[0][0]
+    assert "перезапускался" in text
+
+
+async def test_fsm_reset_notice_covers_all_step_callbacks():
+    """Хендлер срабатывает на все callback_data шагов ввода/подтверждения."""
+    for data in ("finish_sets_1", "undo_set_1", "redo_1", "confirm_1"):
+        cb = _callback(1, data)
+        await fsm_reset_notice(cb)
+        cb.answer.assert_awaited_once()
+        cb.message.edit_text.assert_awaited_once()

@@ -303,6 +303,12 @@ async def _send_easter_eggs(
                 pass
 
 
+def _restart_notice_kb() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="🎮 Мои матчи", callback_data="menu_matches"))
+    return b.as_markup()
+
+
 def _confirm_kb(match_id: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.row(
@@ -320,6 +326,26 @@ async def cancel_report(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
     await callback.message.edit_text("Отменено.", reply_markup=back_to_menu_kb())
+
+
+# ── Сброс FSM рестартом бота ──────────────────────────────────────────────────
+# MemoryStorage теряет все состояния при рестарте (в т.ч. после автодеплоя).
+# Без этого фолбэка нажатие кнопки шага ввода/подтверждения при пустом состоянии
+# просто не находит хендлер — колбэк не отвечен, спиннер висит ~15с до "query is
+# too old". Регистрируем ПОСЛЕ специфичных хендлеров тех же callback_data: они
+# требуют конкретное состояние и не пересекаются с StateFilter(None) на одном апдейте.
+
+@router.callback_query(
+    F.data.startswith(("finish_sets_", "undo_set_", "redo_", "confirm_")),
+    StateFilter(None),
+)
+async def fsm_reset_notice(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text(
+        "⚠️ Бот перезапускался, ввод результата сбросился.\n\n"
+        "Начни заново через «Внести результат» в 🎮 <b>Мои матчи</b>.",
+        reply_markup=_restart_notice_kb(),
+    )
 
 
 # ── Step 1: "Я победил" ───────────────────────────────────────────────────────
