@@ -536,6 +536,81 @@ async def test_no_rating_1200_below_threshold(db):
 
 # ── idempotency ────────────────────────────────────────────────────────────────
 
+# ── takova_zhis ─────────────────────────────────────────────────────────────────
+
+async def test_takova_zhis_after_6_alternating_matches(db):
+    """W-L-W-L-W-L (с точки зрения p1) — ачивка даётся на 6-м матче."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = None
+    for i, p1_wins in enumerate([True, False, True, False, True, False]):
+        if p1_wins:
+            new = await _do_win(db, p1, p2, dt=_ts(i))
+        else:
+            await _add_win(db, p2, p1, dt=_ts(i))
+            new = await check_loss_achievements(db, p1, _DEFAULT_SETS)
+
+    assert "takova_zhis" in new
+
+
+async def test_no_takova_zhis_after_5_alternating_matches(db):
+    """Только 5 матчей чередования — рано, ачивки ещё нет."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = None
+    for i, p1_wins in enumerate([True, False, True, False, True]):
+        if p1_wins:
+            new = await _do_win(db, p1, p2, dt=_ts(i))
+        else:
+            await _add_win(db, p2, p1, dt=_ts(i))
+            new = await check_loss_achievements(db, p1, _DEFAULT_SETS)
+
+    assert "takova_zhis" not in new
+
+
+async def test_no_takova_zhis_when_draw_breaks_chain(db):
+    """Ничья внутри окна рвёт цепочку чередования — ачивка не даётся."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    outcomes = [True, False, True, False, True]  # W-L-W-L-W — почти цепочка
+    for i, p1_wins in enumerate(outcomes):
+        if p1_wins:
+            await _do_win(db, p1, p2, dt=_ts(i))
+        else:
+            await _add_win(db, p2, p1, dt=_ts(i))
+            await check_loss_achievements(db, p1, _DEFAULT_SETS)
+
+    # 6-й матч — ничья, разрывает цепочку вместо её завершения
+    await _add_draw(db, p1, p2, dt=_ts(5))
+    new = await check_draw_achievements(db, p1, _DEFAULT_SETS, is_challenger=True)
+
+    assert "takova_zhis" not in new
+    assert "takova_zhis" not in get_achievements(p1)
+
+
+async def test_takova_zhis_not_given_for_2_wins_in_a_row(db):
+    """W-L-W-L-W-W — последние 6 не чередуются (два подряд), ачивки нет."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = None
+    for i, p1_wins in enumerate([True, False, True, False, True, True]):
+        if p1_wins:
+            new = await _do_win(db, p1, p2, dt=_ts(i))
+        else:
+            await _add_win(db, p2, p1, dt=_ts(i))
+            new = await check_loss_achievements(db, p1, _DEFAULT_SETS)
+
+    assert "takova_zhis" not in new
+
+
 async def test_no_duplicate_achievements(db):
     """Одно и то же достижение не добавляется дважды."""
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
@@ -587,6 +662,26 @@ async def test_backfill_assigns_hat_trick(db):
 
     await backfill_achievements(db)
     assert "hat_trick" in get_achievements(p1)
+
+
+async def test_backfill_assigns_takova_zhis(db):
+    """backfill находит цепочку чередования 6 матчей по истории."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    outcomes = [True, False, True, False, True, False]  # p1: W-L-W-L-W-L
+    for i, p1_wins in enumerate(outcomes):
+        winner, loser = (p1, p2) if p1_wins else (p2, p1)
+        db.add(Match(
+            challenger_id=winner.id, challenged_id=loser.id,
+            status=MatchStatus.completed, winner_id=winner.id,
+            sets_data=_DEFAULT_SETS, completed_at=_ts(i),
+        ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "takova_zhis" in get_achievements(p1)
 
 
 async def test_backfill_sets_backfill_version(db):
