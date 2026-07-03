@@ -211,7 +211,7 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
             f"{h2h_op}\n\n"
             f"⚡ Твои шансы на победу: <b>~{opponent_chance}%</b>\n"
             f"<i>«{opponent_phrase}»</i>\n\n"
-            f"<i>После игры напиши счёт сюда — например: <code>11:7 9:11 11:5</code></i>",
+            f"📋 После игры просто напиши счёт сюда: <code>11:7 9:11 11:5</code>",
             reply_markup=active_match_kb(match.id),
         )
     except Exception:
@@ -233,7 +233,7 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
         f"{h2h_ch}\n\n"
         f"⚡ Твои шансы на победу: <b>~{win_chance}%</b>\n"
         f"<i>«{win_phrase}»</i>\n\n"
-        f"<i>После игры напиши счёт сюда — например: <code>11:7 9:11 11:5</code></i>",
+        f"📋 После игры просто напиши счёт сюда: <code>11:7 9:11 11:5</code>",
         reply_markup=active_match_kb(match.id),
     )
 
