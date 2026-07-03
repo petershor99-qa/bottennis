@@ -517,7 +517,7 @@ async def show_dominance_matrix(callback: CallbackQuery, session: AsyncSession):
     cap_note = "\n<i>Показаны топ-8 по рейтингу</i>" if capped else ""
     text = (
         f"⚔️ <b>Матрица доминирования</b>{cap_note}\n\n"
-        f"<pre>{table}</pre>\n"
+        f"<pre>{h(table)}</pre>\n"
         f"<i>Строка — игрок, столбец — соперник: сколько раз обыграл его "
         f"(победы-поражения).</i>"
     )
