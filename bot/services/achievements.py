@@ -56,13 +56,31 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("relentless",     "☀️", "Неистого",                  "Выиграть все свои матчи за день (от 3)"),
     Achievement("deuce_maker",    "🎢", "Дьюсмейкер",                "Выиграть партию на дьюсе (12:10 и выше)"),
     Achievement("titans",         "🥋", "Битва такеши титанов",      "Победить в матче, где оба были 1100+ pts"),
+    Achievement("takova_zhis",    "🎭", "Такова жись",               "6 матчей подряд с чередованием побед и поражений"),
 ]
 
 ACHIEVEMENTS_MAP: dict[str, Achievement] = {a.id: a for a in ACHIEVEMENTS_LIST}
 
 # Увеличивай при добавлении новых ачивок, требующих бэкфилл.
 # Игроки с player.backfill_version < BACKFILL_VERSION будут обработаны один раз при старте.
-BACKFILL_VERSION = 3
+BACKFILL_VERSION = 4
+
+ALTERNATING_STREAK_LEN = 6  # длина цепочки для «Такова жись»
+
+
+def _has_alternating_tail(matches_asc: list, player_id: int, length: int = ALTERNATING_STREAK_LEN) -> bool:
+    """Проверяет, что последние `length` завершённых матчей игрока строго
+    чередуют победу/поражение (W-L-W-L… или L-W-L-W…). Ничья в окне рвёт
+    цепочку — считаем её отсутствующей. matches_asc — по возрастанию даты."""
+    if len(matches_asc) < length:
+        return False
+    tail = matches_asc[-length:]
+    outcomes = []
+    for m in tail:
+        if m.winner_id is None:
+            return False
+        outcomes.append(m.winner_id == player_id)
+    return all(outcomes[i] != outcomes[i + 1] for i in range(length - 1))
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -281,6 +299,10 @@ async def check_win_achievements(
     if len(today_matches) >= 3 and all(m.winner_id == winner.id for m in today_matches):
         maybe("relentless")
 
+    # ── Такова жись: 6 матчей подряд с чередованием побед/поражений ─────────
+    if _has_alternating_tail(all_matches, winner.id):
+        maybe("takova_zhis")
+
     if new_ids:
         winner.achievements = json.dumps(earned)
 
@@ -367,6 +389,10 @@ async def check_loss_achievements(
     # sets_data в перспективе победителя: очки проигравшего — s["l"]
     if any(s["l"] >= 12 and s["l"] > s["w"] for s in sets_data):
         maybe("deuce_maker")
+
+    # ── Такова жись: 6 матчей подряд с чередованием побед/поражений ─────────
+    if _has_alternating_tail(all_matches, loser.id):
+        maybe("takova_zhis")
 
     if new_ids:
         loser.achievements = json.dumps(earned)
@@ -525,11 +551,23 @@ async def backfill_achievements(session: AsyncSession) -> None:
         total_draws = 0
         beaten_opponents: set[int] = set()
         had_phoenix = False
+        alt_window: list[bool] = []  # для «Такова жись» — скользящее окно исходов
 
         for m in matches:
             opp_id = m.challenged_id if m.challenger_id == player.id else m.challenger_id
             is_win = m.winner_id == player.id
             is_draw = m.winner_id is None
+
+            if is_draw:
+                alt_window = []
+            else:
+                alt_window.append(is_win)
+                if len(alt_window) > ALTERNATING_STREAK_LEN:
+                    alt_window.pop(0)
+                if len(alt_window) == ALTERNATING_STREAK_LEN and all(
+                    alt_window[i] != alt_window[i + 1] for i in range(ALTERNATING_STREAK_LEN - 1)
+                ):
+                    _add_new(earned, "takova_zhis")
 
             if is_win:
                 total_wins += 1
