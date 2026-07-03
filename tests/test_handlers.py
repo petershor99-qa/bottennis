@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
 import pytest_asyncio
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
@@ -23,6 +24,7 @@ from bot.handlers.match_result import (
     fsm_reset_notice,
     handle_direct_score,
     process_set_score,
+    start_report,
 )
 from bot.handlers.profile import _nearest_achievement_progress
 from bot.services.achievements import get_achievements
@@ -1003,3 +1005,153 @@ async def test_fsm_reset_notice_covers_all_step_callbacks():
         await fsm_reset_notice(cb)
         cb.answer.assert_awaited_once()
         cb.message.edit_text.assert_awaited_once()
+
+
+# ── Гонки и граничные сценарии (CAS-guard, повторные тапы, невалидный ввод) ────
+
+async def test_confirm_result_double_tap_records_once(db):
+    """Двойной тап «Всё верно» по одному матчу: результат записан ровно один раз,
+    рейтинг пересчитан один раз, второй вызов не падает и не начисляет дельту повторно."""
+    p1, p2 = _player(1, "Winner", rating=1000.0), _player(2, "Loser", rating=1000.0)
+    db.add_all([p1, p2])
+    await db.flush()
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 5}])
+    bot = AsyncMock()
+
+    cb1 = _callback(1, f"confirm_{m.id}")
+    await confirm_result(cb1, db, st, bot)
+    winner_rating_after_first = p1.rating
+    loser_rating_after_first = p2.rating
+    assert m.status == MatchStatus.completed
+    assert winner_rating_after_first != 1000.0
+
+    # Второй тап — состояние уже очищено первым вызовом в реальном апдейте,
+    # но здесь эмулируем гонку: колбэк с тем же match_id прилетает повторно
+    # до того, как клиент успел получить новое состояние (CAS должен блокировать).
+    st2 = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 5}])
+    cb2 = _callback(1, f"confirm_{m.id}")
+    await confirm_result(cb2, db, st2, bot)
+
+    assert p1.rating == winner_rating_after_first  # дельта не начислена повторно
+    assert p2.rating == loser_rating_after_first   # без изменений от второго тапа
+    cb2.message.edit_text.assert_awaited_once()
+    assert "уже завершён" in cb2.message.edit_text.call_args.args[0]
+    cb2.answer.assert_awaited()
+
+
+async def test_confirm_result_on_declined_match_is_blocked(db):
+    """Матч уже отменён (declined) → внести результат нельзя, CAS не проходит."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m = Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.declined, accepted_at=datetime(2026, 6, 1, 12, 0, 0),
+    )
+    db.add(m)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 5}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert m.status == MatchStatus.declined  # не затёрто
+    assert p1.rating == 1000.0 and p2.rating == 1000.0
+    cb.message.edit_text.assert_awaited_once()
+    assert "уже завершён" in cb.message.edit_text.call_args.args[0]
+
+
+async def test_double_cancel_second_call_gets_clean_response(db):
+    """Два подряд вызова отмены одного матча (гонка обоих участников): второй
+    получает корректный ответ, а не исключение или дублирующее уведомление."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    bot = AsyncMock()
+    cb1 = _callback(1, f"cancel_yes_{m.id}")
+    await do_cancel_match(cb1, db, bot)
+    assert m.status == MatchStatus.declined
+    first_notify_calls = bot.send_message.call_count
+
+    cb2 = _callback(2, f"cancel_yes_{m.id}")
+    await do_cancel_match(cb2, db, bot)
+
+    cb2.answer.assert_any_call("Матч уже завершён или не найден.", show_alert=True)
+    assert bot.send_message.call_count == first_notify_calls  # уведомление не задублировано
+
+
+async def test_start_report_on_missing_match_shows_alert(db):
+    """Ввод результата по матчу, которого больше нет в БД, — внятная ошибка,
+    без исключения."""
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.commit()
+
+    st = _state(1)
+    cb = _callback(1, "report_9999")
+    await start_report(cb, db, st)
+
+    cb.answer.assert_awaited_once_with("Матч не найден или уже завершён.", show_alert=True)
+    assert await st.get_state() is None
+
+
+@pytest.mark.parametrize("text", ["10:9", "11:10", "-1:5", "5:-1", "abc:def", "11:"])
+async def test_process_set_score_rejects_invalid_inputs(db, text):
+    """Нарушение правил настольного тенниса или мусор вместо цифр — партия не
+    добавляется, пользователь получает объяснение."""
+    st = await _prep_input_state(1)
+    msg = _message(1, text)
+    await process_set_score(msg, st)
+    data = await st.get_data()
+    assert data["sets_data"] == []
+    msg.answer.assert_called()
+
+
+async def test_confirm_result_winner_floor_not_exceeded_downward(db):
+    """Победитель-новичок с рейтингом на полу (1000.0) не проваливается ниже него,
+    даже формально выигрывая с отрицательной дельтой не бывает — но пол
+    проверяется явно на стороне проигравшего."""
+    p1 = _player(1, "Winner", rating=1000.0)
+    p2 = _player(2, "Loser", rating=1000.0)
+    db.add_all([p1, p2])
+    await db.flush()
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 9}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert p2.rating >= 1000.0 - 1e-9  # проигравший-новичок не ниже пола 1000.0
+
+
+async def test_confirm_result_veteran_floor_is_900(db):
+    """Проигравший-ветеран (15+ завершённых матчей) не проваливается ниже пола 900.0."""
+    p1 = _player(1, "Winner", rating=1000.0)
+    p2 = _player(2, "Loser", rating=901.0)
+    p3 = _player(3, "Filler")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    # У p2 ровно 15 завершённых матчей → уже ветеран (пол 900)
+    for i in range(15):
+        db.add(Match(
+            challenger_id=p2.id, challenged_id=p3.id,
+            status=MatchStatus.completed, winner_id=p3.id,
+            sets_data=[{"w": 11, "l": 0}], rating_change=5.0,
+            completed_at=datetime(2026, 5, 1 + i, 12, 0, 0),
+        ))
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 0}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert p2.rating >= 900.0 - 1e-9
