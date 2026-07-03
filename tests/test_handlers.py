@@ -732,6 +732,50 @@ async def test_my_matches_fresh_active_valid_html(db):
     assert "< 1" not in text  # сырой '<' не должен попасть в HTML-сообщение
 
 
+async def test_dominance_matrix_escapes_player_name(db):
+    """РЕГРЕССИЯ: имя игрока со спецсимволами (< > &) шло в <pre> без
+    экранирования — Telegram ронял edit_text ошибкой парсинга HTML,
+    матрица переставала открываться у всех игроков."""
+    from bot.handlers.leaderboard import show_dominance_matrix
+
+    p1, p2 = _player(1, "<Jerry>", 1010.0), _player(2, "Bob", 990.0)
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "dominance_matrix")
+    await show_dominance_matrix(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "<Jer" not in text  # обрезанная метка не должна пролезть сырым тегом
+    assert "&lt;" in text
+
+
+async def test_dbstats_escapes_player_name(db, monkeypatch):
+    """РЕГРЕССИЯ: имя игрока со спецсимволами в /dbstats шло в HTML без
+    экранирования (топ рейтингов и топ/боттом начислений)."""
+    from bot.handlers import admin as admin_module
+    from bot.handlers.admin import cmd_dbstats
+
+    monkeypatch.setattr(admin_module, "ADMIN_ID", 1)
+
+    p1, p2 = _player(1, "Tom & <Jerry>", 1010.0), _player(2, "Bob", 990.0)
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+
+    msg = _message(1, "/dbstats")
+    await cmd_dbstats(msg, db)
+
+    all_text = "".join(
+        call.args[0] for call in msg.answer.call_args_list if call.args
+    )
+    assert "<Jerry>" not in all_text
+    assert "&lt;" in all_text or "Jerry" in all_text
+
+
 # ── «Сегодня» — личный мини-итог ────────────────────────────────────────────────
 
 async def test_today_shows_personal_summary(db):

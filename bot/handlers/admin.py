@@ -6,6 +6,7 @@
 """
 import json
 from collections import defaultdict
+from html import escape as h
 
 from aiogram import Router
 from aiogram.filters import Command
@@ -157,7 +158,7 @@ async def cmd_dbstats(message: Message, session: AsyncSession) -> None:
         total = w + losses
         pct = f"{100*w//total}%" if total else "—"
         lines.append(
-            f"  {i}. <b>{p.display_name}</b>  {p.rating:.1f} pts  "
+            f"  {i}. <b>{h(p.display_name)}</b>  {p.rating:.1f} pts  "
             f"({w}W/{losses}L  {pct})"
         )
 
@@ -207,9 +208,9 @@ async def cmd_dbstats(message: Message, session: AsyncSession) -> None:
     )
 
     def _row(m: Match) -> str:
-        wname = player_map.get(m.winner_id, "?")
+        wname = h(player_map.get(m.winner_id, "?"))
         lid = m.challenged_id if m.winner_id == m.challenger_id else m.challenger_id
-        lname = player_map.get(lid, "?")
+        lname = h(player_map.get(lid, "?"))
         sets = m.sets_data if isinstance(m.sets_data, list) else json.loads(m.sets_data or "[]")
         score = "  ".join(f"{s['w']}:{s['l']}" for s in sets)
         return f"  +{m.rating_change:.1f}  {wname} → {lname}  [{score}]"
