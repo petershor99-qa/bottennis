@@ -152,7 +152,28 @@ cp .env.example .env        # впиши свой BOT_TOKEN от @BotFather
 python main.py
 ```
 
-Деплой на VPS — автоматический через GitHub Actions: мерж PR `develop→main` запускает `git pull` + `systemctl restart bottennis` по SSH. БД хранится в `/data/bottennis.db`.
+Деплой на VPS — автоматический через GitHub Actions: мерж PR `develop→main` запускает `git pull` + `systemctl restart bottennis` по SSH, затем job проверяет `systemctl is-active bottennis` и падает (с логом `journalctl`), если сервис не поднялся. БД хранится в `/data/bottennis.db`.
+
+### systemd-юнит на VPS
+
+Эталонное содержимое `/etc/systemd/system/bottennis.service` — с `Restart=on-failure`, чтобы бот сам поднимался при падении между деплоями:
+
+```ini
+[Unit]
+Description=bottennis Telegram bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/bottennis
+ExecStart=/opt/bottennis/.venv/bin/python main.py
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/opt/bottennis/.env
+
+[Install]
+WantedBy=multi-user.target
+```
 
 > ℹ️ **Достижения и пасхалки** — внутренние шутки нашей команды, **местами с нецензурной лексикой**. Все тексты собраны в `bot/services/achievements.py` и `bot/handlers/match_result.py` — легко заменить под свою компанию.
 

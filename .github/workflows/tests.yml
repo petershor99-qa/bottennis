@@ -60,6 +60,14 @@ jobs:
             cd /opt/bottennis
             git pull --ff-only
             systemctl restart bottennis
+            sleep 10
+            if ! systemctl is-active --quiet bottennis; then
+              echo "::error::bottennis.service не активен после рестарта"
+              journalctl -u bottennis --no-pager -n 30
+              exit 1
+            fi
+            echo "bottennis.service активен."
+            journalctl -u bottennis --no-pager -n 30
 
   release:
     runs-on: ubuntu-latest

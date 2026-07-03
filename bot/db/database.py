@@ -5,8 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from bot.db.models import Base
 
-# На Railway: DATABASE_URL=sqlite+aiosqlite:////data/bottennis.db (Volume at /data)
-# Локально:   файл bottennis.db рядом с main.py
+# На VPS:   DATABASE_URL=sqlite+aiosqlite:////data/bottennis.db
+# Локально: файл bottennis.db рядом с main.py
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./bottennis.db")
 
 engine = create_async_engine(DATABASE_URL, echo=False)

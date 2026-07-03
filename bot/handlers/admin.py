@@ -27,10 +27,36 @@ def _is_admin(message: Message) -> bool:
     return ADMIN_ID != 0 and message.from_user.id == ADMIN_ID
 
 
+_SEND_CHUNK = 4000  # с запасом от лимита Telegram в 4096 символов
+
+
 async def _send(message: Message, text: str) -> None:
-    """Отправить длинный текст, при необходимости разбив на части."""
-    for i in range(0, len(text), 4000):
-        await message.answer(text[i:i + 4000])
+    """Отправить длинный текст, разбив на части по границам строк.
+
+    Резать произвольно по символам нельзя — можно разорвать HTML-тег
+    (<b>...</b>) пополам, и Telegram отклонит сообщение с ошибкой парсинга.
+    Если одна строка сама длиннее лимита (крайний случай) — режем её по
+    символам без учёта HTML, это осознанный компромисс.
+    """
+    chunk = ""
+    for line in text.split("\n"):
+        if len(line) > _SEND_CHUNK:
+            if chunk:
+                await message.answer(chunk)
+                chunk = ""
+            for i in range(0, len(line), _SEND_CHUNK):
+                await message.answer(line[i:i + _SEND_CHUNK])
+            continue
+
+        candidate = f"{chunk}\n{line}" if chunk else line
+        if len(candidate) > _SEND_CHUNK:
+            await message.answer(chunk)
+            chunk = line
+        else:
+            chunk = candidate
+
+    if chunk:
+        await message.answer(chunk)
 
 
 # ── /myid ──────────────────────────────────────────────────────────────────────
