@@ -109,8 +109,9 @@ def players_list_kb(
 
 
 def active_match_kb(match_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура экрана начала матча. Результат вносится прямым вводом счёта
+    в чат — отдельной кнопки для этого нет (см. подсказку в тексте сообщения)."""
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="📋 Внести результат", callback_data=f"report_{match_id}"))
     b.row(InlineKeyboardButton(text="❌ Отменить матч", callback_data=f"cancel_match_{match_id}"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()

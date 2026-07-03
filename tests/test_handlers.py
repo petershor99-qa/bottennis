@@ -213,6 +213,28 @@ async def test_send_challenge_creates_active_match(db):
     cb.message.edit_text.assert_called()  # инициатор видит «матч начат»
 
 
+async def test_send_challenge_screen_has_no_report_button(db):
+    """Экран начала матча не предлагает кнопку «Внести результат» — счёт
+    вносится прямым вводом в чат (кнопка осталась только на «Мои матчи»,
+    где нужна для выбора среди нескольких активных матчей)."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    cb, bot = _callback(1, f"challenge_{p2.id}"), AsyncMock()
+    await send_challenge(cb, db, bot)
+
+    opponent_kb = bot.send_message.call_args_list[0].kwargs["reply_markup"]
+    initiator_kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    for kb in (opponent_kb, initiator_kb):
+        buttons = [b.text for row in kb.inline_keyboard for b in row]
+        assert not any("report_" in (b.callback_data or "") for row in kb.inline_keyboard for b in row)
+        assert "Внести результат" not in buttons
+
+    initiator_text = cb.message.edit_text.call_args.args[0]
+    assert "напиши счёт сюда" in initiator_text
+
+
 async def test_send_challenge_blocks_duplicate(db):
     """Нельзя вызвать игрока, с которым уже есть активный матч."""
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
