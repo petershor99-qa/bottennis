@@ -89,7 +89,6 @@ Telegram-бот для рейтинговых игр в настольный т�
 - График динамики рейтинга (quickchart.io)
 - Рекорды клуба и матрица доминирования (кнопки на экране рейтинга)
 - Экран «Мои матчи»: активные матчи клуба + «С кем сыграть?» с рекомендациями (`get_rec_signal`)
-- Напоминание о незавершённых матчах через 24 часа (APScheduler)
 - Итоги дня каждый вечер в 21:30 МСК (топ дня + «матч дня»)
 - Еженедельный дайджест каждый понедельник в 9:00 МСК + итоги месяца 1-го числа в 10:00 МСК
 - Еженедельный offsite-бэкап БД админу в личку (понедельник 9:30 МСК)
@@ -112,7 +111,7 @@ Telegram-бот для рейтинговых игр в настольный т�
 | `bot/db/models.py` | Модели Player, Match, MatchStatus |
 | `bot/db/database.py` | Engine, async_session, init_db |
 | `bot/middleware.py` | DatabaseMiddleware — открывает сессию на каждый апдейт |
-| `bot/scheduler.py` | Напоминания о матчах + итоги дня (21:30) / недели (пн 9:00) / месяца (1-го 10:00) + offsite-бэкап БД. Хелперы `_most_played_pair`, `_longest_streak` |
+| `bot/scheduler.py` | Итоги дня (21:30) / недели (пн 9:00) / месяца (1-го 10:00) + offsite-бэкап БД. Хелперы `_most_played_pair`, `_longest_streak` |
 | `bot/states/states.py` | FSM-состояния ввода результата |
 | `bot/services/validation.py` | Валидация счёта партии по правилам настольного тенниса |
 | `bot/utils.py` | `get_player`, `match_rating_delta`, `pluralize_matches`/`pluralize_wins`, `_match_line`, H2H (`compute_h2h`), «матч дня» (`match_drama_score`/`pick_match_of_day`) |
