@@ -1,6 +1,6 @@
 """
 Одноразовый скрипт: добавляет колонку accepted_at в таблицу matches.
-Запускать: railway run python migrate_add_accepted_at.py
+Запускать на VPS: .venv/bin/python scripts/migrate_add_accepted_at.py
 """
 import asyncio
 
