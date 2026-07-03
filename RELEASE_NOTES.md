@@ -1,5 +1,15 @@
 # Release Notes
 
+## v2.65.0 — 2026-07-03
+
+### Health-check после автодеплоя
+
+- Job `deploy` в `.github/workflows/tests.yml` после `systemctl restart bottennis` теперь проверяет `systemctl is-active bottennis` и падает, если сервис не поднялся — раньше падение бота на старте (кривой `.env`, ошибка импорта) оставалось незамеченным при зелёном CI.
+- В лог job выводятся последние 30 строк `journalctl -u bottennis` — причина падения видна прямо в GitHub Actions, без захода на VPS.
+- В README добавлен раздел «systemd-юнит на VPS» с эталонным содержимым unit-файла (`Restart=on-failure`, `RestartSec=5`), чтобы бот сам поднимался при падении между деплоями.
+
+---
+
 ## v2.64.0 — 2026-07-03
 
 ### Чистка Railway-артефактов
