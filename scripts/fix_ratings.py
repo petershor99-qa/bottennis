@@ -1,6 +1,6 @@
 """
 Одноразовый скрипт: поднимает рейтинг всех игроков ниже 1000 до 1000.
-Запускать: railway run python fix_ratings.py
+Запускать на VPS: .venv/bin/python scripts/fix_ratings.py
 """
 import asyncio
 

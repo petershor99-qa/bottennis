@@ -1,5 +1,14 @@
 # Release Notes
 
+## v2.64.0 — 2026-07-03
+
+### Чистка Railway-артефактов
+
+- Удалены `railway.toml`, `Dockerfile`, `.dockerignore` — деплой на Railway не используется, проект работает на VPS через systemd.
+- Обновлены устаревшие комментарии, ссылавшиеся на Railway: `bot/db/database.py`, `scripts/fix_ratings.py`, `scripts/migrate_add_accepted_at.py`.
+
+---
+
 ## v2.63.2 — 2026-06-19
 
 ### Матрица доминирования: короткие имена вместо номеров
