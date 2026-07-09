@@ -11,6 +11,18 @@
 
 ---
 
+<p align="center">
+  <img src="docs/screenshots/menu.png" width="19%" alt="Главное меню" />
+  <img src="docs/screenshots/leaderboard.png" width="19%" alt="Рейтинг игроков" />
+  <img src="docs/screenshots/match.png" width="19%" alt="Экран матча" />
+  <img src="docs/screenshots/weekly.png" width="19%" alt="Итоги недели" />
+  <img src="docs/screenshots/records.png" width="19%" alt="Рекорды клуба" />
+</p>
+
+> Скриншоты обезличены — реальные имена игроков заменены на вымышленные.
+
+---
+
 ## 🎯 Об этом проекте
 
 В офисе стоит теннисный стол, и в перерывах мы рубимся не на жизнь, а на рейтинг. В какой-то момент захотелось не просто играть, а вести честный ELO, считать серии побед и каждый вечер выбирать «матч дня». Так в нерабочее время и родился этот бот.
