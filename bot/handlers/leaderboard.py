@@ -271,7 +271,13 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
     players = players_r.scalars().all()
     name_map = {p.id: p.display_name for p in players}
 
-    lines = ["🏆 <b>Рекорды клуба</b>\n"]
+    # Рекорды сгруппированы по смыслу (объёмы / противостояния / серии / топ-моменты),
+    # каждая непустая группа отделена пустой строкой — иначе длинные двухстрочные
+    # записи сливаются в нечитаемую простыню без явных границ между рекордами.
+    volume_lines: list[str] = []
+    rivalry_lines: list[str] = []
+    streak_lines: list[str] = []
+    highlight_lines: list[str] = []
 
     # Больше всего матчей
     match_count: dict[int, int] = {}
@@ -280,7 +286,7 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
             match_count[pid] = match_count.get(pid, 0) + 1
     if match_count:
         most_id = max(match_count, key=match_count.get)
-        lines.append(
+        volume_lines.append(
             f"🏓 Больше всего матчей — <b>{h(name_map.get(most_id, '?'))}</b>: "
             f"{pluralize_matches(match_count[most_id])}"
         )
@@ -296,7 +302,7 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
             peak_val = pv
             peak_pid = p.id
     if peak_pid is not None:
-        lines.append(
+        volume_lines.append(
             f"📈 Высший рейтинг в истории — <b>{h(name_map.get(peak_pid, '?'))}</b>: "
             f"{round(peak_val, 1)} pts"
         )
@@ -309,7 +315,7 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
     if pair_count:
         (a_id, b_id), pair_n = max(pair_count.items(), key=lambda kv: kv[1])
         if pair_n >= 2:
-            lines.append(
+            rivalry_lines.append(
                 f"🤼 Дерби клуба — <b>{h(name_map.get(a_id, '?'))}</b> vs "
                 f"<b>{h(name_map.get(b_id, '?'))}</b>: {pluralize_matches(pair_n)}"
             )
@@ -338,7 +344,7 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
                 best_dom = cand
     if best_dom:
         _, dom_w, dom_id, vic_id, vic_w = best_dom
-        lines.append(
+        rivalry_lines.append(
             f"😈 Нагибатор клуба — <b>{h(name_map.get(dom_id, '?'))}</b> над "
             f"<b>{h(name_map.get(vic_id, '?'))}</b>: {dom_w}–{vic_w}"
         )
@@ -358,7 +364,7 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
             best_streak_pid = pid
 
     if best_streak_pid and best_streak_n >= 2:
-        lines.append(
+        streak_lines.append(
             f"🔥 Лучшая серия побед — <b>{h(name_map.get(best_streak_pid, '?'))}</b>: "
             f"{best_streak_n} подряд"
         )
@@ -377,7 +383,7 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
             cur_streak_n = s
             cur_streak_pid = pid
     if cur_streak_pid and cur_streak_n >= 2:
-        lines.append(
+        streak_lines.append(
             f"🚀 В ударе сейчас — <b>{h(name_map.get(cur_streak_pid, '?'))}</b>: "
             f"{pluralize_wins(cur_streak_n)} подряд"
         )
@@ -390,7 +396,7 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
         cd = name_map.get(longest.challenged_id, "?")
         score_str = match_score_challenger_first(longest)
         date_str = longest.completed_at.strftime("%d.%m.%y") if longest.completed_at else ""
-        lines.append(
+        streak_lines.append(
             f"🎯 Самый длинный матч — <b>{h(ch)}</b> vs <b>{h(cd)}</b>: "
             f"{len(longest.sets_data)} партий  <i>{score_str}  {date_str}</i>"
         )
@@ -404,7 +410,7 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
             l_id = biggest.challenged_id if biggest.winner_id == biggest.challenger_id else biggest.challenger_id
             l_name = name_map.get(l_id, "?")
             score_str = match_score_challenger_first(biggest)
-            lines.append(
+            highlight_lines.append(
                 f"💥 Крупнейший апсет — <b>{h(w_name)}</b> победил <b>{h(l_name)}</b>: "
                 f"+{biggest.rating_change} pts  <i>{score_str}</i>"
             )
@@ -418,11 +424,17 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
             score_str = match_score_challenger_first(best_drama)
             reason = match_drama_reason(best_drama)
             date_str = best_drama.completed_at.strftime("%d.%m.%y") if best_drama.completed_at else ""
-            lines.append(
-                f"\n🌟 <b>Самый эпичный матч</b>\n"
+            highlight_lines.append(
+                f"🌟 <b>Самый эпичный матч</b>\n"
                 f"<b>{h(ch)}</b> vs <b>{h(cd)}</b> — {score_str}  <i>{date_str}</i>\n"
                 f"<i>{reason}</i>"
             )
+
+    lines = ["🏆 <b>Рекорды клуба</b>"]
+    for group in (volume_lines, rivalry_lines, streak_lines, highlight_lines):
+        if group:
+            lines.append("")
+            lines.extend(group)
 
     await callback.message.edit_text(
         "\n".join(lines),
