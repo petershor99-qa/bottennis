@@ -12,11 +12,13 @@
 ---
 
 <p align="center">
-  <img src="docs/screenshots/menu.png" width="19%" alt="Главное меню" />
-  <img src="docs/screenshots/leaderboard.png" width="19%" alt="Рейтинг игроков" />
-  <img src="docs/screenshots/match.png" width="19%" alt="Экран матча" />
-  <img src="docs/screenshots/weekly.png" width="19%" alt="Итоги недели" />
-  <img src="docs/screenshots/records.png" width="19%" alt="Рекорды клуба" />
+  <img src="docs/screenshots/menu.png" width="31%" alt="Главное меню" />
+  <img src="docs/screenshots/leaderboard.png" width="31%" alt="Рейтинг игроков" />
+  <img src="docs/screenshots/match.png" width="31%" alt="Экран матча" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/weekly.png" width="31%" alt="Итоги недели" />
+  <img src="docs/screenshots/records.png" width="31%" alt="Рекорды клуба" />
 </p>
 
 > Скриншоты обезличены — реальные имена игроков заменены на вымышленные.
