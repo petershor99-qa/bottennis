@@ -47,11 +47,12 @@ def test_weekly_digest_mon_0900_msk():
     assert nxt.date() == datetime(2026, 6, 22).date()
 
 
-def test_db_backup_mon_0930_msk():
-    """Offsite-бэкап: пн 9:30 МСК = 6:30 UTC."""
+def test_db_backup_1st_1015_msk():
+    """Offsite-бэкап: 1-го числа 10:15 МСК = 7:15 UTC. Ближайшее 1-е — 2026-07-01."""
     nxt = _next_utc("db_backup", REF)
-    assert (nxt.hour, nxt.minute) == (6, 30)
-    assert nxt.weekday() == 0
+    assert (nxt.hour, nxt.minute) == (7, 15)
+    assert nxt.day == 1
+    assert nxt.date() == datetime(2026, 7, 1).date()
 
 
 def test_monthly_summary_1st_1000_msk():

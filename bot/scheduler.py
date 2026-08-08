@@ -441,10 +441,10 @@ async def send_daily_summary(bot: Bot) -> None:
     logger.info("Итоги дня отправлены")
 
 
-# ── Еженедельный offsite-бэкап БД админу в личку ─────────────────────────────
+# ── Ежемесячный offsite-бэкап БД админу в личку ──────────────────────────────
 
 async def send_db_backup(bot: Bot) -> None:
-    """Раз в неделю шлёт файл БД админу в Telegram.
+    """Раз в месяц шлёт файл БД админу в Telegram.
 
     Offsite-страховка: серверные бэкапы лежат на том же VPS, что и база, —
     при потере сервера пропадает всё. Файл маленький (десятки КБ).
@@ -462,7 +462,7 @@ async def send_db_backup(bot: Bot) -> None:
         await bot.send_document(
             admin_id,
             FSInputFile(db_path, filename=f"bottennis_{date_str}.db"),
-            caption=f"💾 Еженедельный бэкап базы — {date_str}",
+            caption=f"💾 Ежемесячный бэкап базы — {date_str}",
         )
         logger.info("Бэкап БД отправлен админу")
     except Exception:
@@ -633,10 +633,14 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         id="daily_summary",
     )
 
-    # Offsite-бэкап БД админу — каждый понедельник в 9:30 МСК
+    # Offsite-бэкап БД админу — 1-го числа в 10:15 МСК (следом за итогами месяца).
+    # Был еженедельным (пн 9:30) — при 3-5 матчах/день на 5-6 игроков еженедельная
+    # рассылка в личку избыточна: ежедневные бэкапы на самом VPS (3:00, 7 копий)
+    # уже закрывают обычные сбои, а офсайт-копия страхует только от потери всего
+    # сервера целиком — для такого редкого сценария и месячного интервала достаточно.
     scheduler.add_job(
         send_db_backup,
-        CronTrigger(day_of_week="mon", hour=9, minute=30, timezone=msk),
+        CronTrigger(day=1, hour=10, minute=15, timezone=msk),
         args=[bot],
         id="db_backup",
     )
