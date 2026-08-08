@@ -103,7 +103,7 @@ Telegram-бот для рейтинговых игр в настольный т�
 | `bot/handlers/start.py` | `/start`, `/cancel`, `/help`, `/fix_rating`, `back_to_menu` |
 | `bot/handlers/leaderboard.py` | Рейтинг-таблица (`menu_leaderboard`), Сегодня (`menu_today`), Рекорды клуба (`club_records`), Матрица доминирования (`dominance_matrix`) |
 | `bot/handlers/profile.py` | Статистика (`menu_stats`) с прогрессом до ачивки, профиль игрока, достижения |
-| `bot/handlers/history.py` | История матчей, история рейтинга, график рейтинга, экран «Мои матчи» (`menu_matches`: активные матчи клуба + «С кем сыграть?»), личные встречи H2H (`h2h_`) |
+| `bot/handlers/history.py` | История матчей, график рейтинга, экран «Мои матчи» (`menu_matches`: активные матчи клуба + «С кем сыграть?»), личные встречи H2H (`h2h_`) |
 | `bot/handlers/challenge.py` | Вызов (матч сразу active), отмена матча с подтверждением |
 | `bot/handlers/match_result.py` | FSM ввода результата (счёт партий → подтверждение → сохранение) |
 | `bot/keyboards/inline.py` | Все inline-клавиатуры проекта |

@@ -15,7 +15,6 @@ from bot.keyboards.inline import (
     history_kb,
     player_history_kb,
     player_profile_kb,
-    rating_history_kb,
 )
 from bot.utils import (
     _match_line,
@@ -23,64 +22,12 @@ from bot.utils import (
     compute_h2h,
     get_player,
     get_rec_signal,
-    match_rating_delta,
     rating_chart_url,
 )
 
 router = Router()
 
 PAGE_SIZE = 20
-
-
-# ── История рейтинга ──────────────────────────────────────────────────────────
-
-@router.callback_query(F.data == "rating_history")
-async def show_rating_history(callback: CallbackQuery, session: AsyncSession):
-    player = await get_player(session, callback.from_user.id)
-    if not player:
-        await callback.answer("Сначала напиши /start", show_alert=True)
-        return
-
-    await callback.answer()
-
-    r = await session.execute(
-        select(Match)
-        .where(
-            or_(Match.challenger_id == player.id, Match.challenged_id == player.id),
-            Match.status == MatchStatus.completed,
-            Match.rating_change.isnot(None),
-        )
-        .order_by(desc(Match.completed_at))
-        .limit(20)
-        .options(selectinload(Match.challenger), selectinload(Match.challenged))
-    )
-    matches = r.scalars().all()
-
-    if not matches:
-        await callback.message.edit_text(
-            "У тебя пока нет сыгранных матчей. 🏓",
-            reply_markup=rating_history_kb(),
-        )
-        return
-
-    lines = [f"📈 <b>История рейтинга</b>  <i>(последние {len(matches)} матчей)</i>\n"]
-    lines.append(f"Сейчас: <b>{round(player.rating, 1)} pts</b>\n")
-
-    for m in matches:
-        opponent = m.challenged if m.challenger_id == player.id else m.challenger
-        is_draw = m.winner_id is None
-        won = m.winner_id == player.id
-        icon = "🤝" if is_draw else ("✅" if won else "❌")
-        date_str = m.completed_at.strftime("%d.%m") if m.completed_at else ""
-        delta = match_rating_delta(m, player.id)
-        sign = "+" if delta > 0 else ""
-        delta_str = f"{sign}{round(delta, 1)}"
-        lines.append(f"{icon} {delta_str}  {date_str}  vs {h(opponent.display_name)}")
-
-    await callback.message.edit_text(
-        "\n".join(lines),
-        reply_markup=rating_history_kb(),
-    )
 
 
 # ── График рейтинга ───────────────────────────────────────────────────────────
