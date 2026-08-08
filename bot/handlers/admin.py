@@ -101,6 +101,9 @@ async def cmd_dbstats(message: Message, session: AsyncSession) -> None:
         return
 
     deltas = [m.rating_change for m in matches if m.rating_change is not None]
+    if not deltas:
+        await message.answer("У завершённых матчей не заполнено поле rating_change.")
+        return
 
     # ── 1. Обзор ──────────────────────────────────────────────────────────────
     avg = sum(deltas) / len(deltas)
