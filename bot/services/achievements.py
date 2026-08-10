@@ -57,13 +57,16 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("deuce_maker",    "🎢", "Дьюсмейкер",                "Выиграть партию на дьюсе (12:10 и выше)"),
     Achievement("titans",         "🥋", "Битва такеши титанов",      "Победить в матче, где оба были 1100+ pts"),
     Achievement("takova_zhis",    "🎭", "Такова жись",               "6 матчей подряд с чередованием побед и поражений"),
+    Achievement("terminator_slain", "🦾", "Вынес терминатора",       "Победить соперника, шедшего с серией 5+ побед подряд"),
 ]
 
 ACHIEVEMENTS_MAP: dict[str, Achievement] = {a.id: a for a in ACHIEVEMENTS_LIST}
 
 # Увеличивай при добавлении новых ачивок, требующих бэкфилл.
 # Игроки с player.backfill_version < BACKFILL_VERSION будут обработаны один раз при старте.
-BACKFILL_VERSION = 4
+BACKFILL_VERSION = 5
+
+TERMINATOR_STREAK_LEN = 5  # активная серия соперника для «Вынес терминатора»
 
 ALTERNATING_STREAK_LEN = 6  # длина цепочки для «Такова жись»
 
@@ -214,6 +217,26 @@ async def check_win_achievements(
     # h2h[0] — текущий матч, h2h[1] — предыдущий между ними
     if len(h2h) >= 2 and h2h[1].winner_id == loser.id:
         maybe("revenge")
+
+    # ── Вынес терминатора: у соперника была активная серия 5+ побед ДО этого матча ─
+    loser_prev_r = await session.execute(
+        select(Match)
+        .where(
+            or_(Match.challenger_id == loser.id, Match.challenged_id == loser.id),
+            Match.status == MatchStatus.completed,
+            Match.id != match_id,
+        )
+        .order_by(Match.completed_at)
+    )
+    loser_prev_matches = loser_prev_r.scalars().all()
+    loser_streak_before = 0
+    for m in reversed(loser_prev_matches):
+        if m.winner_id == loser.id:
+            loser_streak_before += 1
+        else:
+            break
+    if loser_streak_before >= TERMINATOR_STREAK_LEN:
+        maybe("terminator_slain")
 
     # ── Вехи по числу матчей ─────────────────────────────────────────────────
     if total >= 50:
@@ -522,6 +545,28 @@ async def backfill_achievements(session: AsyncSession) -> None:
     all_ids_r = await session.execute(select(Player.id))
     all_player_ids = {row[0] for row in all_ids_r.all()}
 
+    # ── Вынес терминатора: глобальный проход по ВСЕМ матчам клуба в хронологии ──
+    # Метрика зависит от истории соперника (его серии), а не только текущего
+    # игрока — обычный per-player replay ниже этого не видит, нужен один общий проход.
+    club_matches_r = await session.execute(
+        select(Match)
+        .where(Match.status == MatchStatus.completed)
+        .order_by(Match.completed_at)
+    )
+    club_matches = club_matches_r.scalars().all()
+    club_streaks: dict[int, int] = {}
+    terminator_winner_ids: set[int] = set()
+    for m in club_matches:
+        if m.winner_id is None:
+            club_streaks[m.challenger_id] = 0
+            club_streaks[m.challenged_id] = 0
+            continue
+        loser_id = m.challenged_id if m.winner_id == m.challenger_id else m.challenger_id
+        if club_streaks.get(loser_id, 0) >= TERMINATOR_STREAK_LEN:
+            terminator_winner_ids.add(m.winner_id)
+        club_streaks[m.winner_id] = club_streaks.get(m.winner_id, 0) + 1
+        club_streaks[loser_id] = 0
+
     for player in players:
         earned = get_achievements(player)
 
@@ -541,6 +586,10 @@ async def backfill_achievements(session: AsyncSession) -> None:
 
         # Первый матч
         _add_new(earned, "press_start")
+
+        # Вынес терминатора (из глобального прохода выше)
+        if player.id in terminator_winner_ids:
+            _add_new(earned, "terminator_slain")
 
         # Replay — считаем статистику в хронологическом порядке
         win_streak = 0

@@ -941,3 +941,80 @@ async def test_backfill_idempotent(db):
     earned_second = sorted(get_achievements(p1))
 
     assert earned_first == earned_second
+
+
+# ── terminator_slain («Вынес терминатора») ──────────────────────────────────
+
+async def test_terminator_slain_on_beating_5_win_streak(db):
+    """p2 идёт с 5 победами подряд над p3, p1 обрывает эту серию — ачивка."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    for i in range(5):
+        await _add_win(db, p2, p3, dt=_ts(i))  # p2: 5 побед подряд над p3
+    new = await _do_win(db, p1, p2, dt=_ts(5))  # p1 обрывает серию p2
+    assert "terminator_slain" in new
+
+
+async def test_no_terminator_slain_on_4_win_streak(db):
+    """Серии всего 4 победы — недостаточно, ачивки нет."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    for i in range(4):
+        await _add_win(db, p2, p3, dt=_ts(i))
+    new = await _do_win(db, p1, p2, dt=_ts(4))
+    assert "terminator_slain" not in new
+
+
+async def test_no_terminator_slain_when_streak_broken_before(db):
+    """Серия p2 уже была прервана раньше — на момент этого матча стрик = 1."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    for i in range(5):
+        await _add_win(db, p2, p3, dt=_ts(i))
+    await _add_win(db, p3, p2, dt=_ts(5))       # p3 прерывает серию p2
+    await _add_win(db, p2, p3, dt=_ts(6))       # p2 выигрывает один раз (стрик=1)
+    new = await _do_win(db, p1, p2, dt=_ts(7))  # p1 побеждает p2 со стриком всего 1
+    assert "terminator_slain" not in new
+
+
+async def test_terminator_slain_not_given_to_the_streak_owner(db):
+    """Достижение — победителю, а не тому, у кого была серия."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    for i in range(5):
+        await _add_win(db, p2, p3, dt=_ts(i))
+    await _do_win(db, p1, p2, dt=_ts(5))
+    assert "terminator_slain" not in get_achievements(p2)
+    assert "terminator_slain" in get_achievements(p1)
+
+
+async def test_backfill_assigns_terminator_slain(db):
+    """backfill находит club-wide серию соперника и награждает победителя."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    for i in range(5):
+        db.add(Match(
+            challenger_id=p2.id, challenged_id=p3.id,
+            status=MatchStatus.completed, winner_id=p2.id,
+            sets_data=_DEFAULT_SETS, completed_at=_ts(i),
+        ))
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=p1.id,
+        sets_data=_DEFAULT_SETS, completed_at=_ts(5),
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "terminator_slain" in get_achievements(p1)
+    assert "terminator_slain" not in get_achievements(p2)
