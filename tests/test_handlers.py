@@ -26,7 +26,7 @@ from bot.handlers.match_result import (
     process_set_score,
     start_report,
 )
-from bot.handlers.profile import _nearest_achievement_progress
+from bot.handlers.profile import _nearest_achievement_progress, _render_stats_lines
 from bot.services.achievements import get_achievements
 from bot.states.states import MatchResultStates
 from bot.utils import (
@@ -557,6 +557,76 @@ def test_ach_progress_rating_high_wins():
     assert result is not None
     assert "Рейтинг 1200" in result
     assert "1150/1200" in result
+
+
+# ── _render_stats_lines (группировка экрана «Статистика») ───────────────────────
+
+def _full_stats(**overrides) -> dict:
+    """Полный набор ключей _compute_player_stats с нейтральными дефолтами."""
+    base = {
+        "recent_7": [], "streak": 0, "loss_streak": 0,
+        "best_opp": None, "nemesis": None, "top_opp": None,
+        "avg_delta": None, "best_win": None,
+        "total_earned": 0.0, "total_lost": 0.0,
+        "best_streak": 0, "total_sets_played": 0,
+        "first_set_conv": None, "fav_format": None,
+        "best_day": None, "best_day_count": 0,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_render_stats_lines_empty_when_nothing_notable():
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    assert _render_stats_lines(p, _full_stats()) == []
+
+
+def test_render_stats_lines_groups_separated_by_single_blank_line():
+    """Форма/серии, соперники, рейтинг/рекорды и разное — разделены ровно одной
+    пустой строкой между непустыми группами (как «Рекорды клуба», v2.73.0)."""
+    p = SimpleNamespace(id=1, rating=1050.0, peak_rating=1080.0)
+    s = _full_stats(
+        streak=3,
+        best_opp={"name": "Bob", "wins": 4},
+        avg_delta=2.5,
+        total_sets_played=42,
+    )
+    lines = _render_stats_lines(p, s)
+
+    assert "" in lines
+    blank_indices = [i for i, ln in enumerate(lines) if ln == ""]
+    # Между четырьмя непустыми группами — ровно 3 разделителя, никаких подряд идущих пустых строк
+    assert len(blank_indices) == 3
+    assert lines[0] != "" and lines[-1] != ""
+    for i in blank_indices:
+        assert lines[i - 1] != "" and lines[i + 1] != ""
+
+
+def test_render_stats_lines_peak_rating_only_when_above_current():
+    p_above = SimpleNamespace(id=1, rating=1000.0, peak_rating=1100.0)
+    lines_above = _render_stats_lines(p_above, _full_stats())
+    assert any("Пик рейтинга" in ln for ln in lines_above)
+
+    p_equal = SimpleNamespace(id=1, rating=1100.0, peak_rating=1100.0)
+    lines_equal = _render_stats_lines(p_equal, _full_stats())
+    assert not any("Пик рейтинга" in ln for ln in lines_equal)
+
+
+def test_render_stats_lines_order_form_then_opponents_then_rating_then_misc():
+    """Порядок групп фиксирован: форма/серии → соперники → рейтинг/рекорды → разное."""
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    s = _full_stats(
+        streak=2,
+        nemesis={"name": "Cara", "losses": 3},
+        best_win=15.0,
+        fav_format=(3, 10),
+    )
+    lines = _render_stats_lines(p, s)
+    idx_streak = next(i for i, ln in enumerate(lines) if "Серия" in ln)
+    idx_nemesis = next(i for i, ln in enumerate(lines) if "Кошмар" in ln)
+    idx_best_win = next(i for i, ln in enumerate(lines) if "Лучший матч" in ln)
+    idx_format = next(i for i, ln in enumerate(lines) if "Любимый формат" in ln)
+    assert idx_streak < idx_nemesis < idx_best_win < idx_format
 
 
 # ── env_int / pluralize_sets ─────────────────────────────────────────────────────

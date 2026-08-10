@@ -166,8 +166,16 @@ def _render_stats_lines(player, s: dict) -> list[str]:
 
     Используется и в личной статистике, и в публичном профиле. Возвращает список
     строк без заголовка и без блока «Последние матчи» — их добавляет вызывающий.
+
+    Строки сгруппированы по смыслу (форма/серии → соперники → рейтинг/рекорды →
+    разное), каждая непустая группа отделена пустой строкой — те же принципы, что
+    и у группировки «Рекорды клуба» (bot/handlers/leaderboard.py, v2.73.0): плоский
+    список из 10+ разнородных пунктов подряд читается как нечитаемая простыня.
     """
-    lines: list[str] = []
+    form_lines: list[str] = []
+    opponent_lines: list[str] = []
+    rating_lines: list[str] = []
+    misc_lines: list[str] = []
 
     recent_7 = s["recent_7"]
     if recent_7:
@@ -182,45 +190,56 @@ def _render_stats_lines(player, s: dict) -> list[str]:
         total_recent = len(form_icons)
         display_icons = form_icons[-10:]
         suffix = f"  <i>({total_recent} матчей)</i>" if total_recent > 10 else ""
-        lines.append(f"🗓 Форма (7 дней): {''.join(display_icons)}{suffix}")
+        form_lines.append(f"🗓 Форма (7 дней): {''.join(display_icons)}{suffix}")
 
     streak = s["streak"]
     if streak >= 2:
-        lines.append(f"🔥 Серия: <b>{streak} побед подряд</b>")
+        form_lines.append(f"🔥 Серия: <b>{streak} побед подряд</b>")
     if s["loss_streak"] >= 2:
-        lines.append(f"😬 Серия: <b>{s['loss_streak']} поражений подряд</b>")
+        form_lines.append(f"😬 Серия: <b>{s['loss_streak']} поражений подряд</b>")
+    if s["best_streak"] >= 2 and s["best_streak"] != streak:
+        form_lines.append(f"🎖 Рекорд серии: <b>{s['best_streak']} побед подряд</b>")
+
     if s["best_opp"]:
-        lines.append(f"🎁 Подарок: <b>{h(s['best_opp']['name'])}</b> ({s['best_opp']['wins']} побед)")
+        opponent_lines.append(f"🎁 Подарок: <b>{h(s['best_opp']['name'])}</b> ({s['best_opp']['wins']} побед)")
     if s["nemesis"]:
-        lines.append(f"😱 Кошмар: <b>{h(s['nemesis']['name'])}</b> ({s['nemesis']['losses']} поражений)")
+        opponent_lines.append(f"😱 Кошмар: <b>{h(s['nemesis']['name'])}</b> ({s['nemesis']['losses']} поражений)")
     top_opp = s["top_opp"]
     if top_opp and top_opp["total"] >= 2:
         top_draws_str = f" 🤝{top_opp['draws']}" if top_opp["draws"] else ""
-        lines.append(
+        opponent_lines.append(
             f"⚔️ Чаще всего: <b>{h(top_opp['name'])}</b> "
             f"({top_opp['total']} матчей, {top_opp['wins']}–{top_opp['losses']}{top_draws_str})"
         )
+
+    if player.peak_rating and player.peak_rating > player.rating:
+        rating_lines.append(f"📈 Пик рейтинга: <b>{round(player.peak_rating, 1)}</b> pts")
     avg_delta = s["avg_delta"]
     if avg_delta is not None:
         sign = "+" if avg_delta >= 0 else ""
-        lines.append(f"〽️ В среднем за матч: <b>{sign}{avg_delta} pts</b>")
+        rating_lines.append(f"〽️ В среднем за матч: <b>{sign}{avg_delta} pts</b>")
     if s["best_win"] is not None:
-        lines.append(f"🏅 Лучший матч: <b>+{s['best_win']} pts</b>")
+        rating_lines.append(f"🏅 Лучший матч: <b>+{s['best_win']} pts</b>")
     if s["total_earned"] > 0 or s["total_lost"] > 0:
-        lines.append(f"💰 За карьеру: <b>+{s['total_earned']}</b> / <b>-{s['total_lost']}</b> pts")
-    if s["best_streak"] >= 2 and s["best_streak"] != streak:
-        lines.append(f"🎖 Рекорд серии: <b>{s['best_streak']} побед подряд</b>")
+        rating_lines.append(f"💰 За карьеру: <b>+{s['total_earned']}</b> / <b>-{s['total_lost']}</b> pts")
+
     if s["total_sets_played"] > 0:
-        lines.append(f"🎮 Партий сыграно: <b>{s['total_sets_played']}</b>")
+        misc_lines.append(f"🎮 Партий сыграно: <b>{s['total_sets_played']}</b>")
     if s["first_set_conv"] is not None:
-        lines.append(f"⚡ После 1-й партии: <b>{s['first_set_conv']}%</b> побед")
+        misc_lines.append(f"⚡ После 1-й партии: <b>{s['first_set_conv']}%</b> побед")
     if s["fav_format"]:
         n = s["fav_format"][0]
         word = "партия" if n == 1 else "партии" if 2 <= n <= 4 else "партий"
-        lines.append(f"❤️ Любимый формат: <b>{n} {word}</b>")
+        misc_lines.append(f"❤️ Любимый формат: <b>{n} {word}</b>")
     if s["best_day"]:
-        lines.append(f"📅 Активный день: <b>{s['best_day']}</b> ({s['best_day_count']} матчей)")
+        misc_lines.append(f"📅 Активный день: <b>{s['best_day']}</b> ({s['best_day_count']} матчей)")
 
+    lines: list[str] = []
+    for group in (form_lines, opponent_lines, rating_lines, misc_lines):
+        if group:
+            if lines:
+                lines.append("")
+            lines.extend(group)
     return lines
 
 
@@ -318,10 +337,6 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
 
     lines.extend(_render_stats_lines(player, s))
 
-    peak = player.peak_rating
-    if peak and peak > player.rating:
-        lines.append(f"📈 Пик рейтинга: <b>{round(peak, 1)}</b> pts")
-
     progress = _nearest_achievement_progress(player, s, len(players_all))
     if progress:
         lines.append(progress)
@@ -399,8 +414,6 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
         f"🏆 Побед: <b>{s['wins']}</b>{draws_part}  |  💔 Поражений: <b>{s['losses']}</b>",
         f"📊 Винрейт: <b>{s['win_rate']}%</b>",
     ]
-    if player.peak_rating and player.peak_rating > player.rating:
-        lines.append(f"📈 Пик рейтинга: <b>{round(player.peak_rating, 1)}</b> pts")
 
     lines.extend(_render_stats_lines(player, s))
 
