@@ -7,7 +7,7 @@ from aiogram import Bot
 from aiogram.types import FSInputFile
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
 from bot.db.database import DATABASE_URL, async_session
@@ -165,7 +165,7 @@ async def send_weekly_digest(bot: Bot) -> None:
                 f"<b>{pluralize_sets(total_sets)}</b>"
             )
 
-        hero_lines = ["🏆 <b>Герои недели:</b>", activity_line]
+        hero_lines = ["🦸 <b>Герои недели:</b>", activity_line]
 
         most_active_id = max(match_count, key=match_count.get)
         hero_lines.append(
@@ -231,27 +231,10 @@ async def send_weekly_digest(bot: Bot) -> None:
             sign = "+" if rating_delta >= 0 else ""
 
             if not matches:
-                last_r = await session.execute(
-                    select(Match)
-                    .where(
-                        or_(Match.challenger_id == player.id, Match.challenged_id == player.id),
-                        Match.status == MatchStatus.completed,
-                    )
-                    .order_by(desc(Match.completed_at))
-                    .limit(1)
-                )
-                last_m = last_r.scalar_one_or_none()
-                vanished = (
-                    last_m is not None
-                    and last_m.completed_at is not None
-                    and last_m.completed_at < two_weeks_ago
-                )
-                vanished_line = "👻 Куда пропал? Тебя давно не видели за столом!\n" if vanished else ""
                 header = (
                     f"📊 <b>Итоги недели</b>\n\n"
                     f"На этой неделе матчей не было.\n"
                     f"Твой рейтинг: <b>{round(player.rating, 1)}</b> pts{rank_suffix}\n"
-                    f"{vanished_line}"
                     f"<i>«Ты либо занят жизнью, либо занят умиранием.»</i>\n"
                 )
             else:
