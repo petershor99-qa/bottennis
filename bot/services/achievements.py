@@ -58,13 +58,14 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("titans",         "🥋", "Битва такеши титанов",      "Победить в матче, где оба были 1100+ pts"),
     Achievement("takova_zhis",    "🎭", "Такова жись",               "6 матчей подряд с чередованием побед и поражений"),
     Achievement("terminator_slain", "🦾", "Вынес терминатора",       "Победить соперника, шедшего с серией 5+ побед подряд"),
+    Achievement("night_king",     "🌙", "Король ночи",               "Обыграть всех игроков клуба за один день"),
 ]
 
 ACHIEVEMENTS_MAP: dict[str, Achievement] = {a.id: a for a in ACHIEVEMENTS_LIST}
 
 # Увеличивай при добавлении новых ачивок, требующих бэкфилл.
 # Игроки с player.backfill_version < BACKFILL_VERSION будут обработаны один раз при старте.
-BACKFILL_VERSION = 5
+BACKFILL_VERSION = 6
 
 TERMINATOR_STREAK_LEN = 5  # активная серия соперника для «Вынес терминатора»
 
@@ -321,6 +322,14 @@ async def check_win_achievements(
     ]
     if len(today_matches) >= 3 and all(m.winner_id == winner.id for m in today_matches):
         maybe("relentless")
+
+    # ── Король ночи: обыграл всех остальных игроков клуба за сегодня ────────
+    beaten_today_ids = {
+        (m.challenged_id if m.challenger_id == winner.id else m.challenger_id)
+        for m in today_matches if m.winner_id == winner.id
+    }
+    if other_ids and other_ids.issubset(beaten_today_ids):
+        maybe("night_king")
 
     # ── Такова жись: 6 матчей подряд с чередованием побед/поражений ─────────
     if _has_alternating_tail(all_matches, winner.id):
@@ -704,15 +713,24 @@ async def backfill_achievements(session: AsyncSession) -> None:
             _add_new(earned, "fk_tyumen")
 
         # Неистого: любой день, где все матчи (от 3) — победы.
+        # Король ночи: любой день, где обыграны все остальные игроки клуба.
         # День считаем по МСК (даты в БД — naive-UTC), как и в realtime-проверках.
         day_groups: dict = {}
         for m in matches:
             if m.completed_at:
                 day_groups.setdefault((m.completed_at + MSK_OFFSET).date(), []).append(m)
+
+        other_ids_for_day = all_player_ids - {player.id}
         for day_matches in day_groups.values():
             if len(day_matches) >= 3 and all(mm.winner_id == player.id for mm in day_matches):
                 _add_new(earned, "relentless")
-                break
+
+            beaten_today_ids = {
+                (mm.challenged_id if mm.challenger_id == player.id else mm.challenger_id)
+                for mm in day_matches if mm.winner_id == player.id
+            }
+            if other_ids_for_day and other_ids_for_day.issubset(beaten_today_ids):
+                _add_new(earned, "night_king")
 
         # Дипломат
         if total_draws >= 5:
