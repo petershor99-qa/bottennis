@@ -856,6 +856,43 @@ async def test_no_relentless_with_a_loss_today(db):
     assert "relentless" not in new
 
 
+# night_king (Король ночи — обыграть всех игроков клуба за один день)
+
+async def test_night_king_beats_all_others_today(db):
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Charlie")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    today = datetime.now(timezone.utc).replace(hour=9, minute=0, second=0, microsecond=0)
+    await _add_win(db, p1, p2, dt=today)
+    new = await _do_win(db, p1, p3, dt=today + timedelta(minutes=1))
+    assert "night_king" in new
+
+
+async def test_no_night_king_missing_one_opponent_today(db):
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Charlie")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    today = datetime.now(timezone.utc).replace(hour=9, minute=0, second=0, microsecond=0)
+    new = await _do_win(db, p1, p2, dt=today)  # Charlie не побеждён
+    assert "night_king" not in new
+
+
+async def test_no_night_king_when_beaten_on_different_days(db):
+    """Обыграл всех, но не в один день — Король ночи не даётся."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Charlie")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    yesterday = datetime.now(timezone.utc).replace(hour=9, minute=0, second=0, microsecond=0) \
+                - timedelta(days=1)
+    today = yesterday + timedelta(days=1)
+    await _add_win(db, p1, p2, dt=yesterday)
+    new = await _do_win(db, p1, p3, dt=today)
+    assert "night_king" not in new
+
+
 # anchorage_spirit (Дух Анкориджа — отмена матча)
 
 async def test_anchorage_spirit_on_cancel(db):
@@ -894,6 +931,27 @@ async def test_backfill_fk_tyumen(db):
 
     await backfill_achievements(db)
     assert "fk_tyumen" in get_achievements(p1)
+
+
+async def test_backfill_assigns_night_king(db):
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Charlie")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=p1.id,
+        sets_data=_DEFAULT_SETS, completed_at=_ts(0),
+    ))
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p3.id,
+        status=MatchStatus.completed, winner_id=p1.id,
+        sets_data=_DEFAULT_SETS, completed_at=_ts(1),
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "night_king" in get_achievements(p1)
 
 
 async def test_backfill_anchorage_from_declined_match(db):
