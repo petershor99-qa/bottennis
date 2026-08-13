@@ -10,13 +10,14 @@ from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import (
     active_match_kb,
     back_to_menu_kb,
+    busy_with_match_kb,
     cancel_match_confirm_kb,
     main_menu_kb,
     players_list_kb,
 )
 from bot.services.achievements import ACHIEVEMENTS_MAP, check_cancel_achievements
 from bot.services.rating import win_probability
-from bot.utils import compute_ranks, get_player, match_phrase
+from bot.utils import compute_ranks, get_active_match, get_player, match_phrase
 
 router = Router()
 
@@ -27,26 +28,38 @@ router = Router()
 async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSession):
     await callback.answer()
 
+    current_player = await get_player(session, callback.from_user.id)
+
+    # У игрока может быть только ОДИН активный матч одновременно (стол один,
+    # матчи строго последовательные) — если он уже занят, вместо списка
+    # соперников показываем его текущий матч с быстрым путём его завершить.
+    if current_player:
+        my_active = await get_active_match(session, current_player.id)
+        if my_active:
+            opp_id = (
+                my_active.challenged_id if my_active.challenger_id == current_player.id
+                else my_active.challenger_id
+            )
+            opp_r = await session.execute(select(Player).where(Player.id == opp_id))
+            opp = opp_r.scalar_one()
+            await callback.message.edit_text(
+                f"⚔️ У тебя уже есть активный матч с <b>{h(opp.display_name)}</b>.\n"
+                f"Заверши его, чтобы вызвать нового соперника.",
+                reply_markup=busy_with_match_kb(my_active.id),
+            )
+            return
+
     r = await session.execute(select(Player).order_by(Player.rating.desc()))
     players = r.scalars().all()
 
-    # Игроки с которыми уже есть активный матч
-    current_player = await get_player(session, callback.from_user.id)
+    # Игроки, занятые активным матчем (с кем угодно) — не показываем их в списке
     busy_ids: set[int] = set()
-    if current_player:
-        active_r = await session.execute(
-            select(Match).where(
-                or_(
-                    Match.challenger_id == current_player.id,
-                    Match.challenged_id == current_player.id,
-                ),
-                Match.status == MatchStatus.accepted,
-            )
-        )
-        for m in active_r.scalars().all():
-            busy_ids.add(m.challenger_id)
-            busy_ids.add(m.challenged_id)
-        busy_ids.discard(current_player.id)
+    active_r = await session.execute(
+        select(Match).where(Match.status == MatchStatus.accepted)
+    )
+    for m in active_r.scalars().all():
+        busy_ids.add(m.challenger_id)
+        busy_ids.add(m.challenged_id)
 
     others = [
         p for p in players
@@ -151,19 +164,29 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
         await callback.answer("Нельзя вызвать самого себя 🙂", show_alert=True)
         return
 
-    # Блокируем дубли: уже есть активный матч между этими игроками
-    dup = await session.execute(
-        select(Match).where(
-            or_(
-                and_(Match.challenger_id == challenger.id, Match.challenged_id == opponent.id),
-                and_(Match.challenger_id == opponent.id, Match.challenged_id == challenger.id),
-            ),
-            Match.status == MatchStatus.accepted,
+    # Игрок может иметь только ОДИН активный матч одновременно (стол один,
+    # матчи строго последовательные) — перекрывает и старый кейс «уже есть
+    # активный матч именно с этим соперником» (это частный случай «занят»).
+    my_active = await get_active_match(session, challenger.id)
+    if my_active:
+        busy_opp_id = (
+            my_active.challenged_id if my_active.challenger_id == challenger.id
+            else my_active.challenger_id
         )
-    )
-    if dup.scalar_one_or_none():
+        busy_opp_r = await session.execute(select(Player).where(Player.id == busy_opp_id))
+        busy_opp = busy_opp_r.scalar_one()
+        await callback.answer()
+        await callback.message.edit_text(
+            f"⚔️ У тебя уже есть активный матч с <b>{h(busy_opp.display_name)}</b>.\n"
+            f"Заверши его, чтобы вызвать нового соперника.",
+            reply_markup=busy_with_match_kb(my_active.id),
+        )
+        return
+
+    if await get_active_match(session, opponent.id):
         await callback.answer(
-            "У вас уже есть активный матч с этим игроком!", show_alert=True
+            f"{opponent.display_name} сейчас занят другим матчем. Попробуй позже.",
+            show_alert=True,
         )
         return
 

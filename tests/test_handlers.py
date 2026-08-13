@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from bot.db.models import Base, Match, MatchStatus, Player
-from bot.handlers.challenge import do_cancel_match, send_challenge
+from bot.handlers.challenge import do_cancel_match, send_challenge, show_players_for_challenge
 from bot.handlers.match_result import (
     confirm_result,
     fsm_reset_notice,
@@ -235,8 +235,9 @@ async def test_send_challenge_screen_has_no_report_button(db):
     assert "напиши счёт сюда" in initiator_text
 
 
-async def test_send_challenge_blocks_duplicate(db):
-    """Нельзя вызвать игрока, с которым уже есть активный матч."""
+async def test_send_challenge_blocks_when_challenger_busy_with_same_opponent(db):
+    """Нельзя вызвать игрока, с которым уже есть активный матч (частный
+    случай общего правила «только один активный матч одновременно»)."""
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
     db.add_all([p1, p2])
     await db.flush()
@@ -246,8 +247,101 @@ async def test_send_challenge_blocks_duplicate(db):
     cb, bot = _callback(1, f"challenge_{p2.id}"), AsyncMock()
     await send_challenge(cb, db, bot)
 
-    cb.answer.assert_called()  # показал alert про активный матч
-    assert any("активный матч" in str(c.args) for c in cb.answer.call_args_list)
+    cb.message.edit_text.assert_called()
+    text = cb.message.edit_text.call_args[0][0]
+    assert "активный матч" in text
+    assert "Bob" in text
+    # матч не создан повторно — остался ровно один активный
+    r = await db.execute(
+        Match.__table__.select().where(Match.status == MatchStatus.accepted)
+    )
+    assert len(r.fetchall()) == 1
+
+
+async def test_send_challenge_blocks_when_challenger_busy_with_different_opponent(db):
+    """Нельзя вызвать нового соперника, если уже есть активный матч с кем-то другим."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    await _accepted_match(db, p1, p2)  # Alice уже занята матчем с Bob
+    await db.commit()
+
+    cb, bot = _callback(1, f"challenge_{p3.id}"), AsyncMock()
+    await send_challenge(cb, db, bot)
+
+    cb.message.edit_text.assert_called()
+    text = cb.message.edit_text.call_args[0][0]
+    assert "активный матч" in text
+    assert "Bob" in text  # блокировка про ТЕКУЩИЙ активный матч, не про Cara
+    bot.send_message.assert_not_called()  # Cara не должна получить уведомление
+
+
+async def test_send_challenge_blocks_when_opponent_busy(db):
+    """Нельзя вызвать соперника, который уже занят матчем с кем-то третьим."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    await _accepted_match(db, p2, p3)  # Bob уже занят матчем с Cara
+    await db.commit()
+
+    cb, bot = _callback(1, f"challenge_{p2.id}"), AsyncMock()
+    await send_challenge(cb, db, bot)
+
+    cb.answer.assert_called()
+    assert any("занят" in str(c.args) for c in cb.answer.call_args_list)
+    bot.send_message.assert_not_called()
+
+
+# ── show_players_for_challenge (экран «Кого вызвать») ───────────────────────────
+
+async def test_challenge_screen_shows_busy_match_when_viewer_busy(db):
+    """Если зритель уже занят активным матчем — вместо списка соперников
+    показываем его текущий матч, а не список игроков."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    await _accepted_match(db, p1, p2)  # Alice занята матчем с Bob
+    await db.commit()
+
+    cb = _callback(1, "menu_play")
+    await show_players_for_challenge(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "активный матч" in text
+    assert "Bob" in text
+    assert "Cara" not in text  # список соперников не показан вообще
+
+
+async def test_challenge_screen_hides_globally_busy_players(db):
+    """Игрок, занятый матчем с кем-то ТРЕТЬИМ (не зрителем), не показывается
+    в списке для вызова — раньше фильтровались только свои же соперники."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    await _accepted_match(db, p2, p3)  # Bob занят матчем с Cara, Alice свободна
+    await db.commit()
+
+    cb = _callback(1, "menu_play")
+    await show_players_for_challenge(cb, db)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    buttons = [b.text for row in kb.inline_keyboard for b in row]
+    assert not any("Bob" in t for t in buttons)
+    assert not any("Cara" in t for t in buttons)
+
+
+async def test_challenge_screen_shows_free_players(db):
+    """Свободный игрок нормально показывается в списке для вызова."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.commit()
+
+    cb = _callback(1, "menu_play")
+    await show_players_for_challenge(cb, db)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    buttons = [b.text for row in kb.inline_keyboard for b in row]
+    assert any("Bob" in t for t in buttons)
 
 
 # ── do_cancel_match (отмена + уведомление + ачивка) ─────────────────────────────
@@ -971,6 +1065,267 @@ async def test_club_records_shows_current_streak(db):
     assert "В ударе сейчас" in text  # текущая серия Alice = 3
 
 
+async def test_club_records_shows_most_draws(db):
+    """Больше всего ничьих — от 3 ничьих у игрока."""
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(3):
+        db.add(_completed(p1, p2, None, 0.0, datetime(2026, 6, 1 + i, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Больше всего ничьих" in text
+    assert "3 ничьих" in text
+
+
+async def test_no_most_draws_below_threshold(db):
+    """2 ничьи — рекорд ещё не показывается (порог 3)."""
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(2):
+        db.add(_completed(p1, p2, None, 0.0, datetime(2026, 6, 1 + i, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Больше всего ничьих" not in text
+
+
+async def test_club_records_shows_hottest_day(db):
+    """Самый жаркий день клуба — сумма матчей всех игроков за день (от 3)."""
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    hot_day = datetime(2026, 6, 5, 10, 0, 0)
+    db.add(_completed(p1, p2, p1.id, 10.0, hot_day))
+    db.add(_completed(p1, p3, p1.id, 10.0, hot_day + timedelta(hours=1)))
+    db.add(_completed(p2, p3, p2.id, 10.0, hot_day + timedelta(hours=2)))
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 6, 10, 0, 0)))  # другой день
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Самый жаркий день клуба" in text
+    assert "05.06.26" in text
+    assert "3 матча" in text
+
+
+async def test_club_records_shows_fastest_match(db):
+    """Самый быстрый матч — по accepted_at → completed_at."""
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m = Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=p1.id,
+        sets_data=[{"w": 11, "l": 5}], rating_change=10.0,
+        accepted_at=datetime(2026, 6, 1, 12, 0, 0),
+        completed_at=datetime(2026, 6, 1, 12, 4, 0),  # 4 минуты
+    )
+    db.add(m)
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Самый быстрый матч" in text
+    assert "4 мин" in text
+
+
+async def test_fastest_match_skipped_without_accepted_at(db):
+    """Матчи без accepted_at (старые записи) не участвуют в рекорде — не падаем."""
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)  # не должно упасть
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Самый быстрый матч" not in text
+
+
+# ── Скрытые ачивки: незаработанные не раскрывают имя/условие ───────────────────
+
+async def test_hidden_achievement_masked_when_locked(db):
+    """Незаработанная скрытая ачивка показывается как '🔒 ???', без имени и условия."""
+    from bot.handlers.profile import show_my_achievements
+
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.commit()
+
+    cb = _callback(1, "my_achievements")
+    await show_my_achievements(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "🔒 ???" in text
+    # ни одна скрытая ачивка не раскрывает имя, пока не заработана
+    assert "Король ночи" not in text
+    assert "Вынес терминатора" not in text
+    assert "Такова жись" not in text
+
+
+async def test_hidden_achievement_revealed_when_earned(db):
+    """Заработанная скрытая ачивка показывается полностью, как обычная."""
+    from bot.handlers.profile import show_my_achievements
+
+    p1 = _player(1, "Alice")
+    p1.achievements = '["night_king"]'
+    db.add(p1)
+    await db.commit()
+
+    cb = _callback(1, "my_achievements")
+    await show_my_achievements(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Король ночи" in text
+    assert "✅" in text
+
+
+async def test_non_hidden_locked_achievement_still_shown(db):
+    """Обычная (не скрытая) незаработанная ачивка по-прежнему показывает имя и условие."""
+    from bot.handlers.profile import show_my_achievements
+
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.commit()
+
+    cb = _callback(1, "my_achievements")
+    await show_my_achievements(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Стукнул полтинник" in text  # обычная счётная ачивка, не скрытая
+
+
+# ── Кнопка «Вызвать» скрывается, если занят зритель или соперник ────────────────
+# (профиль, H2H, «С кем сыграть?») — согласовано с send_challenge/менюшкой вызова.
+
+async def test_player_profile_hides_challenge_when_viewer_busy(db):
+    from bot.handlers.profile import show_player_profile
+
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    await _accepted_match(db, p1, p2)  # Alice (зритель) занята матчем с Bob
+    await db.commit()
+
+    cb = _callback(1, f"player_profile_{p3.id}")
+    await show_player_profile(cb, db)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    buttons = [b.text for row in kb.inline_keyboard for b in row]
+    assert not any("Вызвать" in t for t in buttons)
+
+
+async def test_player_profile_hides_challenge_when_target_busy(db):
+    from bot.handlers.profile import show_player_profile
+
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    await _accepted_match(db, p2, p3)  # Bob (владелец профиля) занят матчем с Cara
+    await db.commit()
+
+    cb = _callback(1, f"player_profile_{p2.id}")  # Alice смотрит профиль Bob
+    await show_player_profile(cb, db)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    buttons = [b.text for row in kb.inline_keyboard for b in row]
+    assert not any("Вызвать" in t for t in buttons)
+
+
+async def test_player_profile_shows_challenge_when_both_free(db):
+    from bot.handlers.profile import show_player_profile
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.commit()
+
+    cb = _callback(1, f"player_profile_{p2.id}")
+    await show_player_profile(cb, db)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    buttons = [b.text for row in kb.inline_keyboard for b in row]
+    assert any("Вызвать" in t for t in buttons)
+
+
+async def test_h2h_hides_challenge_when_viewer_busy(db):
+    from bot.handlers.history import show_h2h
+
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    await _accepted_match(db, p1, p2)  # Alice занята матчем с Bob
+    await db.commit()
+
+    cb = _callback(1, f"h2h_{p3.id}_0")
+    await show_h2h(cb, db)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    buttons = [b.text for row in kb.inline_keyboard for b in row]
+    assert not any("Вызвать" in t for t in buttons)
+
+
+async def test_my_matches_no_challenge_buttons_when_viewer_busy(db):
+    """Если зритель занят, кнопки «Вызвать X» не показываются вообще —
+    раньше показывались для всех, кто индивидуально свободен."""
+    from bot.handlers.history import show_my_matches
+
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    await _accepted_match(db, p1, p2)  # Alice занята матчем с Bob, Cara свободна
+    await db.commit()
+
+    cb = _callback(1, "menu_matches")
+    await show_my_matches(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    buttons = [b.text for row in kb.inline_keyboard for b in row]
+    assert not any(t.startswith("Вызвать") for t in buttons)
+    assert "Заверши свой активный матч" in text
+    assert "Cara" in text  # инфо-строка про свободного соперника остаётся
+
+
+async def test_my_matches_shows_challenge_buttons_when_viewer_free(db):
+    from bot.handlers.history import show_my_matches
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.commit()
+
+    cb = _callback(1, "menu_matches")
+    await show_my_matches(cb, db)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    buttons = [b.text for row in kb.inline_keyboard for b in row]
+    assert any(t.startswith("Вызвать") for t in buttons)
+
+
 # ── Пик рейтинга обновляется при ничьей (баг-фикс) ──────────────────────────────
 
 async def test_peak_rating_updated_on_draw(db):
@@ -1081,6 +1436,98 @@ async def test_weekly_digest_standings_and_heroes(monkeypatch):
     assert "Нагибатель недели" in text          # серия за неделю
     assert "Матч недели" in text
     assert "Отрицательный рост" in text
+
+
+# ── send_match_reminders (напоминание про незавершённый матч, от 24ч) ──────────
+
+async def test_reminder_sent_for_stale_match(monkeypatch):
+    """Матч старше 24 часов без reminder_sent — оба участника получают напоминание."""
+    import bot.scheduler as sched
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    old = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=25)
+    async with factory() as s:
+        p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+        s.add_all([p1, p2])
+        await s.flush()
+        s.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.accepted, accepted_at=old,
+        ))
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.send_match_reminders(bot)
+    await engine.dispose()
+
+    assert bot.send_message.call_count == 2  # оба участника
+    texts = [c.args[1] for c in bot.send_message.call_args_list]
+    assert any("Alice" not in t and "Bob" in t for t in texts)  # Alice видит про Bob
+    assert any("Bob" not in t and "Alice" in t for t in texts)  # Bob видит про Alice
+    for c in bot.send_message.call_args_list:
+        assert c.kwargs.get("reply_markup") is not None  # busy_with_match_kb с кнопками
+
+
+async def test_reminder_not_sent_for_fresh_match(monkeypatch):
+    """Матч моложе 24 часов — напоминание не шлётся."""
+    import bot.scheduler as sched
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    recent = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=2)
+    async with factory() as s:
+        p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+        s.add_all([p1, p2])
+        await s.flush()
+        s.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.accepted, accepted_at=recent,
+        ))
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.send_match_reminders(bot)
+    await engine.dispose()
+
+    bot.send_message.assert_not_called()
+
+
+async def test_reminder_not_sent_twice(monkeypatch):
+    """Идемпотентность: повторный запуск не шлёт напоминание уже отмеченному матчу."""
+    import bot.scheduler as sched
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    old = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=25)
+    async with factory() as s:
+        p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+        s.add_all([p1, p2])
+        await s.flush()
+        s.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.accepted, accepted_at=old,
+        ))
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.send_match_reminders(bot)
+    await sched.send_match_reminders(bot)
+    await engine.dispose()
+
+    assert bot.send_message.call_count == 2  # не 4 — второй прогон ничего не шлёт
 
 
 async def test_monthly_summary_renamed_and_heroes(monkeypatch):

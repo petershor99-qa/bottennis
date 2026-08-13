@@ -4,7 +4,7 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from html import escape as h
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Match, MatchStatus, Player
@@ -112,6 +112,24 @@ def pluralize_wins(n: int) -> str:
 async def get_player(session: AsyncSession, telegram_id: int) -> Player | None:
     r = await session.execute(select(Player).where(Player.telegram_id == telegram_id))
     return r.scalar_one_or_none()
+
+
+async def get_active_match(session: AsyncSession, player_id: int) -> Match | None:
+    """Текущий активный (accepted) матч игрока, если есть — с кем угодно.
+
+    Единый источник правды для правила «только один активный матч
+    одновременно» (стол один, матчи строго последовательные) — используется
+    и при вызове (send_challenge), и везде, где нужно решить, показывать ли
+    кнопку «Вызвать»/«⚔️» (профиль, H2H, «С кем сыграть?»), чтобы не вести
+    игрока к заведомо тупиковому нажатию.
+    """
+    r = await session.execute(
+        select(Match).where(
+            or_(Match.challenger_id == player_id, Match.challenged_id == player_id),
+            Match.status == MatchStatus.accepted,
+        )
+    )
+    return r.scalars().first()
 
 
 # ── Ранги игроков (единый источник правды) ───────────────────────────────────

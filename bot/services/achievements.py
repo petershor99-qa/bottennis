@@ -26,6 +26,7 @@ class Achievement:
     emoji: str
     name: str
     desc: str
+    hidden: bool = False  # скрыта до разблокировки — в списке показывается как "🔒 ???"
 
 
 ACHIEVEMENTS_LIST: list[Achievement] = [
@@ -35,14 +36,14 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("hat_trick",      "🔥", "Хет-трик",                  "Выиграть 3 матча подряд"),
     Achievement("im_on_fire",     "💀", "Я горяч нахуй!",            "Выиграть 5 матчей подряд"),
     Achievement("god_mode",       "😤", "Ахуджел. Дай другим выиграть!", "Выиграть 10 матчей подряд"),
-    Achievement("phoenix",        "💪", "Восставший из зада",        "Победить после серии 3+ поражений подряд"),
+    Achievement("phoenix",        "💪", "Восставший из зада",        "Победить после серии 3+ поражений подряд", hidden=True),
     Achievement("highlander",     "👑", "Останется только один",     "Впервые выйти на 1-е место в рейтинге"),
-    Achievement("david_goliath",  "🎯", "Ебнул четырёхпалубку",     "Победить игрока с рейтингом выше на 100+ pts"),
+    Achievement("david_goliath",  "🎯", "Ебнул четырёхпалубку",     "Победить игрока с рейтингом выше на 100+ pts", hidden=True),
     Achievement("marathon",       "🕰", "Совсем абанулись",          "Сыграть матч из 5 и более партий"),
     Achievement("fatality",       "💥", "Фаталити",                  "Победить, не отдав сопернику ни одной партии"),
     Achievement("no_sweat",       "⚡", "Даже не вспотел",           "Выиграть партию со счётом 11:0"),
     Achievement("diplomat",       "🤝", "Мир, дружба, жвачка",      "Сыграть 5 ничьих"),
-    Achievement("revenge",        "⚔️", "Ответ_очка",               "Победить того, кто последним обыграл тебя"),
+    Achievement("revenge",        "⚔️", "Ответ_очка",               "Победить того, кто последним обыграл тебя", hidden=True),
     Achievement("dominator",      "☠️", "То что мертво",             "Победить одного соперника 10 раз подряд"),
     Achievement("fifty",          "🎊", "Стукнул полтинник",          "Сыграть 50 матчей"),
     Achievement("veteran",        "🏆", "Прошаренный",               "Сыграть 100 матчей"),
@@ -51,14 +52,14 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("collector",      "🗺", "Со всеми познакомился",     "Победить каждого игрока хотя бы раз"),
     Achievement("rating_1200",    "⭐", "Рейтинг 1200",              "Достичь рейтинга 1200 pts"),
     Achievement("anchorage_spirit", "🏳️", "Дух Анкориджа",          "Отменить матч"),
-    Achievement("comeback",       "🔄", "CumБэк",                    "Выиграть матч, проигрывая 0:2 по партиям"),
+    Achievement("comeback",       "🔄", "CumБэк",                    "Выиграть матч, проигрывая 0:2 по партиям", hidden=True),
     Achievement("fk_tyumen",      "🥊", "ФК Тюмень",                 "Проиграть 5 матчей подряд"),
     Achievement("relentless",     "☀️", "Неистого",                  "Выиграть все свои матчи за день (от 3)"),
     Achievement("deuce_maker",    "🎢", "Дьюсмейкер",                "Выиграть партию на дьюсе (12:10 и выше)"),
-    Achievement("titans",         "🥋", "Битва такеши титанов",      "Победить в матче, где оба были 1100+ pts"),
-    Achievement("takova_zhis",    "🎭", "Такова жись",               "6 матчей подряд с чередованием побед и поражений"),
-    Achievement("terminator_slain", "🦾", "Вынес терминатора",       "Победить соперника, шедшего с серией 5+ побед подряд"),
-    Achievement("night_king",     "🌙", "Король ночи",               "Обыграть всех игроков клуба за один день"),
+    Achievement("titans",         "🥋", "Битва такеши титанов",      "Победить в матче, где оба были 1100+ pts", hidden=True),
+    Achievement("takova_zhis",    "🎭", "Такова жись",               "6 матчей подряд с чередованием побед и поражений", hidden=True),
+    Achievement("terminator_slain", "🦾", "Вынес терминатора",       "Победить соперника, шедшего с серией 5+ побед подряд", hidden=True),
+    Achievement("night_king",     "🌙", "Король ночи",               "Обыграть всех игроков клуба за один день", hidden=True),
 ]
 
 ACHIEVEMENTS_MAP: dict[str, Achievement] = {a.id: a for a in ACHIEVEMENTS_LIST}
