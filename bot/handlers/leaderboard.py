@@ -474,11 +474,14 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
                 f"<i>{reason}</i>"
             )
 
+    # Пустая строка перед КАЖДОЙ записью (не только между группами) — иначе
+    # длинные записи (счёт марафона на 10 партий и т.п.) визуально сливаются
+    # со следующей строкой в той же группе, границу между рекордами не видно.
     lines = ["🏆 <b>Рекорды клуба</b>"]
     for group in (volume_lines, rivalry_lines, streak_lines, highlight_lines):
-        if group:
+        for record in group:
             lines.append("")
-            lines.extend(group)
+            lines.append(record)
 
     await callback.message.edit_text(
         "\n".join(lines),
