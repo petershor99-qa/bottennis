@@ -4,7 +4,7 @@ from html import escape as h
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
-from sqlalchemy import and_, desc, or_, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -20,6 +20,7 @@ from bot.utils import (
     _match_line,
     compute_ranks,
     format_rank,
+    get_active_match,
     get_match_counts,
     get_player,
     match_rating_delta,
@@ -373,20 +374,13 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
     viewer = await get_player(session, callback.from_user.id)
     viewer_id = viewer.id if viewer else None
 
-    # Кнопку «Вызвать» скрываем, если уже есть активный матч с этим игроком.
-    # Кнопка «Личные встречи» (read-only) показывается всегда для чужого профиля.
+    # Кнопку «Вызвать» скрываем, если занят зритель ИЛИ владелец профиля —
+    # у игрока может быть только один активный матч одновременно (не только
+    # именно с этим человеком). Кнопка «Личные встречи» (read-only) показывается
+    # всегда для чужого профиля.
     can_challenge = True
     if viewer and viewer.id != player.id:
-        active_r = await session.execute(
-            select(Match.id).where(
-                or_(
-                    and_(Match.challenger_id == viewer.id, Match.challenged_id == player.id),
-                    and_(Match.challenger_id == player.id, Match.challenged_id == viewer.id),
-                ),
-                Match.status == MatchStatus.accepted,
-            ).limit(1)
-        )
-        if active_r.scalar():
+        if await get_active_match(session, viewer.id) or await get_active_match(session, player.id):
             can_challenge = False
 
     players_all = (await session.execute(select(Player))).scalars().all()

@@ -189,8 +189,14 @@ def player_profile_kb(
     return b.as_markup()
 
 
-def h2h_kb(player_id: int, page: int = 0, total_pages: int = 1) -> InlineKeyboardMarkup:
-    """Клавиатура под экраном личных встреч (с пагинацией)."""
+def h2h_kb(
+    player_id: int, page: int = 0, total_pages: int = 1, can_challenge: bool = True
+) -> InlineKeyboardMarkup:
+    """Клавиатура под экраном личных встреч (с пагинацией).
+
+    can_challenge=False — зритель или соперник уже заняты другим активным
+    матчем, кнопку «Вызвать» скрываем, чтобы не вести к тупиковому нажатию.
+    """
     b = InlineKeyboardBuilder()
     nav = []
     if page > 0:
@@ -199,7 +205,8 @@ def h2h_kb(player_id: int, page: int = 0, total_pages: int = 1) -> InlineKeyboar
         nav.append(InlineKeyboardButton(text="Вперёд →", callback_data=f"h2h_{player_id}_{page + 1}"))
     if nav:
         b.row(*nav)
-    b.row(InlineKeyboardButton(text="⚔️ Вызвать", callback_data=f"challenge_{player_id}"))
+    if can_challenge:
+        b.row(InlineKeyboardButton(text="⚔️ Вызвать", callback_data=f"challenge_{player_id}"))
     b.row(InlineKeyboardButton(text="« К профилю", callback_data=f"player_profile_{player_id}"))
     return b.as_markup()
 
