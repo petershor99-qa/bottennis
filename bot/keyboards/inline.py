@@ -116,6 +116,19 @@ def active_match_kb(match_id: int) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
+def busy_with_match_kb(match_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура экрана «у тебя уже есть активный матч» (блокировка нового
+    вызова). В отличие от active_match_kb здесь есть кнопка быстрого внесения
+    результата — человек уже пытался сделать что-то ДРУГОЕ (вызвать нового
+    соперника), поэтому подсказка «просто напиши счёт» тут неуместна, нужен
+    явный путь вперёд."""
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="📋 Внести результат сразу", callback_data=f"report_{match_id}"))
+    b.row(InlineKeyboardButton(text="❌ Отменить матч", callback_data=f"cancel_match_{match_id}"))
+    b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
+    return b.as_markup()
+
+
 def after_set_kb(match_id: int, has_sets: bool) -> InlineKeyboardMarkup:
     """Клавиатура после ввода счёта партии."""
     b = InlineKeyboardBuilder()
