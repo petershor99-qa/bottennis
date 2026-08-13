@@ -7,11 +7,13 @@ from aiogram import Bot
 from aiogram.types import FSInputFile
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from sqlalchemy import func, or_, select
+from apscheduler.triggers.interval import IntervalTrigger
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from bot.db.database import DATABASE_URL, async_session
 from bot.db.models import Match, MatchStatus, Player
+from bot.keyboards.inline import busy_with_match_kb
 from bot.utils import (
     MSK_OFFSET,
     compute_alltime_streak,
@@ -67,6 +69,59 @@ def _longest_streak(matches: list, name_map: dict, period: str) -> str | None:
         f"🔥 Нагибатель {period} — <b>{h(name_map.get(best_pid, '?'))}</b>: "
         f"{pluralize_wins(best_n)} подряд"
     )
+
+
+# ── Напоминание о незавершённом матче ─────────────────────────────────────────
+# Возвращено в v2.80.0: с v2.79.0 у игрока может быть только ОДИН активный матч
+# одновременно — забытый неотрапортованный матч теперь блокирует ОБОИХ
+# участников от новых вызовов, а не просто «висит незамеченным», как раньше.
+# Это больше не вовлекающий пуш ради вовлечения (что запрещено принципом «без
+# вовлекающих уловок») — это уведомление о реальном затыке, у которого есть
+# конкретное действие («Внести результат сразу» / «Отменить»).
+
+async def send_match_reminders(bot: Bot) -> None:
+    """Раз в час ищет принятые матчи старше 24 часов и напоминает игрокам."""
+    async with async_session() as session:
+        threshold = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)
+
+        result = await session.execute(
+            select(Match)
+            .where(
+                Match.status == MatchStatus.accepted,
+                Match.reminder_sent == False,  # noqa: E712
+                # accepted_at для новых записей, created_at как fallback для старых
+                or_(
+                    and_(Match.accepted_at.isnot(None), Match.accepted_at <= threshold),
+                    and_(Match.accepted_at.is_(None), Match.created_at <= threshold),
+                ),
+            )
+            .options(selectinload(Match.challenger), selectinload(Match.challenged))
+        )
+        matches = result.scalars().all()
+
+        for match in matches:
+            for player, opponent in [
+                (match.challenger, match.challenged),
+                (match.challenged, match.challenger),
+            ]:
+                try:
+                    await bot.send_message(
+                        player.telegram_id,
+                        f"⏰ <b>Напоминание о матче</b>\n\n"
+                        f"У тебя с <b>{h(opponent.display_name)}</b> есть незавершённый матч "
+                        f"уже больше 24 часов.\n"
+                        f"Пока он не завершён, вы оба не можете вызвать никого другого — "
+                        f"сыграйте и внесите результат! 🏓",
+                        reply_markup=busy_with_match_kb(match.id),
+                    )
+                except Exception:
+                    pass
+
+            match.reminder_sent = True
+
+        if matches:
+            await session.commit()
+            logger.info("Отправлено напоминаний: %d", len(matches))
 
 
 # ── Еженедельный дайджест ─────────────────────────────────────────────────────
@@ -591,6 +646,14 @@ async def send_monthly_summary(bot: Bot) -> None:
 
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="UTC")
+
+    # Проверка незавершённых матчей — каждый час
+    scheduler.add_job(
+        send_match_reminders,
+        IntervalTrigger(hours=1),
+        args=[bot],
+        id="match_reminders",
+    )
 
     # ВАЖНО: каждому CronTrigger таймзона задаётся явно. CronTrigger без аргумента
     # timezone берёт ЛОКАЛЬНУЮ tz сервера (get_localzone()), а не timezone самого

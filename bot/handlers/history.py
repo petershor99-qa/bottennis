@@ -20,6 +20,7 @@ from bot.utils import (
     _match_line,
     build_rating_series,
     compute_h2h,
+    get_active_match,
     get_player,
     get_rec_signal,
     rating_chart_url,
@@ -250,6 +251,10 @@ async def show_h2h(callback: CallbackQuery, session: AsyncSession):
 
     await callback.answer()
 
+    can_challenge = not (
+        await get_active_match(session, viewer.id) or await get_active_match(session, opponent.id)
+    )
+
     r = await session.execute(
         select(Match)
         .where(
@@ -269,7 +274,7 @@ async def show_h2h(callback: CallbackQuery, session: AsyncSession):
     if not matches:
         await callback.message.edit_text(
             f"{title}\nВы ещё не встречались за столом 🏓",
-            reply_markup=h2h_kb(target_id),
+            reply_markup=h2h_kb(target_id, can_challenge=can_challenge),
         )
         return
 
@@ -305,7 +310,7 @@ async def show_h2h(callback: CallbackQuery, session: AsyncSession):
 
     await callback.message.edit_text(
         "\n".join(lines),
-        reply_markup=h2h_kb(target_id, page, total_pages),
+        reply_markup=h2h_kb(target_id, page, total_pages, can_challenge=can_challenge),
     )
 
 
@@ -390,6 +395,14 @@ async def show_my_matches(callback: CallbackQuery, session: AsyncSession):
 
     lines.append("\n🎯 <b>С кем сыграть?</b>\n")
 
+    # У тебя может быть только ОДИН активный матч одновременно — если ты уже
+    # занят, кнопки «Вызвать» ниже не показываем вообще (иначе тап ведёт в
+    # тупик: send_challenge всё равно заблокирует). Инфо-строки по сопернику
+    # (рейтинг, сигнал) оставляем — полезный контекст, даже если сейчас нельзя.
+    viewer_busy = bool(my_matches)
+    if viewer_busy:
+        lines.append("<i>Заверши свой активный матч, чтобы вызвать кого-то ещё.</i>\n")
+
     builder = InlineKeyboardBuilder()
 
     for m in my_matches:
@@ -417,10 +430,11 @@ async def show_my_matches(callback: CallbackQuery, session: AsyncSession):
             else:
                 signal_part = f"  — {signal}" if signal else ""
             lines.append(f"{h(opp.display_name)}{signal_part}  ({diff_str} pts)")
-            builder.row(InlineKeyboardButton(
-                text=f"Вызвать {opp.display_name}",
-                callback_data=f"challenge_{opp.id}",
-            ))
+            if not viewer_busy:
+                builder.row(InlineKeyboardButton(
+                    text=f"Вызвать {opp.display_name}",
+                    callback_data=f"challenge_{opp.id}",
+                ))
 
     builder.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
 
