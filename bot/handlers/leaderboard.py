@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import back_to_leaderboard_kb, back_to_menu_kb, leaderboard_kb
 from bot.utils import (
+    MSK_OFFSET,
     compute_alltime_streak,
     get_player,
     match_drama_reason,
@@ -307,6 +308,34 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
             f"{round(peak_val, 1)} pts"
         )
 
+    # Больше всего ничьих
+    draw_count: dict[int, int] = {}
+    for m in all_matches:
+        if m.winner_id is None:
+            draw_count[m.challenger_id] = draw_count.get(m.challenger_id, 0) + 1
+            draw_count[m.challenged_id] = draw_count.get(m.challenged_id, 0) + 1
+    if draw_count:
+        most_draws_id = max(draw_count, key=draw_count.get)
+        if draw_count[most_draws_id] >= 3:
+            volume_lines.append(
+                f"🤝 Больше всего ничьих — <b>{h(name_map.get(most_draws_id, '?'))}</b>: "
+                f"{draw_count[most_draws_id]} ничьих"
+            )
+
+    # Самый жаркий день клуба — сумма матчей всех игроков за один день (не одного игрока)
+    day_totals: dict = {}
+    for m in all_matches:
+        if m.completed_at:
+            day = (m.completed_at + MSK_OFFSET).date()
+            day_totals[day] = day_totals.get(day, 0) + 1
+    if day_totals:
+        hottest_day, hottest_n = max(day_totals.items(), key=lambda kv: kv[1])
+        if hottest_n >= 3:
+            volume_lines.append(
+                f"🌡 Самый жаркий день клуба — <b>{hottest_day.strftime('%d.%m.%y')}</b>: "
+                f"{pluralize_matches(hottest_n)}"
+            )
+
     # Дерби клуба — самая играющая пара
     pair_count: dict[tuple[int, int], int] = {}
     for m in all_matches:
@@ -399,6 +428,21 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
         streak_lines.append(
             f"🎯 Самый длинный матч — <b>{h(ch)}</b> vs <b>{h(cd)}</b>: "
             f"{len(longest.sets_data)} партий  <i>{score_str}  {date_str}</i>"
+        )
+
+    # Самый быстрый матч — от принятия вызова до внесения результата
+    timed = [
+        m for m in all_matches
+        if m.accepted_at and m.completed_at and m.completed_at > m.accepted_at
+    ]
+    if timed:
+        fastest = min(timed, key=lambda m: m.completed_at - m.accepted_at)
+        duration_min = int((fastest.completed_at - fastest.accepted_at).total_seconds() // 60)
+        duration_str = "меньше минуты" if duration_min < 1 else f"{duration_min} мин"
+        ch = name_map.get(fastest.challenger_id, "?")
+        cd = name_map.get(fastest.challenged_id, "?")
+        streak_lines.append(
+            f"🏃 Самый быстрый матч — <b>{h(ch)}</b> vs <b>{h(cd)}</b>: {duration_str}"
         )
 
     # Крупнейший апсет (наибольшая дельта рейтинга)

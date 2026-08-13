@@ -443,7 +443,10 @@ def _render_achievements(earned_ids: list[str], title: str) -> str:
     if locked_achs:
         lines.append("")
     for a in locked_achs:
-        lines.append(f"🔒 {a.emoji} {a.name} — <i>{a.desc}</i>")
+        if a.hidden:
+            lines.append("🔒 ???")
+        else:
+            lines.append(f"🔒 {a.emoji} {a.name} — <i>{a.desc}</i>")
     return "\n".join(lines)
 
 

@@ -971,6 +971,161 @@ async def test_club_records_shows_current_streak(db):
     assert "В ударе сейчас" in text  # текущая серия Alice = 3
 
 
+async def test_club_records_shows_most_draws(db):
+    """Больше всего ничьих — от 3 ничьих у игрока."""
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(3):
+        db.add(_completed(p1, p2, None, 0.0, datetime(2026, 6, 1 + i, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Больше всего ничьих" in text
+    assert "3 ничьих" in text
+
+
+async def test_no_most_draws_below_threshold(db):
+    """2 ничьи — рекорд ещё не показывается (порог 3)."""
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(2):
+        db.add(_completed(p1, p2, None, 0.0, datetime(2026, 6, 1 + i, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Больше всего ничьих" not in text
+
+
+async def test_club_records_shows_hottest_day(db):
+    """Самый жаркий день клуба — сумма матчей всех игроков за день (от 3)."""
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    hot_day = datetime(2026, 6, 5, 10, 0, 0)
+    db.add(_completed(p1, p2, p1.id, 10.0, hot_day))
+    db.add(_completed(p1, p3, p1.id, 10.0, hot_day + timedelta(hours=1)))
+    db.add(_completed(p2, p3, p2.id, 10.0, hot_day + timedelta(hours=2)))
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 6, 10, 0, 0)))  # другой день
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Самый жаркий день клуба" in text
+    assert "05.06.26" in text
+    assert "3 матча" in text
+
+
+async def test_club_records_shows_fastest_match(db):
+    """Самый быстрый матч — по accepted_at → completed_at."""
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m = Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=p1.id,
+        sets_data=[{"w": 11, "l": 5}], rating_change=10.0,
+        accepted_at=datetime(2026, 6, 1, 12, 0, 0),
+        completed_at=datetime(2026, 6, 1, 12, 4, 0),  # 4 минуты
+    )
+    db.add(m)
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Самый быстрый матч" in text
+    assert "4 мин" in text
+
+
+async def test_fastest_match_skipped_without_accepted_at(db):
+    """Матчи без accepted_at (старые записи) не участвуют в рекорде — не падаем."""
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)  # не должно упасть
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Самый быстрый матч" not in text
+
+
+# ── Скрытые ачивки: незаработанные не раскрывают имя/условие ───────────────────
+
+async def test_hidden_achievement_masked_when_locked(db):
+    """Незаработанная скрытая ачивка показывается как '🔒 ???', без имени и условия."""
+    from bot.handlers.profile import show_my_achievements
+
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.commit()
+
+    cb = _callback(1, "my_achievements")
+    await show_my_achievements(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "🔒 ???" in text
+    # ни одна скрытая ачивка не раскрывает имя, пока не заработана
+    assert "Король ночи" not in text
+    assert "Вынес терминатора" not in text
+    assert "Такова жись" not in text
+
+
+async def test_hidden_achievement_revealed_when_earned(db):
+    """Заработанная скрытая ачивка показывается полностью, как обычная."""
+    from bot.handlers.profile import show_my_achievements
+
+    p1 = _player(1, "Alice")
+    p1.achievements = '["night_king"]'
+    db.add(p1)
+    await db.commit()
+
+    cb = _callback(1, "my_achievements")
+    await show_my_achievements(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Король ночи" in text
+    assert "✅" in text
+
+
+async def test_non_hidden_locked_achievement_still_shown(db):
+    """Обычная (не скрытая) незаработанная ачивка по-прежнему показывает имя и условие."""
+    from bot.handlers.profile import show_my_achievements
+
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.commit()
+
+    cb = _callback(1, "my_achievements")
+    await show_my_achievements(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Стукнул полтинник" in text  # обычная счётная ачивка, не скрытая
+
+
 # ── Пик рейтинга обновляется при ничьей (баг-фикс) ──────────────────────────────
 
 async def test_peak_rating_updated_on_draw(db):
