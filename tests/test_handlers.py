@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from bot.db.models import Base, Match, MatchStatus, Player
-from bot.handlers.challenge import do_cancel_match, send_challenge
+from bot.handlers.challenge import do_cancel_match, send_challenge, show_players_for_challenge
 from bot.handlers.match_result import (
     confirm_result,
     fsm_reset_notice,
@@ -235,8 +235,9 @@ async def test_send_challenge_screen_has_no_report_button(db):
     assert "напиши счёт сюда" in initiator_text
 
 
-async def test_send_challenge_blocks_duplicate(db):
-    """Нельзя вызвать игрока, с которым уже есть активный матч."""
+async def test_send_challenge_blocks_when_challenger_busy_with_same_opponent(db):
+    """Нельзя вызвать игрока, с которым уже есть активный матч (частный
+    случай общего правила «только один активный матч одновременно»)."""
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
     db.add_all([p1, p2])
     await db.flush()
@@ -246,8 +247,101 @@ async def test_send_challenge_blocks_duplicate(db):
     cb, bot = _callback(1, f"challenge_{p2.id}"), AsyncMock()
     await send_challenge(cb, db, bot)
 
-    cb.answer.assert_called()  # показал alert про активный матч
-    assert any("активный матч" in str(c.args) for c in cb.answer.call_args_list)
+    cb.message.edit_text.assert_called()
+    text = cb.message.edit_text.call_args[0][0]
+    assert "активный матч" in text
+    assert "Bob" in text
+    # матч не создан повторно — остался ровно один активный
+    r = await db.execute(
+        Match.__table__.select().where(Match.status == MatchStatus.accepted)
+    )
+    assert len(r.fetchall()) == 1
+
+
+async def test_send_challenge_blocks_when_challenger_busy_with_different_opponent(db):
+    """Нельзя вызвать нового соперника, если уже есть активный матч с кем-то другим."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    await _accepted_match(db, p1, p2)  # Alice уже занята матчем с Bob
+    await db.commit()
+
+    cb, bot = _callback(1, f"challenge_{p3.id}"), AsyncMock()
+    await send_challenge(cb, db, bot)
+
+    cb.message.edit_text.assert_called()
+    text = cb.message.edit_text.call_args[0][0]
+    assert "активный матч" in text
+    assert "Bob" in text  # блокировка про ТЕКУЩИЙ активный матч, не про Cara
+    bot.send_message.assert_not_called()  # Cara не должна получить уведомление
+
+
+async def test_send_challenge_blocks_when_opponent_busy(db):
+    """Нельзя вызвать соперника, который уже занят матчем с кем-то третьим."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    await _accepted_match(db, p2, p3)  # Bob уже занят матчем с Cara
+    await db.commit()
+
+    cb, bot = _callback(1, f"challenge_{p2.id}"), AsyncMock()
+    await send_challenge(cb, db, bot)
+
+    cb.answer.assert_called()
+    assert any("занят" in str(c.args) for c in cb.answer.call_args_list)
+    bot.send_message.assert_not_called()
+
+
+# ── show_players_for_challenge (экран «Кого вызвать») ───────────────────────────
+
+async def test_challenge_screen_shows_busy_match_when_viewer_busy(db):
+    """Если зритель уже занят активным матчем — вместо списка соперников
+    показываем его текущий матч, а не список игроков."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    await _accepted_match(db, p1, p2)  # Alice занята матчем с Bob
+    await db.commit()
+
+    cb = _callback(1, "menu_play")
+    await show_players_for_challenge(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "активный матч" in text
+    assert "Bob" in text
+    assert "Cara" not in text  # список соперников не показан вообще
+
+
+async def test_challenge_screen_hides_globally_busy_players(db):
+    """Игрок, занятый матчем с кем-то ТРЕТЬИМ (не зрителем), не показывается
+    в списке для вызова — раньше фильтровались только свои же соперники."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    await _accepted_match(db, p2, p3)  # Bob занят матчем с Cara, Alice свободна
+    await db.commit()
+
+    cb = _callback(1, "menu_play")
+    await show_players_for_challenge(cb, db)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    buttons = [b.text for row in kb.inline_keyboard for b in row]
+    assert not any("Bob" in t for t in buttons)
+    assert not any("Cara" in t for t in buttons)
+
+
+async def test_challenge_screen_shows_free_players(db):
+    """Свободный игрок нормально показывается в списке для вызова."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.commit()
+
+    cb = _callback(1, "menu_play")
+    await show_players_for_challenge(cb, db)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    buttons = [b.text for row in kb.inline_keyboard for b in row]
+    assert any("Bob" in t for t in buttons)
 
 
 # ── do_cancel_match (отмена + уведомление + ачивка) ─────────────────────────────
