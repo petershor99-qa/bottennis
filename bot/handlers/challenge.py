@@ -272,22 +272,6 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
     await session.commit()
     await session.refresh(match)
 
-    if is_boss_fight:
-        challenger_p = challenger if challenger.id != champion.id else opponent
-        champion_p = champion
-        all_players_r = await session.execute(select(Player))
-        for p in all_players_r.scalars().all():
-            try:
-                await bot.send_message(
-                    p.telegram_id,
-                    f"⚔️ <b>Грядёт БОСС-ФАЙТ!</b>\n\n"
-                    f"<b>{h(challenger_p.display_name)}</b> бросает вызов чемпиону "
-                    f"<b>{h(champion_p.display_name)}</b>.\n"
-                    f"Ничья невозможна — в конце останется только один.",
-                )
-            except Exception:
-                pass
-
     opponent_chance = round(win_probability(opponent.rating, challenger.rating) * 100)
     opponent_phrase = match_phrase(opponent_chance, match.id)
 
