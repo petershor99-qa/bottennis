@@ -52,10 +52,15 @@ def player_achievements_kb(player_id: int) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def rematch_kb(opponent_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура после матча — предлагает реванш."""
+def rematch_kb(opponent_id: int, can_rematch: bool = True) -> InlineKeyboardMarkup:
+    """Клавиатура после матча — предлагает реванш.
+
+    can_rematch=False — сразу после боссфайта: реванш заблокирован, пока
+    нечемпион пары не сыграет с третьим (см. boss_fight_rematch_blocked).
+    """
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="⚔️ Реванш", callback_data=f"rematch_{opponent_id}"))
+    if can_rematch:
+        b.row(InlineKeyboardButton(text="⚔️ Реванш", callback_data=f"rematch_{opponent_id}"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
 
@@ -81,8 +86,21 @@ def players_list_kb(
     rank_map: dict[int, int] | None = None,
     streak_map: dict[int, int] | None = None,
     inactive_ids: set[int] | None = None,
+    champion_id: int | None = None,
+    challenger_id: int | None = None,
+    boss_fight_target: tuple[int, str] | None = None,
 ) -> InlineKeyboardMarkup:
+    """boss_fight_target — (champion_id, champion_name), передаётся только когда
+    зритель сам является текущим претендентом: первой строкой добавляется
+    ярлык прямого вызова на босс-файт. Чемпион также остаётся в обычном
+    списке ниже — двойная точка входа, это осознанно (см. CLAUDE.md)."""
     b = InlineKeyboardBuilder()
+    if boss_fight_target is not None:
+        bf_id, bf_name = boss_fight_target
+        b.row(InlineKeyboardButton(
+            text=f"⚔️ БОСС-ФАЙТ — {bf_name}",
+            callback_data=f"challenge_{bf_id}",
+        ))
     for p in players:
         if p.telegram_id != exclude_telegram_id:
             rank_str = f"#{rank_map[p.id]}  " if rank_map and p.id in rank_map else ""
@@ -91,8 +109,12 @@ def players_list_kb(
                 icon = "💪 " if diff > 35 else ("😊 " if diff < -35 else "⚡ ")
             else:
                 icon = ""
-            # ❄️ приоритетнее 🔥 — неактивный игрок важнее стрика
-            if inactive_ids and p.id in inactive_ids:
+            # 👑/🗡 приоритетнее ❄️/🔥 (босс-файт важнее формы), ❄️ приоритетнее 🔥
+            if champion_id is not None and p.id == champion_id:
+                badge = " 👑"
+            elif challenger_id is not None and p.id == challenger_id:
+                badge = " 🗡"
+            elif inactive_ids and p.id in inactive_ids:
                 badge = " ❄️"
             elif streak_map and streak_map.get(p.id, 0) >= 3:
                 badge = " 🔥"

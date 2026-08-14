@@ -232,10 +232,13 @@ async def test_no_phoenix_after_only_2_losses(db):
 
 
 # ── highlander ─────────────────────────────────────────────────────────────────
+# Перепривязано в v2.82.0 (боссфайт): было "рейтинг выше всех", стало "владеет
+# местом #1" (Player.is_champion) — место #1 больше не занимается по очкам.
 
-async def test_highlander_when_winner_is_top_rated(db):
+async def test_highlander_when_winner_is_champion(db):
     p1 = _player(1, "Alice", rating=1050.0)
     p2 = _player(2, "Bob", rating=1000.0)
+    p1.is_champion = True
     db.add_all([p1, p2])
     await db.flush()
 
@@ -243,9 +246,11 @@ async def test_highlander_when_winner_is_top_rated(db):
     assert "highlander" in new
 
 
-async def test_no_highlander_when_not_top_rated(db):
-    p1 = _player(1, "Alice", rating=900.0)
-    p2 = _player(2, "Bob", rating=1100.0)
+async def test_no_highlander_when_top_rated_but_not_champion(db):
+    """Высокий рейтинг сам по себе больше не даёт ачивку — нужен реальный
+    статус чемпиона (is_champion), а не просто топ-1 по очкам."""
+    p1 = _player(1, "Alice", rating=1050.0)
+    p2 = _player(2, "Bob", rating=1000.0)
     db.add_all([p1, p2])
     await db.flush()
 

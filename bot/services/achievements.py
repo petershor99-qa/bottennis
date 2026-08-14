@@ -60,13 +60,14 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("takova_zhis",    "🎭", "Такова жись",               "6 матчей подряд с чередованием побед и поражений", hidden=True),
     Achievement("terminator_slain", "🦾", "Вынес терминатора",       "Победить соперника, шедшего с серией 5+ побед подряд", hidden=True),
     Achievement("night_king",     "🌙", "Король ночи",               "Обыграть всех игроков клуба за один день", hidden=True),
+    Achievement("throne_defended", "🛡", "Трон удержан",             "Отбиться от претендента в босс-файте", hidden=True),
 ]
 
 ACHIEVEMENTS_MAP: dict[str, Achievement] = {a.id: a for a in ACHIEVEMENTS_LIST}
 
 # Увеличивай при добавлении новых ачивок, требующих бэкфилл.
 # Игроки с player.backfill_version < BACKFILL_VERSION будут обработаны один раз при старте.
-BACKFILL_VERSION = 6
+BACKFILL_VERSION = 7
 
 TERMINATOR_STREAK_LEN = 5  # активная серия соперника для «Вынес терминатора»
 
@@ -178,11 +179,12 @@ async def check_win_achievements(
     if loss_streak_before >= 3:
         maybe("phoenix")
 
-    # ── Останется только один: сейчас #1 ────────────────────────────────────
-    rank_r = await session.execute(
-        select(func.count()).select_from(Player).where(Player.rating > winner.rating)
-    )
-    if rank_r.scalar() == 0:
+    # ── Останется только один: стал/остаётся чемпионом ──────────────────────
+    # Перепривязано с "рейтинг выше всех" на "владеет местом #1" (Player.is_champion) —
+    # #1 больше не занимается по очкам, только через босс-файт. При выключенной
+    # фиче (чемпион не назначен) is_champion всегда False — ачивка не выдастся
+    # никому, пока не пройдёт bootstrap_champion (см. utils.py).
+    if winner.is_champion:
         maybe("highlander")
 
     # ── Давид и Голиаф: соперник был на 100+ pts сильнее ────────────────────
@@ -531,6 +533,22 @@ async def check_cancel_achievements(session: AsyncSession, player: Player) -> li
     if _add_new(earned, "anchorage_spirit"):
         new_ids.append("anchorage_spirit")
         player.achievements = json.dumps(earned)
+    return new_ids
+
+
+# ── Check after boss-fight defense ──────────────────────────────────────────────
+
+async def check_boss_fight_defense_achievement(champion: Player) -> list[str]:
+    """'Трон удержан' — чемпион отбился от претендента в босс-файте.
+
+    Вызывается напрямую из confirm_result() (match_result.py) сразу после
+    подтверждения, что трон НЕ перешёл — не требует запросов к БД.
+    """
+    earned = get_achievements(champion)
+    new_ids: list[str] = []
+    if _add_new(earned, "throne_defended"):
+        new_ids.append("throne_defended")
+        champion.achievements = json.dumps(earned)
     return new_ids
 
 

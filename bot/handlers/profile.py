@@ -21,6 +21,7 @@ from bot.utils import (
     compute_ranks,
     format_rank,
     get_active_match,
+    get_champion,
     get_match_counts,
     get_player,
     match_rating_delta,
@@ -302,7 +303,11 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
     await callback.answer()
 
     players_all = (await session.execute(select(Player))).scalars().all()
-    ranks = compute_ranks(players_all, await get_match_counts(session))
+    champion = await get_champion(session)
+    ranks = compute_ranks(
+        players_all, await get_match_counts(session),
+        champion_id=champion.id if champion else None,
+    )
     rank_str = format_rank(ranks, player.id)
 
     all_r = await session.execute(
@@ -384,7 +389,11 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
             can_challenge = False
 
     players_all = (await session.execute(select(Player))).scalars().all()
-    ranks = compute_ranks(players_all, await get_match_counts(session))
+    champion = await get_champion(session)
+    ranks = compute_ranks(
+        players_all, await get_match_counts(session),
+        champion_id=champion.id if champion else None,
+    )
     rank_str = format_rank(ranks, player.id)
 
     all_r = await session.execute(
