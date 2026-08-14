@@ -481,6 +481,29 @@ async def send_daily_summary(bot: Bot) -> None:
 
 # ── Ежемесячный offsite-бэкап БД админу в личку ──────────────────────────────
 
+async def send_backup_file(bot: Bot, chat_id: int, caption: str) -> bool:
+    """Шлёт файл БД с заданной подписью. Возвращает True при успехе.
+
+    Общая часть для ежемесячной джобы и команды /backup по запросу —
+    единственное отличие между ними подпись под файлом.
+    """
+    db_path = DATABASE_URL.split("///")[-1]
+    if not os.path.exists(db_path):
+        logger.warning("Бэкап БД: файл %s не найден", db_path)
+        return False
+    date_str = (datetime.now(timezone.utc) + MSK_OFFSET).strftime("%Y-%m-%d")
+    try:
+        await bot.send_document(
+            chat_id,
+            FSInputFile(db_path, filename=f"bottennis_{date_str}.db"),
+            caption=caption,
+        )
+        return True
+    except Exception:
+        logger.exception("Не удалось отправить бэкап БД")
+        return False
+
+
 async def send_db_backup(bot: Bot) -> None:
     """Раз в месяц шлёт файл БД админу в Telegram.
 
@@ -491,20 +514,9 @@ async def send_db_backup(bot: Bot) -> None:
     admin_id = env_int("ADMIN_ID")
     if not admin_id:
         return
-    db_path = DATABASE_URL.split("///")[-1]
-    if not os.path.exists(db_path):
-        logger.warning("Бэкап БД: файл %s не найден", db_path)
-        return
     date_str = (datetime.now(timezone.utc) + MSK_OFFSET).strftime("%Y-%m-%d")
-    try:
-        await bot.send_document(
-            admin_id,
-            FSInputFile(db_path, filename=f"bottennis_{date_str}.db"),
-            caption=f"💾 Ежемесячный бэкап базы — {date_str}",
-        )
+    if await send_backup_file(bot, admin_id, f"💾 Ежемесячный бэкап базы — {date_str}"):
         logger.info("Бэкап БД отправлен админу")
-    except Exception:
-        logger.exception("Не удалось отправить бэкап БД админу")
 
 
 MONTH_NAMES_GEN = {
