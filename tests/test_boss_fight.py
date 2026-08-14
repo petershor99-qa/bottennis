@@ -277,6 +277,32 @@ async def test_bootstrap_champion_idempotent(db):
     assert p2.is_champion is False
 
 
+async def test_bootstrap_champion_backfills_reign_for_pre_existing_champion(db):
+    """Апгрейд с версии до ChampionReign: чемпион уже назначен старым кодом
+    (bootstrap_champion ещё ни разу не заводил запись правления) — при первом
+    же запуске новой версии должна открыться запись, иначе «Дольше всех
+    лидировал» никогда не появится для уже действующих клубов."""
+    p1, p2 = _player(1, "Alice", rating=1200.0), _player(2, "Bob", rating=1000.0)
+    p1.is_champion = True   # как будто назначено старым кодом до апдейта
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+
+    assert (await db.execute(select(ChampionReign))).scalars().first() is None
+
+    await bootstrap_champion(db)
+
+    assert p1.is_champion is True   # чемпион не поменялся
+    reigns = (await db.execute(select(ChampionReign))).scalars().all()
+    assert len(reigns) == 1
+    assert reigns[0].player_id == p1.id
+    assert reigns[0].ended_at is None
+
+    result = await longest_champion_reign(db)
+    assert result is not None and result[0] == p1.id
+
+
 # ── C. Механика матча ─────────────────────────────────────────────────────────
 
 async def test_send_challenge_marks_boss_fight_for_champion_challenger_pair(db):
