@@ -11,9 +11,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-from bot.db.models import Base, Match, MatchStatus, Player
-from bot.handlers.challenge import send_challenge
+from bot.db.models import Base, ChampionReign, Match, MatchStatus, Player
+from bot.handlers.challenge import send_challenge, show_players_for_challenge
+from bot.handlers.history import show_h2h
+from bot.handlers.leaderboard import show_club_records, show_leaderboard
 from bot.handlers.match_result import confirm_result, finish_sets
+from bot.handlers.profile import show_player_profile
 from bot.keyboards.inline import players_list_kb, rematch_kb
 from bot.services.achievements import get_achievements
 from bot.services.rating import calculate_rating_change
@@ -25,6 +28,8 @@ from bot.utils import (
     compute_ranks,
     get_challenger,
     get_champion,
+    longest_champion_reign,
+    try_transfer_champion,
 )
 
 # ── Фикстуры и хелперы ────────────────────────────────────────────────────────
@@ -713,3 +718,344 @@ async def test_boss_fight_start_broadcast_to_all_players(db):
     assert bystander.telegram_id in recipients   # зритель тоже получил рассылку
     texts = [c.args[1] for c in bot.send_message.await_args_list]
     assert any("Грядёт БОСС-ФАЙТ" in t for t in texts)
+
+
+# ── G. Находки код-ревью PR #54 — регрессии ───────────────────────────────────
+
+# -- try_transfer_champion (CAS) --
+
+async def test_try_transfer_champion_success_opens_reign(db):
+    a, b = _player(1, "A"), _player(2, "B")
+    a.is_champion = True
+    db.add_all([a, b])
+    await db.flush()
+
+    at = datetime(2026, 6, 1, 12, 0, 0)
+    ok = await try_transfer_champion(db, a.id, b.id, at=at)
+    await db.commit()
+
+    assert ok is True
+    ra = await db.execute(select(Player).where(Player.id == a.id))
+    assert ra.scalar_one().is_champion is False
+    rb = await db.execute(select(Player).where(Player.id == b.id))
+    assert rb.scalar_one().is_champion is True
+
+    reigns = (await db.execute(select(ChampionReign))).scalars().all()
+    assert len(reigns) == 1
+    assert reigns[0].player_id == b.id
+    assert reigns[0].started_at == at
+    assert reigns[0].ended_at is None
+
+
+async def test_try_transfer_champion_closes_previous_reign(db):
+    a, b = _player(1, "A"), _player(2, "B")
+    a.is_champion = True
+    db.add_all([a, b])
+    await db.flush()
+    db.add(ChampionReign(player_id=a.id, started_at=datetime(2026, 5, 1), ended_at=None))
+    await db.commit()
+
+    at = datetime(2026, 6, 1, 12, 0, 0)
+    await try_transfer_champion(db, a.id, b.id, at=at)
+    await db.commit()
+
+    reigns = (await db.execute(select(ChampionReign).order_by(ChampionReign.id))).scalars().all()
+    assert len(reigns) == 2
+    assert reigns[0].player_id == a.id and reigns[0].ended_at == at
+    assert reigns[1].player_id == b.id and reigns[1].ended_at is None
+
+
+async def test_try_transfer_champion_fails_when_from_not_champion(db):
+    """CAS: from_id уже не чемпион (трон сменился гонкой) — перенос не проходит."""
+    a, b, c = _player(1, "A"), _player(2, "B"), _player(3, "C")
+    c.is_champion = True  # реальный текущий чемпион — не a
+    db.add_all([a, b, c])
+    await db.flush()
+    await db.commit()
+
+    ok = await try_transfer_champion(db, a.id, b.id, at=datetime(2026, 6, 1))
+    assert ok is False
+    rb = await db.execute(select(Player).where(Player.id == b.id))
+    assert rb.scalar_one().is_champion is False
+
+
+# -- Гонка авто-освобождения vs идущий боссфайт --
+
+async def test_auto_release_skipped_when_champion_has_active_match(monkeypatch):
+    import bot.scheduler as sched
+
+    engine, factory = await _sched_db()
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    old_completed = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=8)
+    async with factory() as s:
+        champion = _player(1, "Champion", rating=1200.0)
+        champion.is_champion = True
+        heir = _player(2, "Heir", rating=1100.0)
+        s.add_all([champion, heir])
+        await s.flush()
+        s.add(_completed(champion, heir, champion.id, old_completed))
+        await _seed_matches(s, heir, champion, NEWCOMER_THRESHOLD, old_completed - timedelta(days=1))
+        # У чемпиона ПРЯМО СЕЙЧАС идёт активный матч — джоба не должна его трогать
+        s.add(Match(
+            challenger_id=champion.id, challenged_id=heir.id,
+            status=MatchStatus.accepted,
+            accepted_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            is_boss_fight=True,
+        ))
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.check_champion_auto_release(bot)
+
+    async with factory() as s:
+        r = await s.execute(select(Player).where(Player.id == 1))
+        champion_after = r.scalar_one()
+    await engine.dispose()
+
+    assert champion_after.is_champion is True
+    bot.send_message.assert_not_called()
+
+
+async def test_auto_release_quiet_when_cas_fails(monkeypatch):
+    import bot.scheduler as sched
+
+    engine, factory = await _sched_db()
+    monkeypatch.setattr(sched, "async_session", factory)
+    monkeypatch.setattr(sched, "try_transfer_champion", AsyncMock(return_value=False))
+
+    old_completed = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=8)
+    async with factory() as s:
+        champion = _player(1, "Champion", rating=1200.0)
+        champion.is_champion = True
+        heir = _player(2, "Heir", rating=1100.0)
+        s.add_all([champion, heir])
+        await s.flush()
+        s.add(_completed(champion, heir, champion.id, old_completed))
+        await _seed_matches(s, heir, champion, NEWCOMER_THRESHOLD, old_completed - timedelta(days=1))
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.check_champion_auto_release(bot)  # не должно упасть
+
+    bot.send_message.assert_not_called()
+    await engine.dispose()
+
+
+async def test_confirm_result_skips_transfer_when_cas_fails(db, monkeypatch):
+    champion = _player(1, "Champion", rating=1000.0)
+    champion.is_champion = True
+    challenger_p = _player(2, "Challenger", rating=999.0)
+    db.add_all([champion, challenger_p])
+    await db.flush()
+    m = await _accepted_match(db, challenger_p, champion, is_boss_fight=True)
+    await db.commit()
+
+    import bot.handlers.match_result as mr
+    monkeypatch.setattr(mr, "try_transfer_champion", AsyncMock(return_value=False))
+
+    st = await _confirming_state(
+        m.id, challenger_p.id,
+        [{"reporter": 11, "opponent": 0}, {"reporter": 11, "opponent": 0}],
+    )
+    cb, bot = _callback(2, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    r = await db.execute(select(Player).where(Player.id == challenger_p.id))
+    assert r.scalar_one().is_champion is False   # трон не додан силой
+    texts = [c.args[1] for c in bot.send_message.await_args_list]
+    assert not any("Новый чемпион" in t for t in texts)
+
+
+# -- Видимость кнопок при активном блоке реванша --
+
+async def _bf_pair_with_block(db) -> tuple[Player, Player]:
+    champion = _player(1, "Champion", rating=1000.0)
+    champion.is_champion = True
+    challenger_p = _player(2, "Challenger", rating=999.0)
+    db.add_all([champion, challenger_p])
+    await db.flush()
+    db.add(Match(
+        challenger_id=champion.id, challenged_id=challenger_p.id,
+        status=MatchStatus.completed, winner_id=champion.id, is_boss_fight=True,
+        sets_data=[{"w": 11, "l": 0}], rating_change=20.0,
+        completed_at=datetime(2026, 6, 1, 12, 0, 0),
+    ))
+    await db.commit()
+    return champion, challenger_p
+
+
+async def test_challenge_list_hides_champion_when_rematch_blocked(db):
+    champion, challenger_p = await _bf_pair_with_block(db)
+
+    cb = _callback(challenger_p.telegram_id, "menu_play")
+    await show_players_for_challenge(cb, db)
+
+    kb = cb.message.edit_text.await_args.kwargs["reply_markup"]
+    texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert not any("БОСС-ФАЙТ" in t for t in texts)
+    assert not any(champion.display_name in t for t in texts)
+
+
+async def test_profile_can_challenge_false_when_rematch_blocked(db):
+    champion, challenger_p = await _bf_pair_with_block(db)
+
+    cb = _callback(challenger_p.telegram_id, f"player_profile_{champion.id}")
+    await show_player_profile(cb, db)
+
+    kb = cb.message.edit_text.await_args.kwargs["reply_markup"]
+    texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert not any("Вызвать" in t for t in texts)
+
+
+async def test_h2h_can_challenge_false_when_rematch_blocked(db):
+    champion, challenger_p = await _bf_pair_with_block(db)
+
+    cb = _callback(challenger_p.telegram_id, f"h2h_{champion.id}_0")
+    await show_h2h(cb, db)
+
+    kb = cb.message.edit_text.await_args.kwargs["reply_markup"]
+    texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert not any("Вызвать" in t for t in texts)
+
+
+# -- Порядок рассылки старта боссфайта --
+
+async def test_boss_fight_broadcast_not_sent_when_opponent_notify_fails(db):
+    champion = _player(1, "Champion", rating=1000.0)
+    champion.is_champion = True
+    challenger_p = _player(2, "Challenger", rating=1050.0)
+    bystander = _player(3, "Bystander")
+    filler = _player(4, "Filler")
+    db.add_all([champion, challenger_p, bystander, filler])
+    await db.flush()
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    await _seed_matches(db, challenger_p, filler, NEWCOMER_THRESHOLD, base)
+    await db.commit()
+
+    bot = AsyncMock()
+
+    async def failing_send(chat_id, *args, **kwargs):
+        if chat_id == champion.telegram_id:
+            raise Exception("недоступен")
+
+    bot.send_message.side_effect = failing_send
+
+    cb = _callback(2, f"challenge_{champion.id}")
+    await send_challenge(cb, db, bot)
+
+    texts = [c.args[1] for c in bot.send_message.await_args_list if len(c.args) > 1]
+    assert not any("Грядёт БОСС-ФАЙТ" in t for t in texts)
+    r = await db.execute(select(Match).where(Match.status == MatchStatus.accepted))
+    assert r.scalar_one_or_none() is None   # матч откатился
+
+
+# -- Рубильник фичи переживает деплой --
+
+async def test_bootstrap_champion_does_not_recrown_after_manual_disable(db):
+    p1, p2 = _player(1, "Alice", rating=1000.0), _player(2, "Bob", rating=1200.0)
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p2.id, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+
+    await bootstrap_champion(db)
+    champion = await get_champion(db)
+    assert champion is not None and champion.id == p2.id
+
+    # Админ вручную отключает фичу
+    p2.is_champion = False
+    await db.commit()
+
+    await bootstrap_champion(db)  # как при рестарте/деплое
+
+    assert await get_champion(db) is None
+
+
+# -- ▲▼ на лидерборде не врут при пиннинге чемпиона --
+
+async def test_leaderboard_no_false_arrow_for_pinned_champion(db):
+    champion = _player(1, "PinnedChamp", rating=950.0)
+    champion.is_champion = True
+    higher = _player(2, "HigherRated", rating=1100.0)
+    db.add_all([champion, higher])
+    await db.flush()
+    old = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=30)
+    db.add(_completed(champion, higher, champion.id, old))  # только старый матч, за неделю тишина
+    await db.commit()
+
+    cb = _callback(1, "menu_leaderboard")
+    await show_leaderboard(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    champion_line = next(line for line in text.split("\n") if "PinnedChamp" in line)
+    higher_line = next(line for line in text.split("\n") if "HigherRated" in line)
+    assert "▲" not in champion_line and "▼" not in champion_line
+    assert "▲" not in higher_line and "▼" not in higher_line
+
+
+# -- «Крупнейший апсет» не искажается боссфайтом --
+
+async def test_biggest_upset_excludes_boss_fight_matches(db):
+    p1, p2 = _player(1, "A", rating=1000.0), _player(2, "B", rating=1000.0)
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=p1.id, is_boss_fight=True,
+        sets_data=[{"w": 11, "l": 9}], rating_change=30.0,
+        completed_at=datetime(2026, 6, 1, 12, 0, 0),
+    ))
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=p2.id, is_boss_fight=False,
+        sets_data=[{"w": 11, "l": 2}], rating_change=18.0,
+        completed_at=datetime(2026, 6, 2, 12, 0, 0),
+    ))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Крупнейший апсет" in text
+    assert "+18.0 pts" in text
+    assert "+30.0 pts" not in text
+
+
+# -- «Дольше всех лидировал» --
+
+async def test_longest_champion_reign_picks_longest(db):
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=datetime(2026, 1, 5)))
+    db.add(ChampionReign(player_id=p2.id, started_at=datetime(2026, 2, 1), ended_at=datetime(2026, 2, 20)))
+    await db.commit()
+
+    result = await longest_champion_reign(db)
+    assert result == (p2.id, 19)
+
+
+async def test_longest_champion_reign_none_when_no_reigns(db):
+    p1 = _player(1, "A")
+    db.add(p1)
+    await db.flush()
+    assert await longest_champion_reign(db) is None
+
+
+async def test_club_records_shows_longest_reign(db):
+    p1, p2 = _player(1, "LongReign"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, datetime(2026, 6, 1, 12, 0, 0)))
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=datetime(2026, 1, 11)))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Дольше всех лидировал" in text
+    assert "LongReign" in text
+    assert "10 дней" in text

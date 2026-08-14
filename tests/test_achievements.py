@@ -18,6 +18,7 @@ from bot.services.achievements import (
     check_win_achievements,
     get_achievements,
 )
+from bot.utils import msk_day_start
 
 # ── Fixtures & helpers ─────────────────────────────────────────────────────────
 
@@ -475,7 +476,7 @@ async def test_maniac_10_matches_today(db):
     db.add_all([p1, p2])
     await db.flush()
 
-    today = datetime.now(timezone.utc).replace(hour=9, minute=0, second=0, microsecond=0)
+    today = msk_day_start() + timedelta(hours=9)
     for i in range(9):
         await _add_win(db, p1, p2, dt=today + timedelta(minutes=i))
     new = await _do_win(db, p1, p2, dt=today + timedelta(minutes=9))
@@ -488,7 +489,7 @@ async def test_no_maniac_with_old_matches(db):
     db.add_all([p1, p2])
     await db.flush()
 
-    yesterday = datetime.now(timezone.utc).replace(hour=10, minute=0, second=0, microsecond=0) \
+    yesterday = msk_day_start() + timedelta(hours=10) \
                 - timedelta(days=1)
     for i in range(9):
         await _add_win(db, p1, p2, dt=yesterday + timedelta(minutes=i))
@@ -842,7 +843,7 @@ async def test_relentless_three_wins_same_day(db):
     db.add_all([p1, p2])
     await db.flush()
 
-    today = datetime.now(timezone.utc).replace(hour=9, minute=0, second=0, microsecond=0)
+    today = msk_day_start() + timedelta(hours=9)
     await _add_win(db, p1, p2, dt=today)
     await _add_win(db, p1, p2, dt=today + timedelta(minutes=1))
     new = await _do_win(db, p1, p2, dt=today + timedelta(minutes=2))
@@ -854,7 +855,7 @@ async def test_no_relentless_with_a_loss_today(db):
     db.add_all([p1, p2])
     await db.flush()
 
-    today = datetime.now(timezone.utc).replace(hour=9, minute=0, second=0, microsecond=0)
+    today = msk_day_start() + timedelta(hours=9)
     await _add_win(db, p1, p2, dt=today)
     await _add_win(db, p2, p1, dt=today + timedelta(minutes=1))  # поражение p1
     new = await _do_win(db, p1, p2, dt=today + timedelta(minutes=2))
@@ -868,7 +869,7 @@ async def test_night_king_beats_all_others_today(db):
     db.add_all([p1, p2, p3])
     await db.flush()
 
-    today = datetime.now(timezone.utc).replace(hour=9, minute=0, second=0, microsecond=0)
+    today = msk_day_start() + timedelta(hours=9)
     await _add_win(db, p1, p2, dt=today)
     new = await _do_win(db, p1, p3, dt=today + timedelta(minutes=1))
     assert "night_king" in new
@@ -879,7 +880,7 @@ async def test_no_night_king_missing_one_opponent_today(db):
     db.add_all([p1, p2, p3])
     await db.flush()
 
-    today = datetime.now(timezone.utc).replace(hour=9, minute=0, second=0, microsecond=0)
+    today = msk_day_start() + timedelta(hours=9)
     new = await _do_win(db, p1, p2, dt=today)  # Charlie не побеждён
     assert "night_king" not in new
 
@@ -890,7 +891,7 @@ async def test_no_night_king_when_beaten_on_different_days(db):
     db.add_all([p1, p2, p3])
     await db.flush()
 
-    yesterday = datetime.now(timezone.utc).replace(hour=9, minute=0, second=0, microsecond=0) \
+    yesterday = msk_day_start() + timedelta(hours=9) \
                 - timedelta(days=1)
     today = yesterday + timedelta(days=1)
     await _add_win(db, p1, p2, dt=yesterday)
