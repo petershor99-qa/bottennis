@@ -22,6 +22,7 @@ from bot.utils import (
     compute_ranks,
     format_rank,
     get_active_match,
+    get_champion,
     get_match_counts,
     get_player,
     match_rating_delta,

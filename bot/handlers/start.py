@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import back_to_menu_kb, main_menu_kb
 from bot.services.achievements import ACHIEVEMENTS_LIST
-from bot.utils import compute_ranks, env_int, format_rank, get_match_counts, get_player
+from bot.utils import compute_ranks, env_int, format_rank, get_champion, get_match_counts, get_player
 
 router = Router()
 
