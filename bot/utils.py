@@ -210,13 +210,24 @@ async def bootstrap_champion(session: AsyncSession) -> None:
     чемпиона заново — иначе рубильник не переживал бы следующий деплой/рестарт
     (init_db вызывает эту функцию на каждом старте процесса).
 
+    Апгрейд с версии до ChampionReign (v2.85.0): если чемпион уже назначен
+    старым кодом, а записи о правлении ещё ни одной нет — заводим её только
+    сейчас (точный момент начала того правления неизвестен, это лучшее
+    приближение). Без этого «Дольше всех лидировал» никогда бы не появился
+    у клубов, где чемпион был назначен ещё до этого апдейта.
+
     Вызывается при старте (init_db), после _migrate_db.
     """
     existing = await get_champion(session)
-    if existing is not None:
-        return
     ever_r = await session.execute(select(ChampionReign.id).limit(1))
-    if ever_r.first() is not None:
+    reign_ever_existed = ever_r.first() is not None
+
+    if existing is not None:
+        if not reign_ever_existed:
+            await _open_reign(session, existing.id, datetime.now(timezone.utc).replace(tzinfo=None))
+            await session.commit()
+        return
+    if reign_ever_existed:
         return
     counts = await get_match_counts(session)
     if not counts:
