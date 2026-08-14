@@ -12,19 +12,32 @@ from bot.keyboards.inline import back_to_leaderboard_kb, back_to_menu_kb, leader
 from bot.utils import (
     MSK_OFFSET,
     compute_alltime_streak,
-    get_challenger,
-    get_champion,
+    get_champion_and_challenger,
     get_player,
+    longest_champion_reign,
     match_drama_reason,
     match_drama_score,
     match_rating_delta,
     match_score_challenger_first,
     msk_day_start,
+    pluralize_days,
     pluralize_matches,
     pluralize_wins,
 )
 
 router = Router()
+
+
+def _pin_champion(ranked: list[Player], champion_id: int | None) -> list[Player]:
+    """Ставит чемпиона первым в уже отсортированном списке, не трогая порядок
+    остальных. Общая для текущего и «недельного» снапшота порядка — иначе
+    пиннинг применяется только к одному из них, и ▲▼ показывают ложное
+    движение позиции у чемпиона и вытесненных им игроков."""
+    if champion_id is not None and any(p.id == champion_id for p in ranked):
+        champ_p = next(p for p in ranked if p.id == champion_id)
+        rest = [p for p in ranked if p.id != champion_id]
+        return [champ_p, *rest]
+    return ranked
 
 
 # ── Leaderboard ───────────────────────────────────────────────────────────────
@@ -85,17 +98,11 @@ async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
     # использует compute_ranks (своя сортировка), поэтому пиннинг чемпиона
     # дублируется здесь же. Если чемпион не назначен (фича выключена) — обычная
     # сортировка по рейтингу, как раньше.
-    champion = await get_champion(session)
-    challenger_player = await get_challenger(session, champion)
+    champion, challenger_player = await get_champion_and_challenger(session)
     champion_id = champion.id if champion else None
     challenger_id = challenger_player.id if challenger_player else None
 
-    if champion_id is not None and any(p.id == champion_id for p in played):
-        champ_p = next(p for p in played if p.id == champion_id)
-        rest = sorted((p for p in played if p.id != champion_id), key=lambda p: -p.rating)
-        players = [champ_p, *rest]
-    else:
-        players = sorted(played, key=lambda p: -p.rating)
+    players = _pin_champion(sorted(played, key=lambda p: -p.rating), champion_id)
 
     week_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
     active_7day: set[int] = {
@@ -128,8 +135,9 @@ async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
             for pid in (m.challenger_id, m.challenged_id):
                 old_count[pid] = old_count.get(pid, 0) + 1
 
-    prev_order = sorted(
-        players, key=lambda p: (old_count.get(p.id, 0) == 0, -snap.get(p.id, p.rating))
+    prev_order = _pin_champion(
+        sorted(players, key=lambda p: (old_count.get(p.id, 0) == 0, -snap.get(p.id, p.rating))),
+        champion_id,
     )
     prev_pos = {p.id: i for i, p in enumerate(prev_order)}
 
@@ -328,6 +336,18 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
             f"{round(peak_val, 1)} pts"
         )
 
+    # Дольше всех лидировал — самое долгое непрерывное правление на #1
+    # (боссфайт). Нет данных, если фича ни разу не бутстрапилась — тогда
+    # ChampionReign пуст и longest_champion_reign вернёт None.
+    reign = await longest_champion_reign(session)
+    if reign is not None:
+        reign_player_id, reign_days = reign
+        reign_days_str = "меньше дня" if reign_days == 0 else pluralize_days(reign_days)
+        volume_lines.append(
+            f"👑 Дольше всех лидировал — <b>{h(name_map.get(reign_player_id, '?'))}</b>: "
+            f"{reign_days_str}"
+        )
+
     # Больше всего ничьих
     draw_count: dict[int, int] = {}
     for m in all_matches:
@@ -465,8 +485,13 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
             f"🏃 Самый быстрый матч — <b>{h(ch)}</b> vs <b>{h(cd)}</b>: {duration_str}"
         )
 
-    # Крупнейший апсет (наибольшая дельта рейтинга)
-    upsets = [m for m in all_matches if m.rating_change is not None and m.winner_id is not None]
+    # Крупнейший апсет (наибольшая дельта рейтинга). Боссфайты исключены — их
+    # дельта безусловно ×2 (BOSS_FIGHT_MULT), поэтому даже предсказуемая победа
+    # фаворита может обойти по цифре реальный апсет и исказить рекорд.
+    upsets = [
+        m for m in all_matches
+        if m.rating_change is not None and m.winner_id is not None and not m.is_boss_fight
+    ]
     if upsets:
         biggest = max(upsets, key=lambda m: m.rating_change)
         if biggest.rating_change >= 15:

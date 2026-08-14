@@ -4,10 +4,11 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from html import escape as h
 
-from sqlalchemy import and_, or_, select
+from aiogram import Bot
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import Match, MatchStatus, Player
+from bot.db.models import ChampionReign, Match, MatchStatus, Player
 
 MSK_OFFSET = timedelta(hours=3)
 
@@ -102,6 +103,18 @@ def pluralize_sets(n: int) -> str:
     return f"{n} партий"
 
 
+def pluralize_days(n: int) -> str:
+    """1 день / 2 дня / 5 дней"""
+    if 11 <= n % 100 <= 14:
+        return f"{n} дней"
+    r = n % 10
+    if r == 1:
+        return f"{n} день"
+    if 2 <= r <= 4:
+        return f"{n} дня"
+    return f"{n} дней"
+
+
 def pluralize_wins(n: int) -> str:
     """1 победа / 2 победы / 5 побед"""
     if 11 <= n % 100 <= 14:
@@ -172,16 +185,38 @@ async def get_challenger(session: AsyncSession, champion: Player | None) -> Play
     return candidates[0]
 
 
+async def _close_open_reign(session: AsyncSession, ended_at: datetime) -> None:
+    """Закрывает текущее открытое правление (ended_at IS NULL), если оно есть."""
+    r = await session.execute(select(ChampionReign).where(ChampionReign.ended_at.is_(None)))
+    open_reign = r.scalar_one_or_none()
+    if open_reign is not None:
+        open_reign.ended_at = ended_at
+
+
+async def _open_reign(session: AsyncSession, player_id: int, started_at: datetime) -> None:
+    session.add(ChampionReign(player_id=player_id, started_at=started_at))
+
+
 async def bootstrap_champion(session: AsyncSession) -> None:
     """Назначает чемпиона, если ещё никого нет и есть хотя бы 1 сыгранный матч.
 
     Фиксирует ТЕКУЩЕЕ положение (топ по рейтингу среди игравших), без порога
     NEWCOMER_THRESHOLD — это не передача власти через босс-файт, а разовая
     инициализация. Идемпотентна: если чемпион уже есть, ничего не делает.
+
+    Если правление уже когда-либо было (есть хоть одна запись ChampionReign),
+    но сейчас чемпиона нет — значит админ осознанно снял is_champion=0 руками
+    (аварийный рубильник, см. CLAUDE.md). Автобутстрап тогда НЕ переизбирает
+    чемпиона заново — иначе рубильник не переживал бы следующий деплой/рестарт
+    (init_db вызывает эту функцию на каждом старте процесса).
+
     Вызывается при старте (init_db), после _migrate_db.
     """
     existing = await get_champion(session)
     if existing is not None:
+        return
+    ever_r = await session.execute(select(ChampionReign.id).limit(1))
+    if ever_r.first() is not None:
         return
     counts = await get_match_counts(session)
     if not counts:
@@ -192,7 +227,72 @@ async def bootstrap_champion(session: AsyncSession) -> None:
         return
     top = max(played, key=lambda p: p.rating)
     top.is_champion = True
+    await _open_reign(session, top.id, datetime.now(timezone.utc).replace(tzinfo=None))
     await session.commit()
+
+
+async def try_transfer_champion(
+    session: AsyncSession, from_id: int, to_id: int, at: datetime
+) -> bool:
+    """Атомарно переносит трон from_id → to_id (CAS: UPDATE ... WHERE is_champion=True
+    AND id=from_id) — тот же паттерн, что и CAS-guard на Match.status в confirm_result,
+    применённый к Player.is_champion. Без этого два независимых места, меняющих трон
+    (авто-освобождение и исход босс-файта), могли гонкой оставить двух чемпионов сразу,
+    и следующий get_champion() падал бы с MultipleResultsFound.
+
+    Возвращает False, если from_id уже не чемпион — трон сменился где-то ещё между
+    проверкой вызывающего и этим вызовом; тогда вызывающий не должен продолжать
+    логику передачи (уведомления, ачивки и т.д.), исход того матча/джобы устарел.
+    """
+    guard = await session.execute(
+        update(Player)
+        .where(Player.id == from_id, Player.is_champion == True)  # noqa: E712
+        .values(is_champion=False)
+    )
+    if guard.rowcount == 0:
+        return False
+    await session.execute(update(Player).where(Player.id == to_id).values(is_champion=True))
+    await _close_open_reign(session, at)
+    await _open_reign(session, to_id, at)
+    return True
+
+
+async def longest_champion_reign(session: AsyncSession) -> tuple[int, int] | None:
+    """(player_id, дней) самого долгого правления на #1 — либо None, если правлений
+    не было (фича ни разу не бутстрапилась). Текущее (незакрытое) правление
+    считается по «сейчас»."""
+    r = await session.execute(select(ChampionReign))
+    reigns = r.scalars().all()
+    if not reigns:
+        return None
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    best_days = -1
+    best_player_id: int | None = None
+    for reign in reigns:
+        end = reign.ended_at or now
+        days = (end - reign.started_at).days
+        if days > best_days:
+            best_days = days
+            best_player_id = reign.player_id
+    return (best_player_id, best_days) if best_player_id is not None else None
+
+
+async def notify_all_players(bot: Bot, session: AsyncSession, text: str) -> None:
+    """Рассылает text всем зарегистрированным игрокам, молча пропуская недоступных."""
+    players_r = await session.execute(select(Player))
+    for p in players_r.scalars().all():
+        try:
+            await bot.send_message(p.telegram_id, text)
+        except Exception:
+            pass
+
+
+async def get_champion_and_challenger(session: AsyncSession) -> tuple[Player | None, Player | None]:
+    """Чемпион + текущий претендент одним вызовом — сокращает повторяющийся код
+    в местах, которым нужны оба сразу (лидерборд, экран вызова)."""
+    champion = await get_champion(session)
+    challenger = await get_challenger(session, champion)
+    return champion, challenger
 
 
 async def boss_fight_rematch_blocked(session: AsyncSession, id_a: int, id_b: int) -> bool:

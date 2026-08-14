@@ -18,6 +18,7 @@ from bot.keyboards.inline import (
 )
 from bot.utils import (
     _match_line,
+    boss_fight_rematch_blocked,
     build_rating_series,
     compute_h2h,
     get_active_match,
@@ -252,7 +253,9 @@ async def show_h2h(callback: CallbackQuery, session: AsyncSession):
     await callback.answer()
 
     can_challenge = not (
-        await get_active_match(session, viewer.id) or await get_active_match(session, opponent.id)
+        await get_active_match(session, viewer.id)
+        or await get_active_match(session, opponent.id)
+        or await boss_fight_rematch_blocked(session, viewer.id, opponent.id)
     )
 
     r = await session.execute(

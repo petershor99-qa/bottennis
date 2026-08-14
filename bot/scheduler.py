@@ -20,16 +20,19 @@ from bot.utils import (
     compute_alltime_streak,
     compute_ranks,
     env_int,
+    get_active_match,
     get_champion,
     get_match_counts,
     match_drama_reason,
     match_rating_delta,
     match_score_challenger_first,
     msk_day_start,
+    notify_all_players,
     pick_match_of_day,
     pluralize_matches,
     pluralize_sets,
     pluralize_wins,
+    try_transfer_champion,
 )
 
 logger = logging.getLogger(__name__)
@@ -142,6 +145,12 @@ async def check_champion_auto_release(bot: Bot) -> None:
         if champion is None:
             return
 
+        # Чемпион прямо сейчас играет (в т.ч. свой же босс-файт) — не трогаем трон
+        # из-под него. Без этой проверки джоба видела бы только историю ЗАВЕРШЁННЫХ
+        # матчей и могла передать трон постороннему в разгар чужого поединка за него.
+        if await get_active_match(session, champion.id):
+            return
+
         last_r = await session.execute(
             select(Match.completed_at)
             .where(
@@ -173,20 +182,18 @@ async def check_champion_auto_release(bot: Bot) -> None:
 
         heir = max(candidates, key=lambda p: p.rating)
         old_champion_name = champion.display_name
-        champion.is_champion = False
-        heir.is_champion = True
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        # CAS: если трон уже сменился где-то ещё между проверками выше и этим моментом
+        # (например, чемпион только что завершил босс-файт) — тихо отступаем.
+        if not await try_transfer_champion(session, champion.id, heir.id, at=now):
+            return
         await session.commit()
 
-        all_players_r = await session.execute(select(Player))
-        for p in all_players_r.scalars().all():
-            try:
-                await bot.send_message(
-                    p.telegram_id,
-                    f"👑 <b>Трон освободился</b> — {h(old_champion_name)} не играл больше недели.\n"
-                    f"Новый чемпион: <b>{h(heir.display_name)}</b>.",
-                )
-            except Exception:
-                pass
+        await notify_all_players(
+            bot, session,
+            f"👑 <b>Трон освободился</b> — {h(old_champion_name)} не играл больше недели.\n"
+            f"Новый чемпион: <b>{h(heir.display_name)}</b>.",
+        )
 
         logger.info("Авто-освобождение трона: %s → %s", old_champion_name, heir.display_name)
 
@@ -204,7 +211,7 @@ async def send_weekly_digest(bot: Bot) -> None:
         players = players_result.scalars().all()
 
         # Ранжирование — единое с лидербордом: только среди игравших
-        champion = await get_champion(session)
+        champion = next((p for p in players if p.is_champion), None)
         rank_map = compute_ranks(
             players, await get_match_counts(session),
             champion_id=champion.id if champion else None,

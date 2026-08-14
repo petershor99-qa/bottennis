@@ -18,10 +18,10 @@ from bot.keyboards.inline import (
 from bot.services.achievements import ACHIEVEMENTS_LIST, ACHIEVEMENTS_MAP, get_achievements
 from bot.utils import (
     _match_line,
+    boss_fight_rematch_blocked,
     compute_ranks,
     format_rank,
     get_active_match,
-    get_champion,
     get_match_counts,
     get_player,
     match_rating_delta,
@@ -303,7 +303,7 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
     await callback.answer()
 
     players_all = (await session.execute(select(Player))).scalars().all()
-    champion = await get_champion(session)
+    champion = next((p for p in players_all if p.is_champion), None)
     ranks = compute_ranks(
         players_all, await get_match_counts(session),
         champion_id=champion.id if champion else None,
@@ -385,11 +385,15 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
     # всегда для чужого профиля.
     can_challenge = True
     if viewer and viewer.id != player.id:
-        if await get_active_match(session, viewer.id) or await get_active_match(session, player.id):
+        if (
+            await get_active_match(session, viewer.id)
+            or await get_active_match(session, player.id)
+            or await boss_fight_rematch_blocked(session, viewer.id, player.id)
+        ):
             can_challenge = False
 
     players_all = (await session.execute(select(Player))).scalars().all()
-    champion = await get_champion(session)
+    champion = next((p for p in players_all if p.is_champion), None)
     ranks = compute_ranks(
         players_all, await get_match_counts(session),
         champion_id=champion.id if champion else None,
