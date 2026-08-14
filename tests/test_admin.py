@@ -9,12 +9,13 @@ from sqlalchemy.orm import sessionmaker
 
 import bot.handlers.admin as admin_module
 from bot.db.models import Base, Match, MatchStatus, Player
-from bot.handlers.admin import _SEND_CHUNK, _send, cmd_dbstats
+from bot.handlers.admin import _SEND_CHUNK, _send, cmd_backup, cmd_dbstats
 
 
 def _message(user_id: int = 1) -> AsyncMock:
     m = AsyncMock()
     m.from_user = SimpleNamespace(id=user_id)
+    m.chat = SimpleNamespace(id=user_id)
     m.answer = AsyncMock()
     return m
 
@@ -128,3 +129,42 @@ async def test_dbstats_all_rating_change_none_does_not_crash(db, monkeypatch):
 
     texts = [c.args[0] for c in msg.answer.await_args_list]
     assert any("rating_change" in t for t in texts)
+
+
+# ── /backup ──────────────────────────────────────────────────────────────────
+
+async def test_backup_not_admin_does_nothing(monkeypatch):
+    monkeypatch.setattr(admin_module, "ADMIN_ID", 1)
+    msg = _message(2)  # не админ
+    bot = AsyncMock()
+    await cmd_backup(msg, bot)
+
+    bot.send_document.assert_not_called()
+    msg.answer.assert_not_called()
+
+
+async def test_backup_admin_sends_document(monkeypatch):
+    monkeypatch.setattr(admin_module, "ADMIN_ID", 1)
+    monkeypatch.setattr("bot.scheduler.os.path.exists", lambda path: True)
+    msg = _message(1)
+    bot = AsyncMock()
+
+    await cmd_backup(msg, bot)
+
+    bot.send_document.assert_awaited_once()
+    call = bot.send_document.await_args
+    assert call.args[0] == 1  # chat_id зрителя
+    assert "Бэкап по запросу" in call.kwargs["caption"]
+
+
+async def test_backup_missing_file_does_not_crash(monkeypatch):
+    monkeypatch.setattr(admin_module, "ADMIN_ID", 1)
+    monkeypatch.setattr("bot.scheduler.os.path.exists", lambda path: False)
+    msg = _message(1)
+    bot = AsyncMock()
+
+    await cmd_backup(msg, bot)  # не должно упасть
+
+    bot.send_document.assert_not_called()
+    msg.answer.assert_awaited_once()
+    assert "не найден" in msg.answer.await_args.args[0]
