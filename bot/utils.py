@@ -4,12 +4,17 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from html import escape as h
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Match, MatchStatus, Player
 
 MSK_OFFSET = timedelta(hours=3)
+
+# Порог новичок/ветеран, переиспользуется и для рейтингового пола (match_result.py),
+# и для права на босс-файт (get_challenger, ниже) — здесь, чтобы оба места
+# не тянули друг друга и не заводили циклический импорт.
+NEWCOMER_THRESHOLD = 15
 
 
 def env_int(name: str, default: int = 0) -> int:
@@ -132,6 +137,111 @@ async def get_active_match(session: AsyncSession, player_id: int) -> Match | Non
     return r.scalars().first()
 
 
+# ── Босс-файт: чемпион и претендент ───────────────────────────────────────────
+# Чемпион (Player.is_champion) — единственный источник правды для места #1:
+# нельзя занять по очкам, только выиграв босс-файт (или получив трон при
+# авто-освобождении, см. scheduler.py). Если чемпион не назначен ни у кого —
+# фича полностью неактивна (аварийный выключатель, см. bootstrap_champion).
+
+
+async def get_champion(session: AsyncSession) -> Player | None:
+    """Текущий чемпион (владелец 1-го места), либо None если фича не активирована."""
+    r = await session.execute(select(Player).where(Player.is_champion == True))  # noqa: E712
+    return r.scalar_one_or_none()
+
+
+async def get_challenger(session: AsyncSession, champion: Player | None) -> Player | None:
+    """Претендент — игрок, обошедший чемпиона по очкам и имеющий право вызвать
+    его на босс-файт. Условия: не чемпион, рейтинг строго выше чемпионского,
+    ≥NEWCOMER_THRESHOLD завершённых матчей. При равенстве рейтинга — меньший id.
+
+    None, если чемпиона нет ВООБЩЕ, либо если единственные кандидаты выше
+    чемпиона по очкам не набрали порог матчей (претендент НЕ откатывается на
+    следующего по рейтингу — право появляется только по достижении порога).
+    """
+    if champion is None:
+        return None
+    counts = await get_match_counts(session)
+    r = await session.execute(
+        select(Player).where(Player.id != champion.id, Player.rating > champion.rating)
+    )
+    candidates = [p for p in r.scalars().all() if counts.get(p.id, 0) >= NEWCOMER_THRESHOLD]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda p: (-p.rating, p.id))
+    return candidates[0]
+
+
+async def bootstrap_champion(session: AsyncSession) -> None:
+    """Назначает чемпиона, если ещё никого нет и есть хотя бы 1 сыгранный матч.
+
+    Фиксирует ТЕКУЩЕЕ положение (топ по рейтингу среди игравших), без порога
+    NEWCOMER_THRESHOLD — это не передача власти через босс-файт, а разовая
+    инициализация. Идемпотентна: если чемпион уже есть, ничего не делает.
+    Вызывается при старте (init_db), после _migrate_db.
+    """
+    existing = await get_champion(session)
+    if existing is not None:
+        return
+    counts = await get_match_counts(session)
+    if not counts:
+        return
+    players_r = await session.execute(select(Player))
+    played = [p for p in players_r.scalars().all() if counts.get(p.id, 0) > 0]
+    if not played:
+        return
+    top = max(played, key=lambda p: p.rating)
+    top.is_champion = True
+    await session.commit()
+
+
+async def boss_fight_rematch_blocked(session: AsyncSession, id_a: int, id_b: int) -> bool:
+    """После завершённого босс-файта между этими двумя пара не играет друг с
+    другом, пока НЕЧЕМПИОН пары (сейчас, на момент проверки — не чемпион на
+    момент создания того матча: роль переопределяется живьём, никаких новых
+    полей) не завершит матч с ТРЕТЬИМ игроком. Матчи текущего чемпиона пары
+    блок не снимают. Отменённый (declined) боссфайт блок не включает — он не
+    попадает в выборку completed. Фича выключена (чемпиона нет) → блока нет.
+    """
+    r = await session.execute(
+        select(Match)
+        .where(
+            Match.is_boss_fight == True,  # noqa: E712
+            Match.status == MatchStatus.completed,
+            or_(
+                and_(Match.challenger_id == id_a, Match.challenged_id == id_b),
+                and_(Match.challenger_id == id_b, Match.challenged_id == id_a),
+            ),
+        )
+        .order_by(Match.completed_at.desc())
+        .limit(1)
+    )
+    last_bf = r.scalar_one_or_none()
+    if last_bf is None or not last_bf.completed_at:
+        return False
+
+    champion = await get_champion(session)
+    if champion is None:
+        return False
+    if champion.id not in (id_a, id_b):
+        return False
+    non_champion_id = id_b if champion.id == id_a else id_a
+    other_id = id_a if non_champion_id == id_b else id_b
+
+    later_r = await session.execute(
+        select(Match).where(
+            or_(Match.challenger_id == non_champion_id, Match.challenged_id == non_champion_id),
+            Match.status == MatchStatus.completed,
+            Match.completed_at > last_bf.completed_at,
+        )
+    )
+    for m in later_r.scalars().all():
+        opp_id = m.challenged_id if m.challenger_id == non_champion_id else m.challenger_id
+        if opp_id != other_id:
+            return False  # нечемпион пары сыграл с третьим — блок снят
+    return True
+
+
 # ── Ранги игроков (единый источник правды) ───────────────────────────────────
 # Лидерборд показывает только игроков с ≥1 сыгранным матчем. Чтобы «#N из M»
 # совпадал на всех экранах (/start, профиль, статистика, список вызова, дайджест),
@@ -152,17 +262,30 @@ async def get_match_counts(session: AsyncSession) -> dict[int, int]:
     return counts
 
 
-def compute_ranks(players: list[Player], match_counts: dict[int, int]) -> dict[int, int]:
+def compute_ranks(
+    players: list[Player],
+    match_counts: dict[int, int],
+    champion_id: int | None = None,
+) -> dict[int, int]:
     """Ранг среди игравших (рейтинг по убыванию). {player_id: rank}, rank с 1.
 
     Игроки с 0 матчей в рейтинг-таблицу не входят (как на лидерборде) и в
     результат не попадают. Не путать с проверками «кто #1 по рейтингу» в ачивках
     и пасхалках — там сравнивается чистый рейтинг, а не место в таблице.
+
+    champion_id — если задан и найден среди игравших, чемпион всегда получает
+    ранг 1 (даже если чей-то чистый рейтинг выше — место #1 в боссфайте не
+    занимается по очкам), остальные сортируются по рейтингу под ним. None
+    (чемпион не назначен — фича выключена) даёт прежнее поведение: чистая
+    сортировка по рейтингу.
     """
-    ranked = sorted(
-        (p for p in players if match_counts.get(p.id, 0) > 0),
-        key=lambda p: -p.rating,
-    )
+    played = [p for p in players if match_counts.get(p.id, 0) > 0]
+    champion = next((p for p in played if p.id == champion_id), None) if champion_id else None
+    if champion is not None:
+        rest = sorted((p for p in played if p.id != champion_id), key=lambda p: -p.rating)
+        ranked = [champion, *rest]
+    else:
+        ranked = sorted(played, key=lambda p: -p.rating)
     return {p.id: i + 1 for i, p in enumerate(ranked)}
 
 

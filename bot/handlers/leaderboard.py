@@ -12,6 +12,8 @@ from bot.keyboards.inline import back_to_leaderboard_kb, back_to_menu_kb, leader
 from bot.utils import (
     MSK_OFFSET,
     compute_alltime_streak,
+    get_challenger,
+    get_champion,
     get_player,
     match_drama_reason,
     match_drama_score,
@@ -71,16 +73,29 @@ async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
         streak_map[pid] = s
 
     # Игроки без сыгранных матчей в рейтинге не показываются
-    players = sorted(
-        (p for p in players if match_count.get(p.id, 0) > 0),
-        key=lambda p: -p.rating,
-    )
+    played = [p for p in players if match_count.get(p.id, 0) > 0]
 
-    if not players:
+    if not played:
         await callback.message.edit_text(
             "Пока нет сыгранных матчей. 🏓", reply_markup=back_to_menu_kb()
         )
         return
+
+    # Место #1 занимается только через босс-файт, не по очкам — leaderboard не
+    # использует compute_ranks (своя сортировка), поэтому пиннинг чемпиона
+    # дублируется здесь же. Если чемпион не назначен (фича выключена) — обычная
+    # сортировка по рейтингу, как раньше.
+    champion = await get_champion(session)
+    challenger_player = await get_challenger(session, champion)
+    champion_id = champion.id if champion else None
+    challenger_id = challenger_player.id if challenger_player else None
+
+    if champion_id is not None and any(p.id == champion_id for p in played):
+        champ_p = next(p for p in played if p.id == champion_id)
+        rest = sorted((p for p in played if p.id != champion_id), key=lambda p: -p.rating)
+        players = [champ_p, *rest]
+    else:
+        players = sorted(played, key=lambda p: -p.rating)
 
     week_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
     active_7day: set[int] = {
@@ -125,7 +140,12 @@ async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
         count = match_count.get(p.id, 0)
         wins = win_count.get(p.id, 0)
         wr = int(wins / count * 100) if count else 0
-        if p.id not in active_7day:
+        # 👑/🗡 приоритетнее ❄️/🔥 (босс-файт важнее формы), ❄️ приоритетнее 🔥
+        if champion_id is not None and p.id == champion_id:
+            badge = " 👑"
+        elif challenger_id is not None and p.id == challenger_id:
+            badge = " 🗡"
+        elif p.id not in active_7day:
             badge = " ❄️"
         elif streak_map.get(p.id, 0) >= 3:
             badge = " 🔥"

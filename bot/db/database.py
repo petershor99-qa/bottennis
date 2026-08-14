@@ -17,10 +17,12 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await _migrate_db()
-    # Бэкфилл достижений по истории матчей (идемпотентен)
+    # Бэкфилл достижений по истории матчей + инициализация чемпиона (оба идемпотентны)
     from bot.services.achievements import backfill_achievements
+    from bot.utils import bootstrap_champion
     async with async_session() as session:
         await backfill_achievements(session)
+        await bootstrap_champion(session)
 
 
 async def _migrate_db() -> None:
@@ -44,6 +46,9 @@ async def _migrate_db() -> None:
         "ALTER TABLE players ADD COLUMN achievements TEXT DEFAULT '[]'",
         # v2.41.0
         "ALTER TABLE players ADD COLUMN backfill_version INTEGER DEFAULT 0",
+        # v2.84.0 — босс-файт за 1-е место
+        "ALTER TABLE players ADD COLUMN is_champion BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE matches ADD COLUMN is_boss_fight BOOLEAN NOT NULL DEFAULT 0",
     ]
     async with engine.begin() as conn:
         for sql in migrations:

@@ -17,7 +17,15 @@ from bot.keyboards.inline import (
 )
 from bot.services.achievements import ACHIEVEMENTS_MAP, check_cancel_achievements
 from bot.services.rating import win_probability
-from bot.utils import compute_ranks, get_active_match, get_player, match_phrase
+from bot.utils import (
+    boss_fight_rematch_blocked,
+    compute_ranks,
+    get_active_match,
+    get_challenger,
+    get_champion,
+    get_player,
+    match_phrase,
+)
 
 router = Router()
 
@@ -114,8 +122,13 @@ async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSess
             match_count_map[pid] = match_count_map.get(pid, 0) + 1
     others = sorted(others, key=lambda p: (match_count_map.get(p.id, 0) == 0, -p.rating))
 
+    champion = await get_champion(session)
+    challenger_player = await get_challenger(session, champion)
+    champion_id = champion.id if champion else None
+    challenger_id = challenger_player.id if challenger_player else None
+
     # Ранг — единый для всех экранов: только среди игравших (как на лидерборде)
-    rank_map = compute_ranks(players, match_count_map)
+    rank_map = compute_ranks(players, match_count_map, champion_id=champion_id)
 
     if current_player and current_player.id in rank_map:
         my_rank = rank_map[current_player.id]
@@ -127,12 +140,19 @@ async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSess
     else:
         header = "Кого хочешь вызвать на матч? 🏓"
 
+    # Ярлык прямого вызова на босс-файт — только на экране самого претендента
+    boss_fight_target = None
+    if champion is not None and current_player and current_player.id == challenger_id:
+        boss_fight_target = (champion.id, champion.display_name)
+
     await callback.message.edit_text(
         header,
         reply_markup=players_list_kb(
             others, callback.from_user.id,
             my_rating=my_rating, rank_map=rank_map,
             streak_map=streak_map, inactive_ids=inactive_ids,
+            champion_id=champion_id, challenger_id=challenger_id,
+            boss_fight_target=boss_fight_target,
         ),
     )
 
@@ -164,6 +184,10 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
         await callback.answer("Нельзя вызвать самого себя 🙂", show_alert=True)
         return
 
+    if await boss_fight_rematch_blocked(session, challenger.id, opponent.id):
+        await callback.answer("Сначала сыграй с кем-нибудь другим.", show_alert=True)
+        return
+
     # Игрок может иметь только ОДИН активный матч одновременно (стол один,
     # матчи строго последовательные) — перекрывает и старый кейс «уже есть
     # активный матч именно с этим соперником» (это частный случай «занят»).
@@ -183,11 +207,26 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
         )
         return
 
+    # Пара (чемпион, текущий претендент) в любом направлении — босс-файт,
+    # независимо от того, через ярлык «БОСС-ФАЙТ» или обычный вызов пришли.
+    champion = await get_champion(session)
+    current_challenger = await get_challenger(session, champion)
+    is_boss_fight = (
+        champion is not None and current_challenger is not None
+        and {challenger.id, opponent.id} == {champion.id, current_challenger.id}
+    )
+
     if await get_active_match(session, opponent.id):
-        await callback.answer(
-            f"{opponent.display_name} сейчас занят другим матчем. Попробуй позже.",
-            show_alert=True,
-        )
+        if champion is not None and opponent.id == champion.id:
+            await callback.answer(
+                "Чемпион сейчас занят другим матчем, попробуй позже.",
+                show_alert=True,
+            )
+        else:
+            await callback.answer(
+                f"{opponent.display_name} сейчас занят другим матчем. Попробуй позже.",
+                show_alert=True,
+            )
         return
 
     # Счёт личных встреч
@@ -217,13 +256,35 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
         challenged_id=opponent.id,
         status=MatchStatus.accepted,
         accepted_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        is_boss_fight=is_boss_fight,
     )
     session.add(match)
     await session.commit()
     await session.refresh(match)
 
+    if is_boss_fight:
+        challenger_p = challenger if challenger.id != champion.id else opponent
+        champion_p = champion
+        all_players_r = await session.execute(select(Player))
+        for p in all_players_r.scalars().all():
+            try:
+                await bot.send_message(
+                    p.telegram_id,
+                    f"⚔️ <b>Грядёт БОСС-ФАЙТ!</b>\n\n"
+                    f"<b>{h(challenger_p.display_name)}</b> бросает вызов чемпиону "
+                    f"<b>{h(champion_p.display_name)}</b>.\n"
+                    f"Ничья невозможна — в конце останется только один.",
+                )
+            except Exception:
+                pass
+
     opponent_chance = round(win_probability(opponent.rating, challenger.rating) * 100)
     opponent_phrase = match_phrase(opponent_chance, match.id)
+
+    boss_fight_note = (
+        "\n\n⚔️ <b>Это босс-файт за 1-е место.</b> Ничья невозможна — в конце останется только один."
+        if is_boss_fight else ""
+    )
 
     try:
         await bot.send_message(
@@ -233,7 +294,8 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
             f"Твой рейтинг: <b>{round(opponent.rating, 1)}</b> pts"
             f"{h2h_op}\n\n"
             f"⚡ Твои шансы на победу: <b>~{opponent_chance}%</b>\n"
-            f"<i>«{opponent_phrase}»</i>\n\n"
+            f"<i>«{opponent_phrase}»</i>"
+            f"{boss_fight_note}\n\n"
             f"📋 После игры просто напиши счёт сюда: <code>11:7 9:11 11:5</code>",
             reply_markup=active_match_kb(match.id),
         )
@@ -255,7 +317,8 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
         f"🏓 Матч с <b>{h(opponent.display_name)}</b> начат!\n"
         f"{h2h_ch}\n\n"
         f"⚡ Твои шансы на победу: <b>~{win_chance}%</b>\n"
-        f"<i>«{win_phrase}»</i>\n\n"
+        f"<i>«{win_phrase}»</i>"
+        f"{boss_fight_note}\n\n"
         f"📋 После игры просто напиши счёт сюда: <code>11:7 9:11 11:5</code>",
         reply_markup=active_match_kb(match.id),
     )
