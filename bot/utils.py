@@ -229,6 +229,9 @@ async def bootstrap_champion(session: AsyncSession) -> None:
         return
     if reign_ever_existed:
         return
+    ever_r = await session.execute(select(ChampionReign.id).limit(1))
+    if ever_r.first() is not None:
+        return
     counts = await get_match_counts(session)
     if not counts:
         return
