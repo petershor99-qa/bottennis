@@ -21,10 +21,10 @@ from bot.utils import (
     boss_fight_rematch_blocked,
     compute_ranks,
     get_active_match,
-    get_challenger,
-    get_champion,
+    get_champion_and_challenger,
     get_player,
     match_phrase,
+    notify_all_players,
 )
 
 router = Router()
@@ -122,8 +122,7 @@ async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSess
             match_count_map[pid] = match_count_map.get(pid, 0) + 1
     others = sorted(others, key=lambda p: (match_count_map.get(p.id, 0) == 0, -p.rating))
 
-    champion = await get_champion(session)
-    challenger_player = await get_challenger(session, champion)
+    champion, challenger_player = await get_champion_and_challenger(session)
     champion_id = champion.id if champion else None
     challenger_id = challenger_player.id if challenger_player else None
 
@@ -140,10 +139,22 @@ async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSess
     else:
         header = "Кого хочешь вызвать на матч? 🏓"
 
-    # Ярлык прямого вызова на босс-файт — только на экране самого претендента
+    # Ярлык прямого вызова на босс-файт — только на экране самого претендента, и
+    # только если пара реально может сыграть (не под блоком реванша после
+    # прошлого боссфайта) — иначе тап вёл бы в тупик с алертом.
     boss_fight_target = None
-    if champion is not None and current_player and current_player.id == challenger_id:
-        boss_fight_target = (champion.id, champion.display_name)
+    viewer_champion_blocked = False
+    if champion is not None and current_player:
+        viewer_champion_blocked = await boss_fight_rematch_blocked(
+            session, current_player.id, champion.id
+        )
+        if current_player.id == challenger_id and not viewer_champion_blocked:
+            boss_fight_target = (champion.id, champion.display_name)
+
+    # Та же блокировка реванша прячет чемпиона и из обычного списка ниже —
+    # иначе кнопка «Вызвать» на его строке вела бы в тот же тупик.
+    if viewer_champion_blocked:
+        others = [p for p in others if p.id != champion.id]
 
     await callback.message.edit_text(
         header,
@@ -209,8 +220,7 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
 
     # Пара (чемпион, текущий претендент) в любом направлении — босс-файт,
     # независимо от того, через ярлык «БОСС-ФАЙТ» или обычный вызов пришли.
-    champion = await get_champion(session)
-    current_challenger = await get_challenger(session, champion)
+    champion, current_challenger = await get_champion_and_challenger(session)
     is_boss_fight = (
         champion is not None and current_challenger is not None
         and {challenger.id, opponent.id} == {champion.id, current_challenger.id}
@@ -262,22 +272,6 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
     await session.commit()
     await session.refresh(match)
 
-    if is_boss_fight:
-        challenger_p = challenger if challenger.id != champion.id else opponent
-        champion_p = champion
-        all_players_r = await session.execute(select(Player))
-        for p in all_players_r.scalars().all():
-            try:
-                await bot.send_message(
-                    p.telegram_id,
-                    f"⚔️ <b>Грядёт БОСС-ФАЙТ!</b>\n\n"
-                    f"<b>{h(challenger_p.display_name)}</b> бросает вызов чемпиону "
-                    f"<b>{h(champion_p.display_name)}</b>.\n"
-                    f"Ничья невозможна — в конце останется только один.",
-                )
-            except Exception:
-                pass
-
     opponent_chance = round(win_probability(opponent.rating, challenger.rating) * 100)
     opponent_phrase = match_phrase(opponent_chance, match.id)
 
@@ -309,6 +303,19 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
             reply_markup=back_to_menu_kb(),
         )
         return
+
+    # Клубная рассылка о старте боссфайта — только теперь, когда обе стороны
+    # уже точно уведомлены и матч не откатится (иначе клуб узнал бы о боссфайте,
+    # который тут же исчез из-за недоступного оппонента).
+    if is_boss_fight:
+        challenger_p = challenger if challenger.id != champion.id else opponent
+        await notify_all_players(
+            bot, session,
+            f"⚔️ <b>Грядёт БОСС-ФАЙТ!</b>\n\n"
+            f"<b>{h(challenger_p.display_name)}</b> бросает вызов чемпиону "
+            f"<b>{h(champion.display_name)}</b>.\n"
+            f"Ничья невозможна — в конце останется только один.",
+        )
 
     win_chance = round(win_probability(challenger.rating, opponent.rating) * 100)
     win_phrase = match_phrase(win_chance, match.id)

@@ -63,3 +63,20 @@ class Match(Base):
         "Player", foreign_keys=[challenged_id], back_populates="challenges_received"
     )
     winner = relationship("Player", foreign_keys=[winner_id])
+
+
+class ChampionReign(Base):
+    """Один период владения местом #1. ended_at=None — текущее правление.
+
+    Существование хотя бы одной строки здесь также служит признаком «фича
+    боссфайта когда-либо была инициализирована» — отдельно от Player.is_champion,
+    который админ может обнулить руками (см. bootstrap_champion в utils.py):
+    is_champion можно сбросить, а факт «уже было» — не должен теряться при
+    следующем перезапуске, иначе рубильник не переживает деплой.
+    """
+    __tablename__ = "champion_reigns"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
+    started_at = Column(DateTime, nullable=False)
+    ended_at = Column(DateTime, nullable=True)

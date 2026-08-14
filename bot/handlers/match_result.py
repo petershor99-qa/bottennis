@@ -21,7 +21,15 @@ from bot.services.achievements import (
 from bot.services.rating import calculate_draw_rating_change, calculate_rating_change
 from bot.services.validation import validate_set_score
 from bot.states.states import MatchResultStates
-from bot.utils import NEWCOMER_THRESHOLD, get_challenger, get_champion, get_player, msk_day_start
+from bot.utils import (
+    NEWCOMER_THRESHOLD,
+    get_challenger,
+    get_champion,
+    get_player,
+    msk_day_start,
+    notify_all_players,
+    try_transfer_champion,
+)
 
 router = Router()
 
@@ -982,12 +990,17 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             champion_role = challenger if challenger.is_champion else (
                 challenged if challenged.is_champion else None
             )
+            bf_result_text = None
             if champion_role is not None:
                 if winner.id != champion_role.id:
-                    champion_role.is_champion = False
-                    winner.is_champion = True
-                    await session.commit()
-                    bf_result_text = f"👑 <b>Новый чемпион — {h(winner.display_name)}!</b>"
+                    # CAS: если трон уже сменился где-то ещё (гонка с авто-освобождением
+                    # трона, scheduler.py) — не додаём его насильно поверх; исход этого
+                    # конкретного боссфайта в плане трона устарел, рейтинг уже применён.
+                    if await try_transfer_champion(
+                        session, champion_role.id, winner.id, at=match.completed_at
+                    ):
+                        await session.commit()
+                        bf_result_text = f"👑 <b>Новый чемпион — {h(winner.display_name)}!</b>"
                 else:
                     bf_result_text = (
                         f"🛡 <b>Трон удержан!</b> {h(winner.display_name)} остаётся чемпионом."
@@ -996,12 +1009,8 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                     if new_ach_defense:
                         await session.commit()
                         await _notify_achievements(bot, winner, new_ach_defense)
-                all_players_r = await session.execute(select(Player))
-                for p in all_players_r.scalars().all():
-                    try:
-                        await bot.send_message(p.telegram_id, bf_result_text)
-                    except Exception:
-                        pass
+            if bf_result_text is not None:
+                await notify_all_players(bot, session, bf_result_text)
 
         actual_loser_delta = round(old_loser_rating - loser.rating, 1)
         loser_delta_str = f"-{actual_loser_delta}" if actual_loser_delta > 0 else "0.0"
