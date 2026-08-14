@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import back_to_menu_kb, main_menu_kb
 from bot.services.achievements import ACHIEVEMENTS_LIST
-from bot.utils import compute_ranks, env_int, format_rank, get_match_counts, get_player
+from bot.utils import compute_ranks, env_int, format_rank, get_champion, get_match_counts, get_player
 
 router = Router()
 
@@ -53,7 +53,11 @@ async def cmd_start(message: Message, command: CommandObject, session: AsyncSess
                 pass
 
         players_all = (await session.execute(select(Player))).scalars().all()
-        ranks = compute_ranks(players_all, await get_match_counts(session))
+        champion = await get_champion(session)
+        ranks = compute_ranks(
+            players_all, await get_match_counts(session),
+            champion_id=champion.id if champion else None,
+        )
         active = await _active_matches_for(session, player)
         active_hint = "\n\n⚔️ <b>Есть активный матч!</b> Внеси результат ниже 👇" if active else ""
         sent = await message.answer(

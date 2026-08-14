@@ -13,6 +13,7 @@ from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import after_set_kb, back_to_menu_kb, main_menu_kb, rematch_kb
 from bot.services.achievements import (
     ACHIEVEMENTS_MAP,
+    check_boss_fight_defense_achievement,
     check_draw_achievements,
     check_loss_achievements,
     check_win_achievements,
@@ -20,17 +21,18 @@ from bot.services.achievements import (
 from bot.services.rating import calculate_draw_rating_change, calculate_rating_change
 from bot.services.validation import validate_set_score
 from bot.states.states import MatchResultStates
-from bot.utils import get_player, msk_day_start
+from bot.utils import NEWCOMER_THRESHOLD, get_challenger, get_champion, get_player, msk_day_start
 
 router = Router()
 
 # ── Константы рейтинговой системы ─────────────────────────────────────────────
-NEWCOMER_THRESHOLD = 15   # матчей — порог новичок / ветеран
+# NEWCOMER_THRESHOLD (порог новичок/ветеран, он же порог права на босс-файт) — в utils.py
 NEWCOMER_FLOOR = 1000.0   # пол рейтинга для новичков (<15 матчей)
 VETERAN_FLOOR = 900.0     # пол рейтинга для ветеранов (15+ матчей)
 NEWCOMER_BONUS = 1.2      # бонус к победам новичка
 REPEAT_MIN = 0.5          # минимальный множитель за повтор
 MAX_SETS = 10             # максимальное число партий в матче
+BOSS_FIGHT_MULT = 2.0     # множитель дельты в босс-файте
 
 
 def _fmt_delta(d: float) -> str:
@@ -453,6 +455,14 @@ async def finish_sets(callback: CallbackQuery, state: FSMContext, session: Async
     opponent_sets_won = sum(1 for s in sets_data if s["opponent"] > s["reporter"])
     is_draw = reporter_sets_won == opponent_sets_won
 
+    if is_draw and match.is_boss_fight:
+        await callback.answer(
+            "⚔️ В босс-файте не может быть ничьей — играйте решающую партию. "
+            "В конце останется только один.",
+            show_alert=True,
+        )
+        return
+
     sets_preview = "  ".join(f"{s['reporter']}:{s['opponent']}" for s in sets_data)
 
     if is_draw:
@@ -686,6 +696,20 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
     reporter_player_id: int = data["reporter_player_id"]
     is_draw: bool = data.get("is_draw", False)
 
+    # ── Страховка от ничьей в босс-файте ──────────────────────────────────────
+    # Основная блокировка — в finish_sets(); это защита на случай, если её
+    # обошли (например, состояние FSM пережило рестарт бота). Проверяем ДО
+    # CAS-guard — матч ещё не тронут.
+    if is_draw:
+        bf_r = await session.execute(select(Match.is_boss_fight).where(Match.id == match_id))
+        if bf_r.scalar_one_or_none():
+            await callback.answer(
+                "⚔️ В босс-файте не может быть ничьей — играйте решающую партию. "
+                "В конце останется только один.",
+                show_alert=True,
+            )
+            return
+
     # ── Атомарный guard от двойной обработки (двойной тап «Всё верно») ──────────
     # CAS: переводим матч accepted → completed одним UPDATE. Если изменено 0 строк —
     # значит другой параллельный обработчик (или быстрый второй тап) уже завершил матч.
@@ -714,6 +738,11 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
 
     old_challenger_rating = challenger.rating
     old_challenged_rating = challenged.rating
+
+    # ── Снапшот претендента ДО матча — для анти-спам-сравнения после коммита ───
+    champion_snapshot = await get_champion(session)
+    challenger_before = await get_challenger(session, champion_snapshot)
+    challenger_before_id = challenger_before.id if challenger_before else None
 
     if is_draw:
         # Нормализуем sets_data в challenger-перспективу для корректного хранения в БД.
@@ -922,11 +951,14 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
         newcomer_bonus = NEWCOMER_BONUS if winner_match_count < NEWCOMER_THRESHOLD else 1.0
         # Стрик 0 (первый матч vs этого соперника) → ×1.0; стрик 1 → ×0.95; и т.д.
         # Формула: max(0.5, 1.0 - 0.05 × streak). Минимум 50% вместо прежних 10%.
-        repeat_multiplier = max(REPEAT_MIN, 1.0 - 0.05 * prev_streak)
+        # В босс-файте repeat_multiplier не применяется — это разовое событие
+        # за трон, а не фарм одного и того же слабого соперника.
+        repeat_multiplier = 1.0 if match.is_boss_fight else max(REPEAT_MIN, 1.0 - 0.05 * prev_streak)
+        boss_fight_multiplier = BOSS_FIGHT_MULT if match.is_boss_fight else 1.0
 
         # ── Расчёт дельты с множителями ───────────────────────────────────────
         delta = calculate_rating_change(winner.rating, loser.rating, final_sets)
-        delta = round(delta * newcomer_bonus * repeat_multiplier, 1)
+        delta = round(delta * newcomer_bonus * repeat_multiplier * boss_fight_multiplier, 1)
 
         winner.rating = round(winner.rating + delta, 1)
         loser.rating = round(max(loser_floor, loser.rating - delta), 1)
@@ -942,6 +974,35 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
         await session.commit()
         await state.clear()
 
+        # ── Босс-файт: перенос трона + клубное уведомление об исходе ───────────
+        # is_champion берём с challenger/challenged ДО этого блока — рейтинги уже
+        # обновлены и закоммичены выше, но флаг трона ещё не тронут, поэтому тут
+        # он всё ещё отражает истинное положение на момент старта этого матча.
+        if match.is_boss_fight:
+            champion_role = challenger if challenger.is_champion else (
+                challenged if challenged.is_champion else None
+            )
+            if champion_role is not None:
+                if winner.id != champion_role.id:
+                    champion_role.is_champion = False
+                    winner.is_champion = True
+                    await session.commit()
+                    bf_result_text = f"👑 <b>Новый чемпион — {h(winner.display_name)}!</b>"
+                else:
+                    bf_result_text = (
+                        f"🛡 <b>Трон удержан!</b> {h(winner.display_name)} остаётся чемпионом."
+                    )
+                    new_ach_defense = await check_boss_fight_defense_achievement(winner)
+                    if new_ach_defense:
+                        await session.commit()
+                        await _notify_achievements(bot, winner, new_ach_defense)
+                all_players_r = await session.execute(select(Player))
+                for p in all_players_r.scalars().all():
+                    try:
+                        await bot.send_message(p.telegram_id, bf_result_text)
+                    except Exception:
+                        pass
+
         actual_loser_delta = round(old_loser_rating - loser.rating, 1)
         loser_delta_str = f"-{actual_loser_delta}" if actual_loser_delta > 0 else "0.0"
         result_text = (
@@ -953,7 +1014,10 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             f"  {h(loser.display_name)}: {round(old_loser_rating, 1)} → <b>{round(loser.rating, 1)}</b> ({loser_delta_str})"
         )
         reporter_opponent_id = loser_db_id if reporter_player_id == winner_db_id else winner_db_id
-        await callback.message.edit_text(result_text, reply_markup=rematch_kb(reporter_opponent_id))
+        await callback.message.edit_text(
+            result_text,
+            reply_markup=rematch_kb(reporter_opponent_id, can_rematch=not match.is_boss_fight),
+        )
 
         if reporter_player_id == winner_db_id:
             # Репортёр — победитель: уведомляем проигравшего
@@ -1027,5 +1091,29 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                 )
             except Exception:
                 pass
+
+    # ── Претендент появился/сменился — уведомляем обгоняющего и чемпиона ───────
+    # Только если личность претендента РЕАЛЬНО изменилась (антиспам) — иначе
+    # каждый обычный матч претендента слал бы повторные уведомления.
+    champion_after = await get_champion(session)
+    challenger_after = await get_challenger(session, champion_after)
+    challenger_after_id = challenger_after.id if challenger_after else None
+    if challenger_after_id is not None and challenger_after_id != challenger_before_id:
+        try:
+            await bot.send_message(
+                challenger_after.telegram_id,
+                "⚔️ <b>Ты обошёл чемпиона по очкам!</b>\n"
+                "Чтобы занять 1-е место, победи его в босс-файте.",
+            )
+        except Exception:
+            pass
+        try:
+            await bot.send_message(
+                champion_after.telegram_id,
+                f"⚔️ Тебя догнал по очкам <b>{h(challenger_after.display_name)}</b> — "
+                f"он может вызвать тебя на босс-файт.",
+            )
+        except Exception:
+            pass
 
     await callback.answer()

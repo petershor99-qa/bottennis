@@ -8,7 +8,7 @@ from aiogram.types import FSInputFile
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from bot.db.database import DATABASE_URL, async_session
@@ -16,9 +16,11 @@ from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import busy_with_match_kb
 from bot.utils import (
     MSK_OFFSET,
+    NEWCOMER_THRESHOLD,
     compute_alltime_streak,
     compute_ranks,
     env_int,
+    get_champion,
     get_match_counts,
     match_drama_reason,
     match_rating_delta,
@@ -124,6 +126,71 @@ async def send_match_reminders(bot: Bot) -> None:
             logger.info("Отправлено напоминаний: %d", len(matches))
 
 
+# ── Авто-освобождение трона (7 дней бездействия чемпиона) ─────────────────────
+
+CHAMPION_INACTIVITY_DAYS = 7
+
+
+async def check_champion_auto_release(bot: Bot) -> None:
+    """Раз в час: если чемпион не завершал матчей больше 7 дней — трон
+    переходит топу по очкам среди игроков с ≥NEWCOMER_THRESHOLD матчей, без
+    босс-файта. Судим по дате последнего ЗАВЕРШЁННОГО матча чемпиона —
+    активный незавершённый матч в счёт не идёт. Кандидатов нет → трон остаётся.
+    """
+    async with async_session() as session:
+        champion = await get_champion(session)
+        if champion is None:
+            return
+
+        last_r = await session.execute(
+            select(Match.completed_at)
+            .where(
+                or_(Match.challenger_id == champion.id, Match.challenged_id == champion.id),
+                Match.status == MatchStatus.completed,
+            )
+            .order_by(desc(Match.completed_at))
+            .limit(1)
+        )
+        last_completed = last_r.scalar_one_or_none()
+        if last_completed is None:
+            return
+
+        threshold = (
+            datetime.now(timezone.utc).replace(tzinfo=None)
+            - timedelta(days=CHAMPION_INACTIVITY_DAYS)
+        )
+        if last_completed > threshold:
+            return
+
+        counts = await get_match_counts(session)
+        players_r = await session.execute(select(Player))
+        candidates = [
+            p for p in players_r.scalars().all()
+            if p.id != champion.id and counts.get(p.id, 0) >= NEWCOMER_THRESHOLD
+        ]
+        if not candidates:
+            return
+
+        heir = max(candidates, key=lambda p: p.rating)
+        old_champion_name = champion.display_name
+        champion.is_champion = False
+        heir.is_champion = True
+        await session.commit()
+
+        all_players_r = await session.execute(select(Player))
+        for p in all_players_r.scalars().all():
+            try:
+                await bot.send_message(
+                    p.telegram_id,
+                    f"👑 <b>Трон освободился</b> — {h(old_champion_name)} не играл больше недели.\n"
+                    f"Новый чемпион: <b>{h(heir.display_name)}</b>.",
+                )
+            except Exception:
+                pass
+
+        logger.info("Авто-освобождение трона: %s → %s", old_champion_name, heir.display_name)
+
+
 # ── Еженедельный дайджест ─────────────────────────────────────────────────────
 
 
@@ -137,7 +204,11 @@ async def send_weekly_digest(bot: Bot) -> None:
         players = players_result.scalars().all()
 
         # Ранжирование — единое с лидербордом: только среди игравших
-        rank_map = compute_ranks(players, await get_match_counts(session))
+        champion = await get_champion(session)
+        rank_map = compute_ranks(
+            players, await get_match_counts(session),
+            champion_id=champion.id if champion else None,
+        )
         player_name_map = {p.id: p.display_name for p in players}
 
         # ── Герои недели — агрегируем все матчи за неделю одним запросом ─────
@@ -481,6 +552,29 @@ async def send_daily_summary(bot: Bot) -> None:
 
 # ── Ежемесячный offsite-бэкап БД админу в личку ──────────────────────────────
 
+async def send_backup_file(bot: Bot, chat_id: int, caption: str) -> bool:
+    """Шлёт файл БД с заданной подписью. Возвращает True при успехе.
+
+    Общая часть для ежемесячной джобы и команды /backup по запросу —
+    единственное отличие между ними подпись под файлом.
+    """
+    db_path = DATABASE_URL.split("///")[-1]
+    if not os.path.exists(db_path):
+        logger.warning("Бэкап БД: файл %s не найден", db_path)
+        return False
+    date_str = (datetime.now(timezone.utc) + MSK_OFFSET).strftime("%Y-%m-%d")
+    try:
+        await bot.send_document(
+            chat_id,
+            FSInputFile(db_path, filename=f"bottennis_{date_str}.db"),
+            caption=caption,
+        )
+        return True
+    except Exception:
+        logger.exception("Не удалось отправить бэкап БД")
+        return False
+
+
 async def send_db_backup(bot: Bot) -> None:
     """Раз в месяц шлёт файл БД админу в Telegram.
 
@@ -491,20 +585,9 @@ async def send_db_backup(bot: Bot) -> None:
     admin_id = env_int("ADMIN_ID")
     if not admin_id:
         return
-    db_path = DATABASE_URL.split("///")[-1]
-    if not os.path.exists(db_path):
-        logger.warning("Бэкап БД: файл %s не найден", db_path)
-        return
     date_str = (datetime.now(timezone.utc) + MSK_OFFSET).strftime("%Y-%m-%d")
-    try:
-        await bot.send_document(
-            admin_id,
-            FSInputFile(db_path, filename=f"bottennis_{date_str}.db"),
-            caption=f"💾 Ежемесячный бэкап базы — {date_str}",
-        )
+    if await send_backup_file(bot, admin_id, f"💾 Ежемесячный бэкап базы — {date_str}"):
         logger.info("Бэкап БД отправлен админу")
-    except Exception:
-        logger.exception("Не удалось отправить бэкап БД админу")
 
 
 MONTH_NAMES_GEN = {
@@ -653,6 +736,14 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         IntervalTrigger(hours=1),
         args=[bot],
         id="match_reminders",
+    )
+
+    # Авто-освобождение трона — тем же часовым интервалом, что и напоминания
+    scheduler.add_job(
+        check_champion_auto_release,
+        IntervalTrigger(hours=1),
+        args=[bot],
+        id="champion_auto_release",
     )
 
     # ВАЖНО: каждому CronTrigger таймзона задаётся явно. CronTrigger без аргумента

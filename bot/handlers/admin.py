@@ -3,19 +3,22 @@
 
 /dbstats  — анализ начислений рейтинга по всей БД
 /myid     — показать свой Telegram ID (для настройки ADMIN_ID)
+/backup   — снять бэкап БД по запросу, без ожидания ежемесячной джобы
 """
 import json
 from collections import defaultdict
+from datetime import datetime, timezone
 from html import escape as h
 
-from aiogram import Router
+from aiogram import Bot, Router
 from aiogram.filters import Command
 from aiogram.types import Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Match, MatchStatus, Player
-from bot.utils import env_int
+from bot.scheduler import send_backup_file
+from bot.utils import MSK_OFFSET, env_int
 
 router = Router()
 
@@ -66,6 +69,19 @@ async def _send(message: Message, text: str) -> None:
 async def cmd_myid(message: Message) -> None:
     """Показывает Telegram ID текущего пользователя."""
     await message.answer(f"Твой Telegram ID: <code>{message.from_user.id}</code>")
+
+
+# ── /backup ────────────────────────────────────────────────────────────────────
+
+@router.message(Command("backup"))
+async def cmd_backup(message: Message, bot: Bot) -> None:
+    """Снимает бэкап БД по запросу — не дожидаясь ежемесячной джобы шедулера."""
+    if not _is_admin(message):
+        return
+    date_str = (datetime.now(timezone.utc) + MSK_OFFSET).strftime("%Y-%m-%d")
+    ok = await send_backup_file(bot, message.chat.id, f"💾 Бэкап по запросу — {date_str}")
+    if not ok:
+        await message.answer("⚠️ Файл базы данных не найден.")
 
 
 # ── /dbstats ──────────────────────────────────────────────────────────────────

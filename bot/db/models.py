@@ -27,6 +27,7 @@ class Player(Base):
     peak_rating = Column(Float, nullable=True)   # максимальный рейтинг за всё время
     achievements = Column(String, default="[]", nullable=True)  # JSON-список id заработанных ачивок
     backfill_version = Column(Integer, default=0, nullable=True)  # версия последнего бэкфилла
+    is_champion = Column(Boolean, default=False, nullable=False)  # владелец 1-го места (босс-файт)
     last_menu_message_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
@@ -50,6 +51,7 @@ class Match(Base):
     sets_data = Column(JSON, nullable=True)
     rating_change = Column(Float, nullable=True)
     reminder_sent = Column(Boolean, default=False, nullable=False)
+    is_boss_fight = Column(Boolean, default=False, nullable=False)  # ×2 к дельте, ничья запрещена
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     accepted_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
