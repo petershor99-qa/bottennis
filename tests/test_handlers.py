@@ -1220,6 +1220,52 @@ async def test_non_hidden_locked_achievement_still_shown(db):
     assert "Стукнул полтинник" in text  # обычная счётная ачивка, не скрытая
 
 
+async def test_fatality_no_sweat_dominator_masked_when_locked(db):
+    """Три ситуативных ачивки (fatality/no_sweat/dominator) скрыты, пока не заработаны —
+    того же характера, что уже скрытые Феникс/Терминатор/Такова жись."""
+    from bot.handlers.profile import show_my_achievements
+
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.commit()
+
+    cb = _callback(1, "my_achievements")
+    await show_my_achievements(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Фаталити" not in text
+    assert "Даже не вспотел" not in text
+    assert "То что мертво" not in text
+
+
+async def test_fatality_no_sweat_dominator_revealed_when_earned(db):
+    """Заработанные fatality/no_sweat/dominator показываются полностью."""
+    from bot.handlers.profile import show_my_achievements
+
+    p1 = _player(1, "Alice")
+    p1.achievements = '["fatality", "no_sweat", "dominator"]'
+    db.add(p1)
+    await db.commit()
+
+    cb = _callback(1, "my_achievements")
+    await show_my_achievements(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Фаталити" in text
+    assert "Даже не вспотел" in text
+    assert "То что мертво" in text
+
+
+def test_fatality_dominator_not_in_achievement_progress_whitelist():
+    """Скрытие fatality/no_sweat/dominator не задело белый список счётных целей —
+    ни один из них не может быть предложен как ближайшая цель прогресса."""
+    p = _p_ach([])
+    result = _nearest_achievement_progress(p, _stats(wins=2, streak=2), total_players=3)
+    assert result is None or "Фаталити" not in result
+    assert result is None or "Даже не вспотел" not in result
+    assert result is None or "То что мертво" not in result
+
+
 # ── Кнопка «Вызвать» скрывается, если занят зритель или соперник ────────────────
 # (профиль, H2H, «С кем сыграть?») — согласовано с send_challenge/менюшкой вызова.
 
