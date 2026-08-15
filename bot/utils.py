@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from html import escape as h
 
 from aiogram import Bot
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import ChampionReign, Match, MatchStatus, Player
@@ -289,6 +289,40 @@ async def longest_champion_reign(session: AsyncSession) -> tuple[int, int] | Non
             best_days = days
             best_player_id = reign.player_id
     return (best_player_id, best_days) if best_player_id is not None else None
+
+
+async def most_boss_fight_defenses(session: AsyncSession) -> tuple[int, int] | None:
+    """(player_id, число побед) — больше всего успешных защит трона за ОДНО
+    правление. Защита = боссфайт-победа чемпиона в рамках его ChampionReign;
+    поражение в боссфайте по конструкции try_transfer_champion немедленно
+    закрывает правление, поэтому все боссфайты чемпиона внутри его правления
+    заведомо победы — отдельно сверять исход каждого не нужно.
+
+    None, если правлений не было (фича ни разу не бутстрапилась) или ни в одном
+    правлении не было ни одной защиты."""
+    r = await session.execute(select(ChampionReign))
+    reigns = r.scalars().all()
+    if not reigns:
+        return None
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    best_count = 0
+    best_player_id: int | None = None
+    for reign in reigns:
+        end = reign.ended_at or now
+        cnt_r = await session.execute(
+            select(func.count()).select_from(Match).where(
+                Match.is_boss_fight == True,  # noqa: E712
+                Match.status == MatchStatus.completed,
+                or_(Match.challenger_id == reign.player_id, Match.challenged_id == reign.player_id),
+                Match.completed_at >= reign.started_at,
+                Match.completed_at <= end,
+            )
+        )
+        cnt = cnt_r.scalar() or 0
+        if cnt > best_count:
+            best_count = cnt
+            best_player_id = reign.player_id
+    return (best_player_id, best_count) if best_player_id is not None else None
 
 
 async def notify_all_players(bot: Bot, session: AsyncSession, text: str) -> None:

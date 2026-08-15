@@ -19,6 +19,7 @@ from bot.utils import (
     match_drama_score,
     match_rating_delta,
     match_score_challenger_first,
+    most_boss_fight_defenses,
     msk_day_start,
     pluralize_days,
     pluralize_matches,
@@ -348,6 +349,16 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
             f"{reign_days_str}"
         )
 
+    # Больше всего защит трона подряд — за одно правление (боссфайт)
+    defenses = await most_boss_fight_defenses(session)
+    if defenses is not None:
+        defense_player_id, defense_count = defenses
+        if defense_count >= 1:
+            volume_lines.append(
+                f"🛡 Больше всего защит трона подряд — <b>{h(name_map.get(defense_player_id, '?'))}</b>: "
+                f"{pluralize_wins(defense_count)}"
+            )
+
     # Больше всего ничьих
     draw_count: dict[int, int] = {}
     for m in all_matches:
@@ -468,6 +479,20 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
         streak_lines.append(
             f"🎯 Самый длинный матч — <b>{h(ch)}</b> vs <b>{h(cd)}</b>: "
             f"{len(longest.sets_data)} партий  <i>{score_str}  {date_str}</i>"
+        )
+
+    # Самый долгий боссфайт (больше всего партий среди боссфайтов) — та же
+    # метрика, что у «Самого длинного матча», просто отфильтрована по is_boss_fight.
+    bf_with_sets = [m for m in all_matches if m.sets_data and m.is_boss_fight]
+    if bf_with_sets:
+        longest_bf = max(bf_with_sets, key=lambda m: len(m.sets_data))
+        ch = name_map.get(longest_bf.challenger_id, "?")
+        cd = name_map.get(longest_bf.challenged_id, "?")
+        score_str = match_score_challenger_first(longest_bf)
+        date_str = longest_bf.completed_at.strftime("%d.%m.%y") if longest_bf.completed_at else ""
+        streak_lines.append(
+            f"⚔️ Самый долгий боссфайт — <b>{h(ch)}</b> vs <b>{h(cd)}</b>: "
+            f"{len(longest_bf.sets_data)} партий  <i>{score_str}  {date_str}</i>"
         )
 
     # Самый быстрый матч — от принятия вызова до внесения результата
