@@ -61,6 +61,7 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("terminator_slain", "🦾", "Вынес терминатора",       "Победить соперника, шедшего с серией 5+ побед подряд", hidden=True),
     Achievement("night_king",     "🌙", "Король ночи",               "Обыграть всех игроков клуба за один день", hidden=True),
     Achievement("throne_defended", "🛡", "Трон удержан",             "Отбиться от претендента в босс-файте", hidden=True),
+    Achievement("throne_denied",  "🚪", "Мимо трона",                "Проиграть босс-файт за трон, оставшись претендентом", hidden=True),
 ]
 
 ACHIEVEMENTS_MAP: dict[str, Achievement] = {a.id: a for a in ACHIEVEMENTS_LIST}
@@ -552,6 +553,26 @@ async def check_boss_fight_defense_achievement(champion: Player) -> list[str]:
     return new_ids
 
 
+# ── Check after boss-fight loss (as the challenger) ──────────────────────────────
+
+async def check_boss_fight_challenger_defeat_achievement(challenger: Player) -> list[str]:
+    """'Мимо трона' — претендент проиграл боссфайт, чемпион отбился.
+
+    Вызывается напрямую из confirm_result() (match_result.py) сразу после
+    подтверждения, что трон НЕ перешёл — тем же местом и тем же способом,
+    что check_boss_fight_defense_achievement(), только для проигравшей стороны.
+    Не восстанавливается бэкфиллом — как highlander/david_goliath/revenge,
+    требует знать роль (чемпион vs претендент) на момент КОНКРЕТНОГО матча,
+    а Player.is_champion хранит только текущее состояние, не историю.
+    """
+    earned = get_achievements(challenger)
+    new_ids: list[str] = []
+    if _add_new(earned, "throne_denied"):
+        new_ids.append("throne_denied")
+        challenger.achievements = json.dumps(earned)
+    return new_ids
+
+
 # ── Backfill ───────────────────────────────────────────────────────────────────
 
 async def backfill_achievements(session: AsyncSession) -> None:
@@ -560,8 +581,9 @@ async def backfill_achievements(session: AsyncSession) -> None:
     Идемпотентна: повторный вызов не изменит уже заработанные.
     Вызывается при старте из init_db().
 
-    Примечание: highlander, david_goliath и revenge не восстанавливаются
-    (требуют снапшоты рейтинга/контекст момента) — будут начислены в реальном времени.
+    Примечание: highlander, david_goliath, revenge и throne_denied не
+    восстанавливаются (требуют снапшоты рейтинга/роли на момент матча) —
+    будут начислены в реальном времени.
     """
     players_r = await session.execute(
         select(Player).where(Player.backfill_version < BACKFILL_VERSION)

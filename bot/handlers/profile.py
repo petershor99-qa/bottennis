@@ -42,6 +42,9 @@ def _compute_player_stats(player, all_matches: list) -> dict:
     draws = sum(1 for m in all_matches if m.winner_id is None)
     losses = len(all_matches) - wins - draws
 
+    boss_fights = [m for m in all_matches if m.is_boss_fight]
+    boss_fight_wins = sum(1 for m in boss_fights if m.winner_id == player.id)
+
     streak = 0
     for m in all_matches:
         if m.winner_id == player.id:
@@ -158,6 +161,7 @@ def _compute_player_stats(player, all_matches: list) -> dict:
         "fav_format": fav_format,
         "best_day": best_day, "best_day_count": best_day_count,
         "beaten_opponents_count": beaten_opponents_count,
+        "boss_fights_played": len(boss_fights), "boss_fights_won": boss_fight_wins,
     }
 
 
@@ -224,6 +228,10 @@ def _render_stats_lines(player, s: dict) -> list[str]:
         rating_lines.append(f"🏅 Лучший матч: <b>+{s['best_win']} pts</b>")
     if s["total_earned"] > 0 or s["total_lost"] > 0:
         rating_lines.append(f"💰 За карьеру: <b>+{s['total_earned']}</b> / <b>-{s['total_lost']}</b> pts")
+    if s["boss_fights_played"] > 0:
+        rating_lines.append(
+            f"⚔️ Боссфайты: <b>{s['boss_fights_won']}/{s['boss_fights_played']}</b>"
+        )
 
     if s["total_sets_played"] > 0:
         misc_lines.append(f"🎮 Партий сыграно: <b>{s['total_sets_played']}</b>")

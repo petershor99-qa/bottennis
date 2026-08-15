@@ -13,6 +13,7 @@ from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import after_set_kb, back_to_menu_kb, main_menu_kb, rematch_kb
 from bot.services.achievements import (
     ACHIEVEMENTS_MAP,
+    check_boss_fight_challenger_defeat_achievement,
     check_boss_fight_defense_achievement,
     check_draw_achievements,
     check_loss_achievements,
@@ -1009,6 +1010,12 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                     if new_ach_defense:
                         await session.commit()
                         await _notify_achievements(bot, winner, new_ach_defense)
+                    # loser здесь по построению — проигравший претендент (winner
+                    # уже подтверждён как champion_role в этой ветке "трон удержан")
+                    new_ach_denied = await check_boss_fight_challenger_defeat_achievement(loser)
+                    if new_ach_denied:
+                        await session.commit()
+                        await _notify_achievements(bot, loser, new_ach_denied)
             if bf_result_text is not None:
                 await notify_all_players(bot, session, bf_result_text)
 

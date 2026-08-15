@@ -665,6 +665,7 @@ def _full_stats(**overrides) -> dict:
         "best_streak": 0, "total_sets_played": 0,
         "first_set_conv": None, "fav_format": None,
         "best_day": None, "best_day_count": 0,
+        "boss_fights_played": 0, "boss_fights_won": 0,
     }
     base.update(overrides)
     return base

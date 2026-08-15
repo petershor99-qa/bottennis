@@ -16,7 +16,7 @@ from bot.handlers.challenge import send_challenge, show_players_for_challenge
 from bot.handlers.history import show_h2h
 from bot.handlers.leaderboard import show_club_records, show_leaderboard
 from bot.handlers.match_result import confirm_result, finish_sets
-from bot.handlers.profile import show_player_profile
+from bot.handlers.profile import show_my_stats, show_player_profile
 from bot.keyboards.inline import players_list_kb, rematch_kb
 from bot.services.achievements import get_achievements
 from bot.services.rating import calculate_rating_change
@@ -29,6 +29,7 @@ from bot.utils import (
     get_challenger,
     get_champion,
     longest_champion_reign,
+    most_boss_fight_defenses,
     try_transfer_champion,
 )
 
@@ -451,6 +452,64 @@ async def test_boss_fight_no_transfer_on_champion_defense(db):
     texts = [c.args[1] for c in bot.send_message.await_args_list]
     assert any("Трон удержан" in t for t in texts)
     assert "throne_defended" in get_achievements(champion)
+
+
+async def test_boss_fight_challenger_gets_throne_denied_on_defense(db):
+    """Претендент, проигравший боссфайт, получает 'throne_denied' — чемпион
+    получает 'throne_defended' одновременно (та же ветка confirm_result)."""
+    champion = _player(1, "Champion", rating=1000.0)
+    champion.is_champion = True
+    challenger_p = _player(2, "Challenger", rating=999.0)
+    db.add_all([champion, challenger_p])
+    await db.flush()
+    m = await _accepted_match(db, champion, challenger_p, is_boss_fight=True)
+    await db.commit()
+    st = await _confirming_state(
+        m.id, champion.id,
+        [{"reporter": 11, "opponent": 0}, {"reporter": 11, "opponent": 0}],
+    )
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert "throne_denied" in get_achievements(challenger_p)
+    assert "throne_denied" not in get_achievements(champion)
+
+
+async def test_boss_fight_winner_does_not_get_throne_denied_on_transfer(db):
+    """При смене трона (претендент победил) 'throne_denied' не выдаётся никому —
+    achievements не относится к сценарию 'трон устоял'."""
+    champion = _player(1, "Champion", rating=1000.0)
+    champion.is_champion = True
+    challenger_p = _player(2, "Challenger", rating=999.0)
+    db.add_all([champion, challenger_p])
+    await db.flush()
+    m = await _accepted_match(db, challenger_p, champion, is_boss_fight=True)
+    await db.commit()
+    st = await _confirming_state(
+        m.id, challenger_p.id,
+        [{"reporter": 11, "opponent": 0}, {"reporter": 11, "opponent": 0}],
+    )
+    cb, bot = _callback(2, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert "throne_denied" not in get_achievements(champion)
+    assert "throne_denied" not in get_achievements(challenger_p)
+
+
+async def test_regular_match_loss_does_not_grant_throne_denied(db):
+    """Обычное (не боссфайт) поражение не выдаёт 'throne_denied'."""
+    p1 = _player(1, "Alice", rating=1000.0)
+    p2 = _player(2, "Bob", rating=1000.0)
+    db.add_all([p1, p2])
+    await db.flush()
+    m = await _accepted_match(db, p1, p2, is_boss_fight=False)
+    await db.commit()
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 5, "opponent": 11}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert "throne_denied" not in get_achievements(p1)
+    assert "throne_denied" not in get_achievements(p2)
 
 
 # ── D. Блокировка реванша ─────────────────────────────────────────────────────
@@ -1085,3 +1144,157 @@ async def test_club_records_shows_longest_reign(db):
     assert "Дольше всех лидировал" in text
     assert "LongReign" in text
     assert "10 дней" in text
+
+
+# -- «Больше всего защит трона подряд» --
+
+async def test_most_boss_fight_defenses_counts_within_one_reign(db):
+    """Все боссфайты чемпиона внутри его правления — по конструкции победы
+    (поражение немедленно закрыло бы правление), просто считаем их число."""
+    p1, p2, p3 = _player(1, "Champ"), _player(2, "B"), _player(3, "C")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=None))
+    for i, opp in enumerate([p2, p3, p2]):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=opp.id,
+            status=MatchStatus.completed, winner_id=p1.id, is_boss_fight=True,
+            sets_data=[{"w": 11, "l": 5}],
+            completed_at=datetime(2026, 1, 2 + i, 12, 0, 0),
+        ))
+    await db.commit()
+
+    result = await most_boss_fight_defenses(db)
+    assert result == (p1.id, 3)
+
+
+async def test_most_boss_fight_defenses_picks_reign_with_more(db):
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=datetime(2026, 1, 10)))
+    db.add(ChampionReign(player_id=p2.id, started_at=datetime(2026, 1, 10), ended_at=None))
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, is_boss_fight=True, sets_data=[{"w": 11, "l": 5}],
+        completed_at=datetime(2026, 1, 5, 12, 0, 0),
+    ))
+    for i in range(2):
+        db.add(Match(
+            challenger_id=p2.id, challenged_id=p1.id, status=MatchStatus.completed,
+            winner_id=p2.id, is_boss_fight=True, sets_data=[{"w": 11, "l": 5}],
+            completed_at=datetime(2026, 1, 12 + i, 12, 0, 0),
+        ))
+    await db.commit()
+
+    result = await most_boss_fight_defenses(db)
+    assert result == (p2.id, 2)
+
+
+async def test_most_boss_fight_defenses_none_when_no_reigns(db):
+    p1 = _player(1, "A")
+    db.add(p1)
+    await db.flush()
+    assert await most_boss_fight_defenses(db) is None
+
+
+async def test_club_records_shows_most_defenses(db):
+    p1, p2 = _player(1, "Defender"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, datetime(2026, 6, 1, 12, 0, 0)))
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=None))
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, is_boss_fight=True, sets_data=[{"w": 11, "l": 5}],
+        completed_at=datetime(2026, 1, 2, 12, 0, 0),
+    ))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Больше всего защит трона подряд" in text
+    assert "Defender" in text
+
+
+# -- «Самый долгий боссфайт» --
+
+async def test_club_records_shows_longest_boss_fight(db):
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    # Обычный длинный матч (не боссфайт) — не должен попасть в этот рекорд
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, is_boss_fight=False,
+        sets_data=[{"w": 11, "l": 9}] * 5,
+        completed_at=datetime(2026, 6, 1, 12, 0, 0),
+    ))
+    # Короткий боссфайт
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, is_boss_fight=True,
+        sets_data=[{"w": 11, "l": 5}, {"w": 11, "l": 5}],
+        completed_at=datetime(2026, 6, 2, 12, 0, 0),
+    ))
+    # Длинный боссфайт — победитель этого рекорда
+    db.add(Match(
+        challenger_id=p2.id, challenged_id=p1.id, status=MatchStatus.completed,
+        winner_id=p1.id, is_boss_fight=True,
+        sets_data=[{"w": 11, "l": 9}] * 4,
+        completed_at=datetime(2026, 6, 3, 12, 0, 0),
+    ))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Самый долгий боссфайт" in text
+    assert "4 партий" in text
+
+
+# -- Личная статистика: боссфайты сыграно/выиграно --
+
+async def test_stats_screen_shows_boss_fight_record(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, is_boss_fight=True, sets_data=[{"w": 11, "l": 5}],
+        completed_at=datetime(2026, 6, 1, 12, 0, 0),
+    ))
+    db.add(Match(
+        challenger_id=p2.id, challenged_id=p1.id, status=MatchStatus.completed,
+        winner_id=p2.id, is_boss_fight=True, sets_data=[{"w": 11, "l": 5}],
+        completed_at=datetime(2026, 6, 2, 12, 0, 0),
+    ))
+    await db.commit()
+
+    cb = _callback(1, "menu_stats")
+    await show_my_stats(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Боссфайты" in text
+    assert "1/2" in text
+
+
+async def test_stats_screen_omits_boss_fight_line_when_none_played(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, is_boss_fight=False, sets_data=[{"w": 11, "l": 5}],
+        completed_at=datetime(2026, 6, 1, 12, 0, 0),
+    ))
+    await db.commit()
+
+    cb = _callback(1, "menu_stats")
+    await show_my_stats(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Боссфайты" not in text
