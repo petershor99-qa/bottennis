@@ -10,3 +10,6 @@ venv/
 STUDY_NOTES.md
 pip_packages/
 habr_career_profile.md
+
+# личные настройки Claude Code (разрешения и т.п., не для публичного репо)
+.claude/settings.local.json
