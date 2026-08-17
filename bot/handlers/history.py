@@ -21,6 +21,7 @@ from bot.utils import (
     boss_fight_rematch_blocked,
     build_rating_series,
     compute_h2h,
+    favor_icon,
     get_active_match,
     get_player,
     get_rec_signal,
@@ -424,15 +425,16 @@ async def show_my_matches(callback: CallbackQuery, session: AsyncSession):
         signal = get_rec_signal(player.rating, player.id, opp.rating, opp.id, h2h, now)
         diff = opp.rating - player.rating
         diff_str = f"+{int(diff)}" if diff >= 0 else str(int(diff))
+        icon = favor_icon(diff)
 
         if opp.id in busy_ids:
-            lines.append(f"{h(opp.display_name)}  — сейчас играет 🔒  ({diff_str} pts)")
+            lines.append(f"{icon}{h(opp.display_name)}  — сейчас играет 🔒  ({diff_str} pts)")
         else:
             if opp.id not in played_ids:
                 signal_part = "  — 🆕 ещё не играл"
             else:
                 signal_part = f"  — {signal}" if signal else ""
-            lines.append(f"{h(opp.display_name)}{signal_part}  ({diff_str} pts)")
+            lines.append(f"{icon}{h(opp.display_name)}{signal_part}  ({diff_str} pts)")
             if not viewer_busy:
                 builder.row(InlineKeyboardButton(
                     text=f"Вызвать {opp.display_name}",
