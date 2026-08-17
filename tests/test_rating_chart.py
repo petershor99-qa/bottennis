@@ -7,7 +7,7 @@ import urllib.parse
 from datetime import datetime
 from types import SimpleNamespace
 
-from bot.utils import build_rating_series, rating_chart_url
+from bot.utils import _rating_axis_bounds, build_rating_series, rating_chart_url
 
 
 def mk(winner_id, challenger_id, challenged_id, rating_change, day):
@@ -88,3 +88,54 @@ def test_chart_url_embeds_name():
     url = rating_chart_url("Вася", ["01.05"], [1000.0])
     cfg = _decode_config(url)
     assert "Вася" in cfg["options"]["title"]["text"]
+
+
+def test_chart_url_has_reference_line_dataset():
+    url = rating_chart_url("Игрок A", ["01.05", "02.05"], [1010.0, 1020.0])
+    cfg = _decode_config(url)
+    ref = cfg["data"]["datasets"][1]
+    assert ref["data"] == [1000.0, 1000.0]
+    assert ref["pointRadius"] == 0
+
+
+def test_chart_url_sets_dynamic_y_axis():
+    url = rating_chart_url("Игрок A", ["01.05", "02.05"], [1010.0, 1020.0])
+    cfg = _decode_config(url)
+    ticks = cfg["options"]["scales"]["yAxes"][0]["ticks"]
+    assert ticks["min"] < 1010.0
+    assert ticks["max"] > 1020.0
+
+
+# ── _rating_axis_bounds ─────────────────────────────────────────────────────
+
+def test_axis_bounds_tight_range_stays_readable():
+    """Узкий разброс (900..950) не должен породить огромный диапазон/шаг —
+    отступ и шаг подбираются от фактического размаха, а не фиксированы."""
+    axis_min, axis_max, step = _rating_axis_bounds([900.0, 920.0, 950.0])
+    assert axis_min <= 900.0
+    assert axis_max >= 1000.0  # опорная линия 1000.0 всегда внутри диапазона
+    assert (axis_max - axis_min) / step <= 8
+
+
+def test_axis_bounds_wide_range_uses_bigger_step():
+    """При большом историческом разбросе (900..2000) шаг сетки растёт, иначе
+    делений было бы слишком много."""
+    axis_min, axis_max, step = _rating_axis_bounds([900.0, 1400.0, 2000.0])
+    assert axis_min <= 900.0
+    assert axis_max >= 2000.0
+    assert (axis_max - axis_min) / step <= 8
+
+
+def test_axis_bounds_reference_rating_always_included():
+    """Игрок, чей рейтинг всегда сильно ниже 1000 (просевший ветеран) —
+    пунктирная линия-ориентир 1000.0 всё равно должна попадать в диапазон."""
+    axis_min, axis_max, _ = _rating_axis_bounds([905.0, 910.0, 915.0])
+    assert axis_min <= 905.0
+    assert axis_max >= 1000.0
+
+
+def test_axis_bounds_flat_series_has_nonzero_span():
+    """Все значения совпадают (0 матчей истории) — диапазон не должен схлопнуться."""
+    axis_min, axis_max, step = _rating_axis_bounds([1000.0])
+    assert axis_max > axis_min
+    assert step > 0
