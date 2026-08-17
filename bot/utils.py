@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import urllib.parse
 from datetime import datetime, timedelta, timezone
@@ -785,12 +786,40 @@ def build_rating_series(
     return labels, values
 
 
+_AXIS_STEPS = (25, 50, 100, 200, 250, 500, 1000, 2000)
+_AXIS_REFERENCE_RATING = 1000.0  # стартовый/новичковый пол — ориентир на графике
+
+
+def _rating_axis_bounds(values: list[float]) -> tuple[float, float, float]:
+    """Подбирает (min, max, stepSize) для оси Y графика рейтинга.
+
+    Без фиксированной границы 0..1400 весь реальный разброс игрока (обычно
+    900..1400) сжимался в верхнюю треть графика — динамика была не видна.
+    Граница считается от фактических значений ряда с отступом, а не жёстко
+    (900..1400 может вырасти со временем — рейтинг не ограничен сверху).
+    Опорный рейтинг 1000.0 всегда включён в диапазон, чтобы пунктирная
+    линия-ориентир была видна даже у игрока, который всегда ниже/выше неё.
+    """
+    pts = [*values, _AXIS_REFERENCE_RATING]
+    lo, hi = min(pts), max(pts)
+    pad = max(50.0, (hi - lo) * 0.15)
+    lo_padded, hi_padded = lo - pad, hi + pad
+
+    span = hi_padded - lo_padded
+    step = next((s for s in _AXIS_STEPS if span / s <= 8), _AXIS_STEPS[-1])
+
+    axis_min = math.floor(lo_padded / step) * step
+    axis_max = math.ceil(hi_padded / step) * step
+    return axis_min, axis_max, step
+
+
 def rating_chart_url(name: str, labels: list[str], values: list[float]) -> str:
     """Формирует URL картинки графика рейтинга через quickchart.io.
 
     Картинку скачивает сам Telegram при send_photo(photo=url) — собственный
     HTTP-клиент не нужен. Конфиг — Chart.js (line), компактный JSON в query.
     """
+    axis_min, axis_max, step = _rating_axis_bounds(values)
     config = {
         "type": "line",
         "data": {
@@ -804,12 +833,25 @@ def rating_chart_url(name: str, labels: list[str], values: list[float]) -> str:
                     "fill": True,
                     "tension": 0.3,
                     "pointRadius": 2,
-                }
+                },
+                {
+                    "label": "Старт",
+                    "data": [_AXIS_REFERENCE_RATING] * len(values),
+                    "borderColor": "rgba(150,150,150,0.7)",
+                    "borderDash": [6, 4],
+                    "fill": False,
+                    "pointRadius": 0,
+                },
             ],
         },
         "options": {
             "title": {"display": True, "text": f"Рейтинг — {name}"},
             "legend": {"display": False},
+            "scales": {
+                "yAxes": [
+                    {"ticks": {"min": axis_min, "max": axis_max, "stepSize": step}}
+                ]
+            },
         },
     }
     encoded = urllib.parse.quote(json.dumps(config, separators=(",", ":"), ensure_ascii=False))
