@@ -128,6 +128,18 @@ def pluralize_wins(n: int) -> str:
     return f"{n} побед"
 
 
+def pluralize_points(n: int) -> str:
+    """1 очко / 2 очка / 5 очков"""
+    if 11 <= n % 100 <= 14:
+        return f"{n} очков"
+    r = n % 10
+    if r == 1:
+        return f"{n} очко"
+    if 2 <= r <= 4:
+        return f"{n} очка"
+    return f"{n} очков"
+
+
 async def get_player(session: AsyncSession, telegram_id: int) -> Player | None:
     r = await session.execute(select(Player).where(Player.telegram_id == telegram_id))
     return r.scalar_one_or_none()
@@ -609,6 +621,21 @@ def compute_h2h(matches: list[Match], viewer_id: int, opponent_id: int) -> dict:
         "first_date": first_date,
         "streak_desc": streak_desc,
     }
+
+
+def favor_icon(rating_diff: float) -> str:
+    """Иконка сложности соперника по разнице рейтинга (opponent - viewer).
+
+    Общий хелпер для списка вызова (players_list_kb) и «С кем сыграть?»
+    (show_my_matches) — раньше на втором экране показывались сырые "+123 pts"
+    без перевода в понятный вид, тогда как первый экран уже переводил ту же
+    разницу в 💪/😊/⚡. Единая логика убирает расхождение между экранами.
+    """
+    if rating_diff > 35:
+        return "💪 "
+    if rating_diff < -35:
+        return "😊 "
+    return "⚡ "
 
 
 def get_rec_signal(

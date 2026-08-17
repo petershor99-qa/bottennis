@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from bot.db.database import DATABASE_URL, async_session
 from bot.db.models import Match, MatchStatus, Player
+from bot.handlers.profile import _compute_player_stats, _nearest_achievement_progress
 from bot.keyboards.inline import busy_with_match_kb
 from bot.utils import (
     MSK_OFFSET,
@@ -30,6 +31,7 @@ from bot.utils import (
     notify_all_players,
     pick_match_of_day,
     pluralize_matches,
+    pluralize_points,
     pluralize_sets,
     pluralize_wins,
     try_transfer_champion,
@@ -74,6 +76,62 @@ def _longest_streak(matches: list, name_map: dict, period: str) -> str | None:
         f"🔥 Нагибатель {period} — <b>{h(name_map.get(best_pid, '?'))}</b>: "
         f"{pluralize_wins(best_n)} подряд"
     )
+
+
+def _longest_no_loss_streak(matches: list, name_map: dict, period: str) -> str | None:
+    """«Без поражений» — самая длинная серия без поражений (победа ИЛИ ничья,
+    прерывается только поражением) внутри периода (от 2). Отдельная метрика от
+    _longest_streak (тот считает только чистые победные серии, ничья их обнуляет)."""
+    by_player: dict[int, list] = {}
+    for m in sorted(matches, key=lambda m: m.completed_at or datetime.min):
+        for pid in (m.challenger_id, m.challenged_id):
+            by_player.setdefault(pid, []).append(m)
+    best_pid, best_n = None, 0
+    for pid, ms in by_player.items():
+        cur = n = 0
+        for m in ms:
+            if m.winner_id is None or m.winner_id == pid:
+                cur += 1
+                n = max(n, cur)
+            else:
+                cur = 0
+        if n > best_n:
+            best_n, best_pid = n, pid
+    if best_pid is None or best_n < 2:
+        return None
+    return (
+        f"🧱 Без поражений {period} — <b>{h(name_map.get(best_pid, '?'))}</b>: "
+        f"{pluralize_matches(best_n)} подряд"
+    )
+
+
+def _biggest_swing(matches: list, name_map: dict, period: str) -> str | None:
+    """«Американские горки» — у кого рейтинг сильнее всего мотало туда-обратно
+    за период: сумма |дельт| минус |итоговая дельта| — то, что отыграно назад,
+    а значит НЕ видно в «Лучшем росте»/«Отрицательном росте» (те смотрят только
+    на чистый net-результат, а не на волатильность самого пути)."""
+    net: dict[int, float] = {}
+    abs_total: dict[int, float] = {}
+    for m in matches:
+        for pid in (m.challenger_id, m.challenged_id):
+            d = match_rating_delta(m, pid)
+            net[pid] = net.get(pid, 0.0) + d
+            abs_total[pid] = abs_total.get(pid, 0.0) + abs(d)
+    if not abs_total:
+        return None
+    swing = {pid: abs_total[pid] - abs(net.get(pid, 0.0)) for pid in abs_total}
+    best_pid = max(swing, key=swing.get)
+    if swing[best_pid] < 20:
+        return None
+    return (
+        f"🎢 Американские горки {period} — <b>{h(name_map.get(best_pid, '?'))}</b>: "
+        f"рейтинг мотало на {round(swing[best_pid], 1)} pts туда-обратно"
+    )
+
+
+def _total_points(matches: list) -> int:
+    """Суммарное число разыгранных очков (оба игрока, все партии) за период."""
+    return sum((s["w"] + s["l"]) for m in matches if m.sets_data for s in m.sets_data)
 
 
 # ── Напоминание о незавершённом матче ─────────────────────────────────────────
@@ -212,8 +270,9 @@ async def send_weekly_digest(bot: Bot) -> None:
 
         # Ранжирование — единое с лидербордом: только среди игравших
         champion = next((p for p in players if p.is_champion), None)
+        all_time_counts = await get_match_counts(session)
         rank_map = compute_ranks(
-            players, await get_match_counts(session),
+            players, all_time_counts,
             champion_id=champion.id if champion else None,
         )
         player_name_map = {p.id: p.display_name for p in players}
@@ -262,6 +321,7 @@ async def send_weekly_digest(bot: Bot) -> None:
                 losses_count[lid] = losses_count.get(lid, 0) + 1
 
         total_sets = sum(len(m.sets_data) if m.sets_data else 0 for m in all_week_matches)
+        total_points = _total_points(all_week_matches)
         cur_count = len(all_week_matches)
 
         # ── Топ недели (клубный стендинг — компактно, вместо длинного списка матчей) ─
@@ -290,12 +350,13 @@ async def send_weekly_digest(bot: Bot) -> None:
             diff_str = f"+{diff}" if diff >= 0 else str(diff)
             activity_line = (
                 f"⚡ Сыграно за неделю: <b>{pluralize_matches(cur_count)}</b>, "
-                f"<b>{pluralize_sets(total_sets)}</b>  <i>({diff_str} к прошлой)</i>"
+                f"<b>{pluralize_sets(total_sets)}</b>, <b>{pluralize_points(total_points)}</b>"
+                f"  <i>({diff_str} к прошлой)</i>"
             )
         else:
             activity_line = (
                 f"⚡ Сыграно за неделю: <b>{pluralize_matches(cur_count)}</b>, "
-                f"<b>{pluralize_sets(total_sets)}</b>"
+                f"<b>{pluralize_sets(total_sets)}</b>, <b>{pluralize_points(total_points)}</b>"
             )
 
         hero_lines = ["🦸 <b>Герои недели:</b>", activity_line]
@@ -329,6 +390,23 @@ async def send_weekly_digest(bot: Bot) -> None:
         streak = _longest_streak(all_week_matches, player_name_map, "недели")
         if streak:
             hero_lines.append(streak)
+        no_loss = _longest_no_loss_streak(all_week_matches, player_name_map, "недели")
+        if no_loss:
+            hero_lines.append(no_loss)
+        swing = _biggest_swing(all_week_matches, player_name_map, "недели")
+        if swing:
+            hero_lines.append(swing)
+
+        # «Халявщик недели» — зарегистрированный и уже игравший когда-то игрок,
+        # который на этой неделе не сыграл ни матча (пустые новички не в счёт —
+        # им ещё нечего было прогуливать).
+        slacker_names = [
+            h(p.display_name) for p in players
+            if all_time_counts.get(p.id, 0) > 0 and p.id not in match_count
+        ]
+        if slacker_names:
+            word = "Халявщики" if len(slacker_names) > 1 else "Халявщик"
+            hero_lines.append(f"😴 {word} недели — <b>{', '.join(slacker_names)}</b>")
 
         # ── Матч недели ────────────────────────────────────────────────────────
         match_week = ""
@@ -378,6 +456,22 @@ async def send_weekly_digest(bot: Bot) -> None:
                     f"📈 Рейтинг: <b>{round(player.rating, 1)}</b> pts "
                     f"({sign}{round(rating_delta, 1)}){rank_suffix}\n"
                 )
+
+            # Прогресс до ближайшей незаработанной ачивки — та же логика, что и
+            # в личной статистике (profile.py), просто раз в неделю напоминанием,
+            # а не только по запросу на экране «Статистика».
+            career_r = await session.execute(
+                select(Match).where(
+                    or_(Match.challenger_id == player.id, Match.challenged_id == player.id),
+                    Match.status == MatchStatus.completed,
+                ).order_by(desc(Match.completed_at))
+            )
+            career_matches = career_r.scalars().all()
+            progress = _nearest_achievement_progress(
+                player, _compute_player_stats(player, career_matches), len(players)
+            )
+            if progress:
+                header += f"{progress}\n"
 
             text = header + "\n" + club_block
             try:
@@ -445,11 +539,13 @@ async def send_daily_summary(bot: Bot) -> None:
                 player_form.setdefault(pid, []).append(icon)
 
         total_sets = sum(len(m.sets_data) if m.sets_data else 0 for m in matches)
+        total_points = _total_points(matches)
         date_str = msk_now.strftime("%d.%m")
 
         lines = [
             f"📅 <b>Итоги дня — {date_str}</b>\n",
-            f"⚡ Сыграно: <b>{pluralize_matches(len(matches))}</b>, <b>{pluralize_sets(total_sets)}</b>\n",
+            f"⚡ Сыграно: <b>{pluralize_matches(len(matches))}</b>, "
+            f"<b>{pluralize_sets(total_sets)}</b>, <b>{pluralize_points(total_points)}</b>\n",
             "🏆 <b>Топ дня:</b>",
         ]
 
@@ -518,6 +614,14 @@ async def send_daily_summary(bot: Bot) -> None:
                     f"🤼 Чаще всего самбовались — <b>{h(name_map.get(pa, '?'))}</b> vs "
                     f"<b>{h(name_map.get(pb, '?'))}</b>: {pluralize_matches(pn)}"
                 )
+
+        no_loss = _longest_no_loss_streak(matches, name_map, "дня")
+        if no_loss:
+            lines.append(no_loss)
+
+        swing = _biggest_swing(matches, name_map, "дня")
+        if swing:
+            lines.append(swing)
 
         # Матч дня
         mod = pick_match_of_day(matches)

@@ -15,7 +15,12 @@ from bot.keyboards.inline import (
     player_profile_kb,
     stats_kb,
 )
-from bot.services.achievements import ACHIEVEMENTS_LIST, ACHIEVEMENTS_MAP, get_achievements
+from bot.services.achievements import (
+    ACHIEVEMENTS_LIST,
+    ACHIEVEMENTS_MAP,
+    CATEGORY_ORDER,
+    get_achievements,
+)
 from bot.utils import (
     _match_line,
     boss_fight_rematch_blocked,
@@ -446,22 +451,34 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
 # ── Achievements ──────────────────────────────────────────────────────────────
 
 def _render_achievements(earned_ids: list[str], title: str) -> str:
-    """Формирует текст экрана достижений."""
+    """Формирует текст экрана достижений, сгруппированный по категориям.
+
+    Внутри каждой категории — сначала полученные (✅, в порядке ACHIEVEMENTS_LIST),
+    потом невыполненные (🔒). Плоский список 30+ пунктов подряд читается как
+    нечитаемая простыня — тот же принцип, что уже применён к «Статистике»
+    (_render_stats_lines) и «Рекордам клуба» (leaderboard.py, v2.73.0).
+    """
     total = len(ACHIEVEMENTS_LIST)
-    count = len([a for a in ACHIEVEMENTS_LIST if a.id in earned_ids])
-    lines = [f"🏅 <b>{title}</b>  ({count} из {total})\n"]
     earned_set = set(earned_ids)
-    earned_achs = [a for a in ACHIEVEMENTS_LIST if a.id in earned_set]
-    locked_achs = [a for a in ACHIEVEMENTS_LIST if a.id not in earned_set]
-    for a in earned_achs:
-        lines.append(f"✅ {a.emoji} <b>{a.name}</b> — <i>{a.desc}</i>")
-    if locked_achs:
-        lines.append("")
-    for a in locked_achs:
-        if a.hidden:
-            lines.append("🔒 ???")
-        else:
-            lines.append(f"🔒 {a.emoji} {a.name} — <i>{a.desc}</i>")
+    count = len([a for a in ACHIEVEMENTS_LIST if a.id in earned_set])
+    lines = [f"🏅 <b>{title}</b>  ({count} из {total})"]
+
+    by_category: dict[str, list] = {}
+    for a in ACHIEVEMENTS_LIST:
+        by_category.setdefault(a.category, []).append(a)
+
+    for category in CATEGORY_ORDER:
+        achs = by_category.get(category, [])
+        if not achs:
+            continue
+        lines.append(f"\n<b>{category}</b>")
+        for a in sorted(achs, key=lambda a: a.id not in earned_set):
+            if a.id in earned_set:
+                lines.append(f"✅ {a.emoji} <b>{a.name}</b> — <i>{a.desc}</i>")
+            elif a.hidden:
+                lines.append("🔒 ???")
+            else:
+                lines.append(f"🔒 {a.emoji} {a.name} — <i>{a.desc}</i>")
     return "\n".join(lines)
 
 

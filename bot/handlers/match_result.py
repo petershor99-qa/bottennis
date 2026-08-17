@@ -1165,7 +1165,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
 
         # Достижения победителя и проигравшего
         new_ach_winner = await check_win_achievements(
-            session, winner, loser, final_sets, match_id, old_winner_rating, old_loser_rating,
+            session, winner, loser, final_sets, match, old_winner_rating, old_loser_rating,
         )
         new_ach_loser = await check_loss_achievements(session, loser, final_sets)
         await session.commit()

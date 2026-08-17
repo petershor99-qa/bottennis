@@ -1,6 +1,8 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from bot.utils import favor_icon
+
 
 def main_menu_kb(active_matches: list | None = None) -> InlineKeyboardMarkup:
     """Главное меню. Если переданы активные матчи [(match_id, opponent_name), ...],
@@ -104,11 +106,7 @@ def players_list_kb(
     for p in players:
         if p.telegram_id != exclude_telegram_id:
             rank_str = f"#{rank_map[p.id]}  " if rank_map and p.id in rank_map else ""
-            if my_rating is not None:
-                diff = p.rating - my_rating
-                icon = "💪 " if diff > 35 else ("😊 " if diff < -35 else "⚡ ")
-            else:
-                icon = ""
+            icon = favor_icon(p.rating - my_rating) if my_rating is not None else ""
             # 👑/🗡 приоритетнее ❄️/🔥 (босс-файт важнее формы), ❄️ приоритетнее 🔥
             if champion_id is not None and p.id == champion_id:
                 badge = " 👑"
