@@ -20,6 +20,10 @@ from sqlalchemy.orm import sessionmaker
 from bot.db.models import Base, Match, MatchStatus, Player
 from bot.handlers.challenge import do_cancel_match, send_challenge, show_players_for_challenge
 from bot.handlers.match_result import (
+    _send_h2h_milestone_egg,
+    _send_quick_rematch_egg,
+    _send_time_based_eggs,
+    _send_winner_eggs,
     confirm_result,
     fsm_reset_notice,
     handle_direct_score,
@@ -1785,3 +1789,219 @@ async def test_confirm_result_veteran_floor_is_900(db):
     await confirm_result(cb, db, st, bot)
 
     assert p2.rating >= 900.0 - 1e-9
+
+
+# ── Новые пасхалки после матча ───────────────────────────────────────────────
+
+def _egg_ctx(**overrides) -> dict:
+    """Минимальный ctx для прямого вызова _send_winner_eggs — изолирует одно
+    условие за раз, без прогона через полный ELO-расчёт confirm_result."""
+    ctx = {
+        "flawless": False, "clean_sweep": False, "shutout": False, "deuce_decider": False,
+        "comeback": False, "marathon": False,
+        "old_winner_rating": 1000.0, "old_loser_rating": 1000.0,
+        "previous_wins": 1, "streak": 1, "loss_streak_before": 0,
+        "first_blood": False, "revenge": False, "first_time_top1": False, "winner_total": 5,
+        "loss_streak": 0, "prev_losses": 0, "loser_total": 5,
+    }
+    ctx.update(overrides)
+    return ctx
+
+
+def _texts(bot: AsyncMock) -> list[str]:
+    return [c.args[1] for c in bot.send_message.await_args_list]
+
+
+# -- shutout / deuce_decider / круглый рейтинг (winner-only) --
+
+async def test_shutout_egg_fires_when_all_sets_blank():
+    winner, loser = _player(1, "A"), _player(2, "B")
+    winner.rating = 1013.7   # не кратно 50 — не мешает другому условию
+    bot = AsyncMock()
+    await _send_winner_eggs(bot, winner, loser, _egg_ctx(shutout=True))
+    assert any("Читы включил" in t for t in _texts(bot))
+
+
+async def test_no_shutout_egg_when_one_set_not_blank():
+    """flawless (хотя бы одна партия 11:0) может сработать, а shutout (все) — нет."""
+    winner, loser = _player(1, "A"), _player(2, "B")
+    winner.rating = 1013.7
+    bot = AsyncMock()
+    await _send_winner_eggs(bot, winner, loser, _egg_ctx(flawless=True, shutout=False))
+    texts = _texts(bot)
+    assert any("Flawless" in t for t in texts)
+    assert not any("Читы включил" in t for t in texts)
+
+
+async def test_deuce_decider_egg_fires():
+    winner, loser = _player(1, "A"), _player(2, "B")
+    winner.rating = 1013.7
+    bot = AsyncMock()
+    await _send_winner_eggs(bot, winner, loser, _egg_ctx(deuce_decider=True))
+    assert any("Драматично" in t for t in _texts(bot))
+
+
+async def test_no_deuce_decider_egg_when_false():
+    winner, loser = _player(1, "A"), _player(2, "B")
+    winner.rating = 1013.7
+    bot = AsyncMock()
+    await _send_winner_eggs(bot, winner, loser, _egg_ctx(deuce_decider=False))
+    assert not any("Драматично" in t for t in _texts(bot))
+
+
+async def test_round_rating_egg_fires_on_multiple_of_50():
+    winner, loser = _player(1, "A"), _player(2, "B")
+    winner.rating = 1050.0
+    bot = AsyncMock()
+    await _send_winner_eggs(bot, winner, loser, _egg_ctx())
+    assert any("Ровно 1050.0" in t for t in _texts(bot))
+
+
+async def test_no_round_rating_egg_on_non_round_value():
+    winner, loser = _player(1, "A"), _player(2, "B")
+    winner.rating = 1013.7
+    bot = AsyncMock()
+    await _send_winner_eggs(bot, winner, loser, _egg_ctx())
+    assert not any("Как ты это подгадал" in t for t in _texts(bot))
+
+
+# -- время матча: ночь / выходной / вечер пятницы --
+
+async def test_time_based_egg_night():
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    bot = AsyncMock()
+    # 2026-06-03 (среда) 01:00 UTC -> 04:00 МСК — ночь
+    await _send_time_based_eggs(bot, [p1, p2], datetime(2026, 6, 3, 1, 0, 0))
+    assert any("не спится" in t for t in _texts(bot))
+
+
+async def test_time_based_egg_weekend():
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    bot = AsyncMock()
+    # 2026-06-06 (суббота) 12:00 UTC -> 15:00 МСК — выходной, не ночь
+    await _send_time_based_eggs(bot, [p1, p2], datetime(2026, 6, 6, 12, 0, 0))
+    assert any("ради тенниса" in t for t in _texts(bot))
+
+
+async def test_time_based_egg_friday_evening():
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    bot = AsyncMock()
+    # 2026-06-05 (пятница) 16:00 UTC -> 19:00 МСК
+    await _send_time_based_eggs(bot, [p1, p2], datetime(2026, 6, 5, 16, 0, 0))
+    assert any("неделю красиво" in t for t in _texts(bot))
+
+
+async def test_time_based_egg_silent_on_regular_afternoon():
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    bot = AsyncMock()
+    # 2026-06-03 (среда) 12:00 UTC -> 15:00 МСК — обычный будний день
+    await _send_time_based_eggs(bot, [p1, p2], datetime(2026, 6, 3, 12, 0, 0))
+    bot.send_message.assert_not_called()
+
+
+async def test_time_based_egg_night_takes_priority_over_weekend():
+    """Суббота 2 часа ночи по МСК — оба условия подходят, срабатывает только ночь."""
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    bot = AsyncMock()
+    # 2026-06-06 (суббота) 23:00 UTC 5 июня -> 02:00 МСК 6 июня
+    await _send_time_based_eggs(bot, [p1, p2], datetime(2026, 6, 5, 23, 0, 0))
+    assert bot.send_message.await_count == 2   # по разу каждому, не больше
+    assert all("не спится" in t for t in _texts(bot))
+
+
+# -- юбилейная личная встреча --
+
+async def test_h2h_milestone_egg_fires_at_10th_meeting(db):
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    for i in range(10):
+        db.add(_completed(p1, p2, p1.id, 5.0, base + timedelta(days=i)))
+    await db.commit()
+
+    bot = AsyncMock()
+    await _send_h2h_milestone_egg(bot, db, p1, p2)
+    assert any("Юбилейная битва" in t and "10-я" in t for t in _texts(bot))
+
+
+async def test_h2h_milestone_egg_silent_on_non_round_count(db):
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    for i in range(11):
+        db.add(_completed(p1, p2, p1.id, 5.0, base + timedelta(days=i)))
+    await db.commit()
+
+    bot = AsyncMock()
+    await _send_h2h_milestone_egg(bot, db, p1, p2)
+    bot.send_message.assert_not_called()
+
+
+# -- быстрый реванш --
+
+async def test_quick_rematch_egg_fires_within_10_minutes(db):
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    prev = _completed(p1, p2, p1.id, 5.0, datetime(2026, 6, 1, 12, 0, 0))
+    db.add(prev)
+    await db.commit()
+
+    current = _completed(p2, p1, p2.id, 5.0, datetime(2026, 6, 1, 12, 5, 0))
+    db.add(current)
+    await db.commit()
+
+    bot = AsyncMock()
+    await _send_quick_rematch_egg(bot, db, p1, p2, current.completed_at, current.id)
+    assert any("Не наигрался" in t for t in _texts(bot))
+
+
+async def test_quick_rematch_egg_silent_when_gap_too_large(db):
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    prev = _completed(p1, p2, p1.id, 5.0, datetime(2026, 6, 1, 12, 0, 0))
+    db.add(prev)
+    await db.commit()
+
+    current = _completed(p2, p1, p2.id, 5.0, datetime(2026, 6, 1, 13, 0, 0))
+    db.add(current)
+    await db.commit()
+
+    bot = AsyncMock()
+    await _send_quick_rematch_egg(bot, db, p1, p2, current.completed_at, current.id)
+    bot.send_message.assert_not_called()
+
+
+async def test_quick_rematch_egg_silent_without_prior_match(db):
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    current = _completed(p1, p2, p1.id, 5.0, datetime(2026, 6, 1, 12, 0, 0))
+    db.add(current)
+    await db.commit()
+
+    bot = AsyncMock()
+    await _send_quick_rematch_egg(bot, db, p1, p2, current.completed_at, current.id)
+    bot.send_message.assert_not_called()
+
+
+# -- интеграционная проверка: полный флоу через confirm_result --
+
+async def test_confirm_result_shutout_egg_fires_end_to_end(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(
+        m.id, p1.id,
+        [{"reporter": 11, "opponent": 0}, {"reporter": 11, "opponent": 0}],
+    )
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert any("Читы включил" in t for t in _texts(bot))

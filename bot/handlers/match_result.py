@@ -23,6 +23,7 @@ from bot.services.rating import calculate_draw_rating_change, calculate_rating_c
 from bot.services.validation import validate_set_score
 from bot.states.states import MatchResultStates
 from bot.utils import (
+    MSK_OFFSET,
     NEWCOMER_THRESHOLD,
     get_challenger,
     get_champion,
@@ -174,6 +175,8 @@ async def _collect_egg_context(
         # факты матча
         "flawless":          any(s["l"] == 0 for s in final_sets),
         "clean_sweep":       len(final_sets) >= 2 and all(s["w"] > s["l"] for s in final_sets),
+        "shutout":           all(s["l"] == 0 for s in final_sets),
+        "deuce_decider":     final_sets[-1]["w"] >= 12 and final_sets[-1]["w"] - final_sets[-1]["l"] == 2,
         "comeback":          len(final_sets) >= 3 and final_sets[0]["w"] < final_sets[0]["l"],
         "marathon":          len(final_sets) >= 5,
         "old_winner_rating": old_winner_rating,
@@ -206,6 +209,12 @@ async def _send_winner_eggs(bot: Bot, winner: Player, loser: Player, ctx: dict) 
         await _msg("🩸 Flawless Victory")
     if ctx["clean_sweep"]:
         await _msg("💥 FINISH HIM!")
+    if ctx["shutout"]:
+        await _msg("Читы включил? 🎮")
+    if ctx["deuce_decider"]:
+        await _msg("⚡ Драматично!")
+    if round(winner.rating * 10) % 500 == 0:
+        await _msg(f"🎯 Ровно {round(winner.rating, 1)}. Как ты это подгадал?")
 
     # Серийная пасхалка (по приоритету)
     streak, previous_wins = ctx["streak"], ctx["previous_wins"]
@@ -273,6 +282,88 @@ async def _send_loser_eggs(
         await _msg(milestone)
 
 
+def _msk_hour_and_weekday(dt: datetime) -> tuple[int, int]:
+    """Час и день недели (0=Пн) момента матча по МСК, из naive-UTC datetime."""
+    msk = dt + MSK_OFFSET
+    return msk.hour, msk.weekday()
+
+
+async def _send_time_based_eggs(bot: Bot, players: list[Player], completed_at: datetime) -> None:
+    """Пасхалки по времени завершения матча (ночь / выходной / вечер пятницы) —
+    обоим участникам. Взаимоисключающие (приоритет сверху вниз), чтобы на один
+    матч не сыпалось сразу несколько сообщений об одном и том же факте времени."""
+    if completed_at is None:
+        return
+    hour, weekday = _msk_hour_and_weekday(completed_at)
+    if 0 <= hour < 6:
+        text = "🌙 Тебе точно не спится?"
+    elif weekday >= 5:
+        text = "Вышел на работу ради тенниса? Уважаемо! 🫡"
+    elif weekday == 4 and hour >= 18:
+        text = "Закрываем неделю красиво 🍻"
+    else:
+        return
+    for p in players:
+        try:
+            await bot.send_message(p.telegram_id, text)
+        except Exception:
+            pass
+
+
+async def _send_h2h_milestone_egg(bot: Bot, session: AsyncSession, p1: Player, p2: Player) -> None:
+    """Пасхалка на круглую цифру личных встреч между этой парой (эта — включительно)."""
+    r = await session.execute(
+        select(func.count()).select_from(Match).where(
+            Match.status == MatchStatus.completed,
+            or_(
+                and_(Match.challenger_id == p1.id, Match.challenged_id == p2.id),
+                and_(Match.challenger_id == p2.id, Match.challenged_id == p1.id),
+            ),
+        )
+    )
+    total = r.scalar()
+    if total not in (10, 25, 50, 100):
+        return
+    text = f"🎉 Юбилейная битва — {total}-я встреча между вами!"
+    for p in (p1, p2):
+        try:
+            await bot.send_message(p.telegram_id, text)
+        except Exception:
+            pass
+
+
+async def _send_quick_rematch_egg(
+    bot: Bot, session: AsyncSession, p1: Player, p2: Player, completed_at: datetime, match_id: int
+) -> None:
+    """Пасхалка: та же пара сыграла повторно в течение 10 минут после предыдущего матча."""
+    if completed_at is None:
+        return
+    r = await session.execute(
+        select(Match)
+        .where(
+            Match.status == MatchStatus.completed,
+            Match.id != match_id,
+            or_(
+                and_(Match.challenger_id == p1.id, Match.challenged_id == p2.id),
+                and_(Match.challenger_id == p2.id, Match.challenged_id == p1.id),
+            ),
+        )
+        .order_by(desc(Match.completed_at))
+        .limit(1)
+    )
+    prev = r.scalar_one_or_none()
+    if prev is None or not prev.completed_at:
+        return
+    gap = (completed_at - prev.completed_at).total_seconds()
+    if not (0 <= gap <= 600):
+        return
+    for p in (p1, p2):
+        try:
+            await bot.send_message(p.telegram_id, "Не наигрался? 😤")
+        except Exception:
+            pass
+
+
 async def _send_easter_eggs(
     bot: Bot,
     session: AsyncSession,
@@ -282,6 +373,7 @@ async def _send_easter_eggs(
     old_loser_rating: float,
     final_sets: list[dict],
     match_id: int,
+    completed_at: datetime | None = None,
 ) -> None:
     """Пасхалки после матча — победителю, проигравшему и обоим."""
     ctx = await _collect_egg_context(
@@ -312,6 +404,11 @@ async def _send_easter_eggs(
                 await bot.send_message(p.telegram_id, "7 матчей за сегодня! А поработать не хочешь? 😄")
             except Exception:
                 pass
+
+    if completed_at is not None:
+        await _send_time_based_eggs(bot, [winner, loser], completed_at)
+        await _send_h2h_milestone_egg(bot, session, winner, loser)
+        await _send_quick_rematch_egg(bot, session, winner, loser, completed_at, match_id)
 
 
 def _restart_notice_kb() -> InlineKeyboardMarkup:
@@ -893,6 +990,10 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                 except Exception:
                     pass
 
+        await _send_time_based_eggs(bot, [challenger, challenged], match.completed_at)
+        await _send_h2h_milestone_egg(bot, session, challenger, challenged)
+        await _send_quick_rematch_egg(bot, session, challenger, challenged, match.completed_at, match_id)
+
     else:
         # Определяем победителя с учётом инверсии (reporter мог проиграть)
         reporter_sets_won = sum(1 for s in sets_data if s["reporter"] > s["opponent"])
@@ -1073,7 +1174,8 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
 
         # Пасхалки после победы
         await _send_easter_eggs(
-            bot, session, winner, loser, old_winner_rating, old_loser_rating, final_sets, match_id
+            bot, session, winner, loser, old_winner_rating, old_loser_rating, final_sets, match_id,
+            completed_at=match.completed_at,
         )
 
         # Проверка серии побед над одним соперником
