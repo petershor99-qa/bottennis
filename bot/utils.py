@@ -611,6 +611,21 @@ def compute_h2h(matches: list[Match], viewer_id: int, opponent_id: int) -> dict:
     }
 
 
+def favor_icon(rating_diff: float) -> str:
+    """Иконка сложности соперника по разнице рейтинга (opponent - viewer).
+
+    Общий хелпер для списка вызова (players_list_kb) и «С кем сыграть?»
+    (show_my_matches) — раньше на втором экране показывались сырые "+123 pts"
+    без перевода в понятный вид, тогда как первый экран уже переводил ту же
+    разницу в 💪/😊/⚡. Единая логика убирает расхождение между экранами.
+    """
+    if rating_diff > 35:
+        return "💪 "
+    if rating_diff < -35:
+        return "😊 "
+    return "⚡ "
+
+
 def get_rec_signal(
     viewer_rating: float,
     viewer_id: int,

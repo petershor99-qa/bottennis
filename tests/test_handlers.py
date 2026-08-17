@@ -1377,6 +1377,46 @@ async def test_my_matches_shows_challenge_buttons_when_viewer_free(db):
     assert any(t.startswith("Вызвать") for t in buttons)
 
 
+# ── favor_icon / единый вид сложности соперника ──────────────────────────────
+
+def test_favor_icon_thresholds():
+    from bot.utils import favor_icon
+
+    assert favor_icon(50) == "💪 "    # соперник сильно сильнее
+    assert favor_icon(-50) == "😊 "   # соперник сильно слабее
+    assert favor_icon(0) == "⚡ "     # примерно равны
+    assert favor_icon(35.1) == "💪 "
+    assert favor_icon(-35.1) == "😊 "
+
+
+async def test_my_matches_shows_favor_icon_matching_players_list_kb(db):
+    """«С кем сыграть?» раньше показывал только сырые pts — теперь та же
+    иконка 💪/😊/⚡, что и на экране «Кого вызвать?» (players_list_kb)."""
+    from bot.handlers.history import show_my_matches
+
+    p1 = _player(1, "Alice", rating=1000.0)
+    p2 = _player(2, "Bob", rating=1100.0)  # сильнее на 100 -> 💪
+    db.add_all([p1, p2])
+    await db.commit()
+
+    cb = _callback(1, "menu_matches")
+    await show_my_matches(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "💪" in text
+
+
+async def test_help_lists_icon_legend():
+    from bot.handlers.start import cmd_help
+
+    msg = AsyncMock()
+    msg.answer = AsyncMock()
+    await cmd_help(msg)
+
+    text = msg.answer.call_args[0][0]
+    assert "💪" in text and "❄️" in text and "🔥" in text and "👑" in text
+
+
 # ── Пик рейтинга обновляется при ничьей (баг-фикс) ──────────────────────────────
 
 async def test_peak_rating_updated_on_draw(db):

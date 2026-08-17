@@ -56,16 +56,18 @@ _DEFAULT_SETS = [{"w": 11, "l": 7}, {"w": 11, "l": 7}]
 
 async def _add_win(
     session, winner: Player, loser: Player,
-    sets=None, dt: datetime = None,
+    sets=None, dt: datetime = None, created_at: datetime = None,
 ) -> Match:
     """Добавить в БД завершённый матч с победителем."""
+    completed = dt or _ts()
     m = Match(
         challenger_id=winner.id,
         challenged_id=loser.id,
         status=MatchStatus.completed,
         winner_id=winner.id,
         sets_data=sets or _DEFAULT_SETS,
-        completed_at=dt or _ts(),
+        completed_at=completed,
+        created_at=created_at or completed,
     )
     session.add(m)
     await session.flush()
@@ -93,13 +95,13 @@ async def _add_draw(
 async def _do_win(
     session, winner: Player, loser: Player,
     sets=None, old_wr: float = 1000.0, old_lr: float = 1000.0,
-    dt: datetime = None,
+    dt: datetime = None, created_at: datetime = None,
 ) -> list[str]:
     """Добавить победный матч в БД и вызвать check_win_achievements."""
     sets = sets or _DEFAULT_SETS
-    m = await _add_win(session, winner, loser, sets=sets, dt=dt or _ts())
+    m = await _add_win(session, winner, loser, sets=sets, dt=dt or _ts(), created_at=created_at)
     return await check_win_achievements(
-        session, winner, loser, sets, m.id, old_wr, old_lr,
+        session, winner, loser, sets, m, old_wr, old_lr,
     )
 
 
@@ -1082,3 +1084,169 @@ async def test_backfill_assigns_terminator_slain(db):
     await backfill_achievements(db)
     assert "terminator_slain" in get_achievements(p1)
     assert "terminator_slain" not in get_achievements(p2)
+
+
+# ── night_owl ─────────────────────────────────────────────────────────────────
+
+async def test_night_owl_fires_on_night_win(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    # 2024-01-01 01:00 UTC -> 04:00 МСК — ночь
+    new = await _do_win(db, p1, p2, dt=datetime(2024, 1, 1, 1, 0, 0))
+    assert "night_owl" in new
+
+
+async def test_night_owl_silent_on_daytime_win(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = await _do_win(db, p1, p2, dt=_ts())  # 12:00 UTC -> 15:00 МСК
+    assert "night_owl" not in new
+
+
+async def test_backfill_assigns_night_owl(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=p1.id,
+        sets_data=_DEFAULT_SETS, completed_at=datetime(2024, 1, 1, 1, 0, 0),
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "night_owl" in get_achievements(p1)
+
+
+# ── deuce_storm ───────────────────────────────────────────────────────────────
+
+_ALL_DEUCE_SETS = [{"w": 12, "l": 10}, {"w": 11, "l": 13}, {"w": 14, "l": 12}]
+
+
+async def test_deuce_storm_fires_when_every_set_is_deuce(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = await _do_win(db, p1, p2, sets=_ALL_DEUCE_SETS)
+    assert "deuce_storm" in new
+
+
+async def test_no_deuce_storm_when_one_set_is_not_deuce(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    sets = [{"w": 12, "l": 10}, {"w": 11, "l": 7}]  # вторая партия не на дьюсе
+    new = await _do_win(db, p1, p2, sets=sets)
+    assert "deuce_storm" not in new
+
+
+async def test_backfill_assigns_deuce_storm(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=p1.id,
+        sets_data=_ALL_DEUCE_SETS, completed_at=_ts(),
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "deuce_storm" in get_achievements(p1)
+
+
+# ── no_rest_win ───────────────────────────────────────────────────────────────
+
+async def test_no_rest_win_fires_within_10_minutes(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _add_win(db, p1, p2, dt=_ts(0))
+    new = await _do_win(db, p2, p1, dt=_ts(300), created_at=_ts(300))
+    assert "no_rest_win" in new
+
+
+async def test_no_rest_win_silent_when_gap_too_large(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _add_win(db, p1, p2, dt=_ts(0))
+    new = await _do_win(db, p2, p1, dt=_ts(3600), created_at=_ts(3600))
+    assert "no_rest_win" not in new
+
+
+async def test_no_rest_win_silent_without_prior_match(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = await _do_win(db, p1, p2)
+    assert "no_rest_win" not in new
+
+
+async def test_backfill_assigns_no_rest_win(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=p1.id,
+        sets_data=_DEFAULT_SETS, created_at=_ts(0), completed_at=_ts(0),
+    ))
+    db.add(Match(
+        challenger_id=p2.id, challenged_id=p1.id,
+        status=MatchStatus.completed, winner_id=p2.id,
+        sets_data=_DEFAULT_SETS, created_at=_ts(300), completed_at=_ts(300),
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "no_rest_win" in get_achievements(p2)
+    assert "no_rest_win" not in get_achievements(p1)
+
+
+# ── round_hundred ─────────────────────────────────────────────────────────────
+
+async def test_round_hundred_fires_directly(db):
+    """Не полагается на формулу ELO — напрямую проверяет условие через winner.rating."""
+    p1, p2 = _player(1, "Alice", rating=1000.0), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    p1.rating = 1100.0  # имитирует результат, попавший ровно на круглую цифру
+
+    new = await check_win_achievements(
+        db, p1, p2, _DEFAULT_SETS, await _add_win(db, p1, p2), 1090.0, 1000.0,
+    )
+    assert "round_hundred" in new
+
+
+async def test_no_round_hundred_on_non_round_rating(db):
+    p1, p2 = _player(1, "Alice", rating=1000.0), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    p1.rating = 1113.7
+
+    new = await check_win_achievements(
+        db, p1, p2, _DEFAULT_SETS, await _add_win(db, p1, p2), 1090.0, 1000.0,
+    )
+    assert "round_hundred" not in new
+
+
+# ── categories ────────────────────────────────────────────────────────────────
+
+async def test_every_achievement_has_a_category():
+    from bot.services.achievements import ACHIEVEMENTS_LIST, CATEGORY_ORDER
+    assert set(CATEGORY_ORDER) == {a.category for a in ACHIEVEMENTS_LIST}
+    for a in ACHIEVEMENTS_LIST:
+        assert a.category, f"{a.id} has no category"

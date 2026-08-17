@@ -12,6 +12,7 @@
 import json
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,49 +27,69 @@ class Achievement:
     emoji: str
     name: str
     desc: str
+    category: str = ""
     hidden: bool = False  # скрыта до разблокировки — в списке показывается как "🔒 ???"
 
 
+# Категории — только для группировки экрана «Достижения» (_render_achievements,
+# profile.py). Плоский список из 30+ пунктов подряд читается как нечитаемая
+# простыня (тот же принцип уже применён к «Статистике» и «Рекордам клуба»).
+CAT_START = "🏁 Старт карьеры"
+CAT_STREAKS = "🔥 Серии"
+CAT_SPECIAL = "🎯 Особые победы"
+CAT_MILESTONES = "📊 Объём и вехи"
+CAT_CLUB = "🤝 Дух клуба"
+CAT_THRONE = "👑 Трон"
+
+# Порядок отображения категорий на экране «Достижения» — намеренный, не
+# алфавитный и не «первое появление в списке»: от первых шагов к вершине.
+CATEGORY_ORDER = [CAT_START, CAT_STREAKS, CAT_SPECIAL, CAT_MILESTONES, CAT_CLUB, CAT_THRONE]
+
+
 ACHIEVEMENTS_LIST: list[Achievement] = [
-    Achievement("press_start",    "🎮", "Я только посмотреть",      "Сыграть первый матч"),
-    Achievement("first_blood",    "🩸", "Первая кровь",              "Одержать первую победу в карьере"),
-    Achievement("beginners_luck", "😎", "Новичкам везёт",            "Победить в самом первом матче"),
-    Achievement("hat_trick",      "🔥", "Хет-трик",                  "Выиграть 3 матча подряд"),
-    Achievement("im_on_fire",     "💀", "Я горяч нахуй!",            "Выиграть 5 матчей подряд"),
-    Achievement("god_mode",       "😤", "Ахуджел. Дай другим выиграть!", "Выиграть 10 матчей подряд"),
-    Achievement("phoenix",        "💪", "Восставший из зада",        "Победить после серии 3+ поражений подряд", hidden=True),
-    Achievement("highlander",     "👑", "Останется только один",     "Стать чемпионом — победить в босс-файте или получить трон"),
-    Achievement("david_goliath",  "🎯", "Ебнул четырёхпалубку",     "Победить игрока с рейтингом выше на 100+ pts", hidden=True),
-    Achievement("marathon",       "🕰", "Совсем абанулись",          "Сыграть матч из 5 и более партий"),
-    Achievement("fatality",       "💥", "Фаталити",                  "Победить, не отдав сопернику ни одной партии", hidden=True),
-    Achievement("no_sweat",       "⚡", "Даже не вспотел",           "Выиграть партию со счётом 11:0", hidden=True),
-    Achievement("diplomat",       "🤝", "Мир, дружба, жвачка",      "Сыграть 5 ничьих"),
-    Achievement("revenge",        "⚔️", "Ответ_очка",               "Победить того, кто последним обыграл тебя", hidden=True),
-    Achievement("dominator",      "☠️", "То что мертво",             "Победить одного соперника 10 раз подряд", hidden=True),
-    Achievement("fifty",          "🎊", "Стукнул полтинник",          "Сыграть 50 матчей"),
-    Achievement("veteran",        "🏆", "Прошаренный",               "Сыграть 100 матчей"),
-    Achievement("legend",         "🎾", "Великий теннисит",          "Сыграть 200 матчей"),
-    Achievement("maniac",         "🤪", "Теннисный маньячелло",       "Сыграть 10 матчей за один день"),
-    Achievement("collector",      "🗺", "Со всеми познакомился",     "Победить каждого игрока хотя бы раз"),
-    Achievement("rating_1200",    "⭐", "Рейтинг 1200",              "Достичь рейтинга 1200 pts"),
-    Achievement("anchorage_spirit", "🏳️", "Дух Анкориджа",          "Отменить матч"),
-    Achievement("comeback",       "🔄", "CumБэк",                    "Выиграть матч, проигрывая 0:2 по партиям", hidden=True),
-    Achievement("fk_tyumen",      "🥊", "ФК Тюмень",                 "Проиграть 5 матчей подряд"),
-    Achievement("relentless",     "☀️", "Неистого",                  "Выиграть все свои матчи за день (от 3)"),
-    Achievement("deuce_maker",    "🎢", "Дьюсмейкер",                "Выиграть партию на дьюсе (12:10 и выше)"),
-    Achievement("titans",         "🥋", "Битва такеши титанов",      "Победить в матче, где оба были 1100+ pts", hidden=True),
-    Achievement("takova_zhis",    "🎭", "Такова жись",               "6 матчей подряд с чередованием побед и поражений", hidden=True),
-    Achievement("terminator_slain", "🦾", "Вынес терминатора",       "Победить соперника, шедшего с серией 5+ побед подряд", hidden=True),
-    Achievement("night_king",     "🌙", "Король ночи",               "Обыграть всех игроков клуба за один день", hidden=True),
-    Achievement("throne_defended", "🛡", "Трон удержан",             "Отбиться от претендента в босс-файте", hidden=True),
-    Achievement("throne_denied",  "🚪", "Мимо трона",                "Проиграть босс-файт за трон, оставшись претендентом", hidden=True),
+    Achievement("press_start",    "🎮", "Я только посмотреть",      "Сыграть первый матч", category=CAT_START),
+    Achievement("first_blood",    "🩸", "Первая кровь",              "Одержать первую победу в карьере", category=CAT_START),
+    Achievement("beginners_luck", "😎", "Новичкам везёт",            "Победить в самом первом матче", category=CAT_START),
+    Achievement("hat_trick",      "🔥", "Хет-трик",                  "Выиграть 3 матча подряд", category=CAT_STREAKS),
+    Achievement("im_on_fire",     "💀", "Я горяч нахуй!",            "Выиграть 5 матчей подряд", category=CAT_STREAKS),
+    Achievement("god_mode",       "😤", "Ахуджел. Дай другим выиграть!", "Выиграть 10 матчей подряд", category=CAT_STREAKS),
+    Achievement("phoenix",        "💪", "Восставший из зада",        "Победить после серии 3+ поражений подряд", category=CAT_STREAKS, hidden=True),
+    Achievement("highlander",     "👑", "Останется только один",     "Стать чемпионом — победить в босс-файте или получить трон", category=CAT_THRONE),
+    Achievement("david_goliath",  "🎯", "Ебнул четырёхпалубку",     "Победить игрока с рейтингом выше на 100+ pts", category=CAT_SPECIAL, hidden=True),
+    Achievement("marathon",       "🕰", "Совсем абанулись",          "Сыграть матч из 5 и более партий", category=CAT_SPECIAL),
+    Achievement("fatality",       "💥", "Фаталити",                  "Победить, не отдав сопернику ни одной партии", category=CAT_SPECIAL, hidden=True),
+    Achievement("no_sweat",       "⚡", "Даже не вспотел",           "Выиграть партию со счётом 11:0", category=CAT_SPECIAL, hidden=True),
+    Achievement("diplomat",       "🤝", "Мир, дружба, жвачка",      "Сыграть 5 ничьих", category=CAT_CLUB),
+    Achievement("revenge",        "⚔️", "Ответ_очка",               "Победить того, кто последним обыграл тебя", category=CAT_SPECIAL, hidden=True),
+    Achievement("dominator",      "☠️", "То что мертво",             "Победить одного соперника 10 раз подряд", category=CAT_STREAKS, hidden=True),
+    Achievement("fifty",          "🎊", "Стукнул полтинник",          "Сыграть 50 матчей", category=CAT_MILESTONES),
+    Achievement("veteran",        "🏆", "Прошаренный",               "Сыграть 100 матчей", category=CAT_MILESTONES),
+    Achievement("legend",         "🎾", "Великий теннисит",          "Сыграть 200 матчей", category=CAT_MILESTONES),
+    Achievement("maniac",         "🤪", "Теннисный маньячелло",       "Сыграть 10 матчей за один день", category=CAT_MILESTONES),
+    Achievement("collector",      "🗺", "Со всеми познакомился",     "Победить каждого игрока хотя бы раз", category=CAT_CLUB),
+    Achievement("rating_1200",    "⭐", "Рейтинг 1200",              "Достичь рейтинга 1200 pts", category=CAT_MILESTONES),
+    Achievement("anchorage_spirit", "🏳️", "Дух Анкориджа",          "Отменить матч", category=CAT_CLUB),
+    Achievement("comeback",       "🔄", "CumБэк",                    "Выиграть матч, проигрывая 0:2 по партиям", category=CAT_SPECIAL, hidden=True),
+    Achievement("fk_tyumen",      "🥊", "ФК Тюмень",                 "Проиграть 5 матчей подряд", category=CAT_STREAKS),
+    Achievement("relentless",     "☀️", "Неистого",                  "Выиграть все свои матчи за день (от 3)", category=CAT_MILESTONES),
+    Achievement("deuce_maker",    "🎢", "Дьюсмейкер",                "Выиграть партию на дьюсе (12:10 и выше)", category=CAT_SPECIAL),
+    Achievement("titans",         "🥋", "Битва такеши титанов",      "Победить в матче, где оба были 1100+ pts", category=CAT_SPECIAL, hidden=True),
+    Achievement("takova_zhis",    "🎭", "Такова жись",               "6 матчей подряд с чередованием побед и поражений", category=CAT_STREAKS, hidden=True),
+    Achievement("terminator_slain", "🦾", "Вынес терминатора",       "Победить соперника, шедшего с серией 5+ побед подряд", category=CAT_SPECIAL, hidden=True),
+    Achievement("night_king",     "🌙", "Король ночи",               "Обыграть всех игроков клуба за один день", category=CAT_MILESTONES, hidden=True),
+    Achievement("throne_defended", "🛡", "Трон удержан",             "Отбиться от претендента в босс-файте", category=CAT_THRONE, hidden=True),
+    Achievement("throne_denied",  "🚪", "Мимо трона",                "Проиграть босс-файт за трон, оставшись претендентом", category=CAT_THRONE, hidden=True),
+    Achievement("night_owl",      "🦉", "Полуночник",                "Выиграть матч, завершённый ночью (0:00–6:00 МСК)", category=CAT_SPECIAL, hidden=True),
+    Achievement("deuce_storm",    "🌪", "Дьюсопад",                  "Выиграть матч, где каждая партия закончилась на дьюсе", category=CAT_SPECIAL, hidden=True),
+    Achievement("no_rest_win",    "🔁", "Добивашка",                 "Выиграть матч, начатый в течение 10 минут после предыдущего с тем же соперником", category=CAT_SPECIAL, hidden=True),
+    Achievement("round_hundred",  "💯", "Круглая цифра",             "Рейтинг стал ровно кратен 100", category=CAT_MILESTONES, hidden=True),
 ]
 
 ACHIEVEMENTS_MAP: dict[str, Achievement] = {a.id: a for a in ACHIEVEMENTS_LIST}
 
 # Увеличивай при добавлении новых ачивок, требующих бэкфилл.
 # Игроки с player.backfill_version < BACKFILL_VERSION будут обработаны один раз при старте.
-BACKFILL_VERSION = 7
+BACKFILL_VERSION = 8
 
 TERMINATOR_STREAK_LEN = 5  # активная серия соперника для «Вынес терминатора»
 
@@ -115,7 +136,7 @@ async def check_win_achievements(
     winner: Player,
     loser: Player,
     sets_data: list[dict],          # winner perspective: [{"w": winner_pts, "l": loser_pts}, ...]
-    match_id: int,
+    match: Match,
     old_winner_rating: float,
     old_loser_rating: float,
 ) -> list[str]:
@@ -148,7 +169,7 @@ async def check_win_achievements(
 
     # ── Первая победа ────────────────────────────────────────────────────────
     wins_before = sum(
-        1 for m in all_matches if m.winner_id == winner.id and m.id != match_id
+        1 for m in all_matches if m.winner_id == winner.id and m.id != match.id
     )
     if wins_before == 0:
         maybe("first_blood")
@@ -170,7 +191,7 @@ async def check_win_achievements(
         maybe("god_mode")
 
     # ── Феникс: серия 3+ поражений ДО текущей победы ────────────────────────
-    prev_matches = [m for m in all_matches if m.id != match_id]
+    prev_matches = [m for m in all_matches if m.id != match.id]
     loss_streak_before = 0
     for m in reversed(prev_matches):
         if m.winner_id is not None and m.winner_id != winner.id:
@@ -223,13 +244,35 @@ async def check_win_achievements(
     if len(h2h) >= 2 and h2h[1].winner_id == loser.id:
         maybe("revenge")
 
+    # ── Добивашка: этот матч начат в течение 10 минут после предыдущего между
+    # этой же парой — переиспользует h2h[1], уже загруженный для «Ответ_очка».
+    # completed_at/created_at в проде naive-UTC; .replace(tzinfo=None) защищает
+    # от tz-aware дат (тот же приём, что и у «Неистого» выше по файлу) ────────
+    if len(h2h) >= 2 and match.created_at and h2h[1].completed_at:
+        gap = (
+            match.created_at.replace(tzinfo=None) - h2h[1].completed_at.replace(tzinfo=None)
+        ).total_seconds()
+        if 0 <= gap <= 600:
+            maybe("no_rest_win")
+
+    # ── Полуночник: матч завершился ночью (0:00–6:00 МСК) ────────────────────
+    if match.completed_at and 0 <= (match.completed_at.replace(tzinfo=None) + MSK_OFFSET).hour < 6:
+        maybe("night_owl")
+
+    # ── Дьюсопад: КАЖДАЯ партия матча закончилась на дьюсе (12+ очков, выиграна ──
+    # ── с отрывом ровно 2) — независимо от того, кто выиграл конкретную партию ─
+    if len(sets_data) >= 2 and all(
+        max(s["w"], s["l"]) >= 12 and abs(s["w"] - s["l"]) == 2 for s in sets_data
+    ):
+        maybe("deuce_storm")
+
     # ── Вынес терминатора: у соперника была активная серия 5+ побед ДО этого матча ─
     loser_prev_r = await session.execute(
         select(Match)
         .where(
             or_(Match.challenger_id == loser.id, Match.challenged_id == loser.id),
             Match.status == MatchStatus.completed,
-            Match.id != match_id,
+            Match.id != match.id,
         )
         .order_by(Match.completed_at)
     )
@@ -301,6 +344,12 @@ async def check_win_achievements(
     # ── Рейтинг 1200 ─────────────────────────────────────────────────────────
     if winner.rating >= 1200.0:
         maybe("rating_1200")
+
+    # ── Круглая цифра: рейтинг стал ровно кратен 100 ─────────────────────────
+    # round(x*10) вместо x % 100 == 0 — защита от погрешности float (winner.rating
+    # уже округлён до 1 знака выше по коду, но остаточная неточность бывает).
+    if round(winner.rating * 10) % 1000 == 0:
+        maybe("round_hundred")
 
     # ── CumБэк: выиграл, проиграв первые две партии (0:2 → победа) ───────────
     if (
@@ -651,6 +700,7 @@ async def backfill_achievements(session: AsyncSession) -> None:
         beaten_opponents: set[int] = set()
         had_phoenix = False
         alt_window: list[bool] = []  # для «Такова жись» — скользящее окно исходов
+        last_completed_vs: dict[int, datetime] = {}  # для «Добивашка» — по опоненту
 
         for m in matches:
             opp_id = m.challenged_id if m.challenger_id == player.id else m.challenger_id
@@ -694,6 +744,19 @@ async def backfill_achievements(session: AsyncSession) -> None:
                     # Дьюсмейкер: выиграл партию на дьюсе (победитель = w)
                     if any(s["w"] >= 12 and s["w"] > s["l"] for s in m.sets_data):
                         _add_new(earned, "deuce_maker")
+                    # Полуночник: матч завершился ночью (0:00–6:00 МСК)
+                    if m.completed_at and 0 <= (m.completed_at + MSK_OFFSET).hour < 6:
+                        _add_new(earned, "night_owl")
+                    # Дьюсопад: КАЖДАЯ партия закончилась на дьюсе
+                    if len(m.sets_data) >= 2 and all(
+                        max(s["w"], s["l"]) >= 12 and abs(s["w"] - s["l"]) == 2
+                        for s in m.sets_data
+                    ):
+                        _add_new(earned, "deuce_storm")
+                # Добивашка: начат в течение 10 минут после предыдущего с этим же соперником
+                prev_vs = last_completed_vs.get(opp_id)
+                if prev_vs and m.created_at and 0 <= (m.created_at - prev_vs).total_seconds() <= 600:
+                    _add_new(earned, "no_rest_win")
 
             elif is_draw:
                 total_draws += 1
@@ -730,6 +793,9 @@ async def backfill_achievements(session: AsyncSession) -> None:
                 # marathon: 5+ партий независимо от результата
                 if m.sets_data and len(m.sets_data) >= 5:
                     _add_new(earned, "marathon")
+
+            if m.completed_at:
+                last_completed_vs[opp_id] = m.completed_at
 
         # Первая победа / новичкам везёт
         if total_wins >= 1:
