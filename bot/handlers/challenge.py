@@ -330,13 +330,16 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
         reply_markup=active_match_kb(match.id),
     )
 
-    # Пасхалка: вызвал текущего лидера рейтинга
+    # Пасхалка: вызвал текущего лидера рейтинга. Раньше текст был "Похоже это
+    # босс-файт" — путал с настоящей механикой боссфайта (Player.is_champion,
+    # ×2 к рейтингу, запрет ничьей), т.к. это просто топ-1 по сырому рейтингу
+    # без привязки к реальному чемпиону — переименовано в v2.89.0.
     top_r = await session.execute(
         select(func.count()).select_from(Player).where(Player.rating > opponent.rating)
     )
     if top_r.scalar() == 0:
         try:
-            await bot.send_message(challenger.telegram_id, "🥊 Похоже это босс-файт")
+            await bot.send_message(challenger.telegram_id, "💀 О, местную легенду вызвал. Смело.")
         except Exception:
             pass
 
