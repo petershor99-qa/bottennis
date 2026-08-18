@@ -784,6 +784,160 @@ async def test_overtake_notifications_sent_once_not_repeated(db):
     assert not any("обошёл чемпиона" in t for t in texts2)
 
 
+# ── G. «Просран шанс» (chance_blown) ────────────────────────────────────────────
+
+async def test_chance_blown_when_champion_retakes_lead(db):
+    """Претендент теряет статус, если чемпион обычной победой (НЕ боссфайтом)
+    обгоняет его обратно по очкам — 'ПОТРАЧЕНО' + ачивка chance_blown."""
+    champion = _player(1, "Champion", rating=999.0)
+    champion.is_champion = True
+    contender = _player(2, "Contender", rating=1000.0)
+    third = _player(3, "Third", rating=1000.0)
+    db.add_all([champion, contender, third])
+    await db.flush()
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    for i in range(15):
+        db.add(_completed(contender, third, contender.id, base - timedelta(days=15 - i)))
+    await db.commit()
+
+    pre_champion = await get_champion(db)
+    pre_challenger = await get_challenger(db, pre_champion)
+    assert pre_challenger is not None and pre_challenger.id == contender.id
+
+    m = await _accepted_match(db, champion, third, is_boss_fight=False)
+    await db.commit()
+    st = await _confirming_state(
+        m.id, champion.id,
+        [{"reporter": 11, "opponent": 0}, {"reporter": 11, "opponent": 0}],
+    )
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert champion.rating > contender.rating  # обгон реально случился
+    texts = [c.args[1] for c in bot.send_message.await_args_list]
+    assert any("ПОТРАЧЕНО" in t for t in texts)
+    assert "chance_blown" in get_achievements(contender)
+
+
+async def test_chance_blown_when_challenger_loses_to_third_party(db):
+    """Претендент теряет статус, проиграв кому угодно (не обязательно чемпиону) —
+    рейтинг упал ниже чемпионского."""
+    champion = _player(1, "Champion", rating=990.0)
+    champion.is_champion = True
+    contender = _player(2, "Contender", rating=1000.0)
+    third = _player(3, "Third", rating=1000.0)
+    db.add_all([champion, contender, third])
+    await db.flush()
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    for i in range(15):
+        db.add(_completed(contender, third, contender.id, base - timedelta(days=15 - i)))
+    await db.commit()
+
+    pre_champion = await get_champion(db)
+    pre_challenger = await get_challenger(db, pre_champion)
+    assert pre_challenger is not None and pre_challenger.id == contender.id
+
+    m = await _accepted_match(db, contender, third, is_boss_fight=False)
+    await db.commit()
+    st = await _confirming_state(m.id, contender.id, [{"reporter": 0, "opponent": 11}, {"reporter": 0, "opponent": 11}])
+    cb, bot = _callback(2, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert contender.rating < champion.rating  # выпал из претендентов
+    texts = [c.args[1] for c in bot.send_message.await_args_list]
+    assert any("ПОТРАЧЕНО" in t for t in texts)
+    assert "chance_blown" in get_achievements(contender)
+
+
+async def test_chance_blown_not_given_on_actual_boss_fight_loss(db):
+    """Проигрыш НЕПОСРЕДСТВЕННО в боссфайте даёт throne_denied, но не chance_blown —
+    два разных уведомления на одно и то же событие были бы дублированием."""
+    champion = _player(1, "Champion", rating=1000.0)
+    champion.is_champion = True
+    contender = _player(2, "Contender", rating=999.0)
+    db.add_all([champion, contender])
+    await db.flush()
+    m = await _accepted_match(db, champion, contender, is_boss_fight=True)
+    await db.commit()
+    st = await _confirming_state(
+        m.id, champion.id,
+        [{"reporter": 11, "opponent": 0}, {"reporter": 11, "opponent": 0}],
+    )
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert "throne_denied" in get_achievements(contender)
+    assert "chance_blown" not in get_achievements(contender)
+    texts = [c.args[1] for c in bot.send_message.await_args_list]
+    assert not any("ПОТРАЧЕНО" in t for t in texts)
+
+
+async def test_chance_blown_not_given_when_challenger_status_unchanged(db):
+    """Обычный матч между игроками, рейтинг которых заведомо далёк от
+    чемпиона/претендента — не может их сдвинуть, уведомления нет."""
+    champion = _player(1, "Champion", rating=990.0)
+    champion.is_champion = True
+    contender = _player(2, "Contender", rating=1000.0)
+    # 800 pts — специально далеко ниже contender, чтобы даже разгромная победа
+    # p3 над p4 не подобралась к 1000 и не сместила contender (см. тест ниже
+    # про честный обгон третьей стороной — там разница специально маленькая).
+    p3, p4 = _player(3, "P3", rating=800.0), _player(4, "P4", rating=800.0)
+    db.add_all([champion, contender, p3, p4])
+    await db.flush()
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    for i in range(15):
+        db.add(_completed(contender, p3, contender.id, base - timedelta(days=15 - i)))
+    await db.commit()
+
+    m = await _accepted_match(db, p3, p4, is_boss_fight=False)
+    await db.commit()
+    st = await _confirming_state(m.id, p3.id, [{"reporter": 11, "opponent": 5}])
+    cb, bot = _callback(3, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert "chance_blown" not in get_achievements(contender)
+    texts = [c.args[1] for c in bot.send_message.await_args_list]
+    assert not any("ПОТРАЧЕНО" in t for t in texts)
+
+
+async def test_chance_blown_also_fires_on_third_party_overtake(db):
+    """Осознанный бонус сверх узкого скоупа: реализация переиспользует ту же
+    инфраструктуру 'претендент до/после', что уже существующее уведомление
+    'появился новый претендент' — а оно уже считалось после КАЖДОГО матча в
+    клубе, не только матчей чемпиона/претендента. Раз дорогая часть (пересчёт
+    challenger до/после) уже оплачена существующей фичей, ловить и обгон
+    третьей стороной получилось бесплатно — сознательно не стали искусственно
+    urезать это обратно до 'только матчи чемпиона/претендента'."""
+    champion = _player(1, "Champion", rating=990.0)
+    champion.is_champion = True
+    contender = _player(2, "Contender", rating=1000.0)
+    third, fourth = _player(3, "Third", rating=1000.0), _player(4, "Fourth", rating=1000.0)
+    db.add_all([champion, contender, third, fourth])
+    await db.flush()
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    for i in range(15):
+        db.add(_completed(contender, third, contender.id, base - timedelta(days=15 - i)))
+    await db.commit()
+
+    pre_champion = await get_champion(db)
+    pre_challenger = await get_challenger(db, pre_champion)
+    assert pre_challenger is not None and pre_challenger.id == contender.id  # тай-брейк по id
+
+    # third обыгрывает fourth (матч вообще без участия champion/contender)
+    # и разгромной победой перескакивает contender по рейтингу
+    m = await _accepted_match(db, third, fourth, is_boss_fight=False)
+    await db.commit()
+    st = await _confirming_state(
+        m.id, third.id,
+        [{"reporter": 11, "opponent": 0}, {"reporter": 11, "opponent": 0}],
+    )
+    cb, bot = _callback(3, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert third.rating > contender.rating  # честный обгон третьей стороной
+    assert "chance_blown" in get_achievements(contender)
+
+
 async def test_boss_fight_start_broadcast_to_all_players(db):
     champion = _player(1, "Champion", rating=1000.0)
     champion.is_champion = True

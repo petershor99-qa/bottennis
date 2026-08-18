@@ -15,6 +15,7 @@ from bot.services.achievements import (
     ACHIEVEMENTS_MAP,
     check_boss_fight_challenger_defeat_achievement,
     check_boss_fight_defense_achievement,
+    check_chance_blown_achievement,
     check_draw_achievements,
     check_loss_achievements,
     check_win_achievements,
@@ -1230,6 +1231,40 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                 champion_after.telegram_id,
                 f"⚔️ Тебя догнал по очкам <b>{h(challenger_after.display_name)}</b> — "
                 f"он может вызвать тебя на босс-файт.",
+            )
+        except Exception:
+            pass
+
+    # ── Претендент потерял статус, не дойдя до боссфайта — «Просран шанс» ──────
+    # Не для боссфайтов: поражение НЕПОСРЕДСТВЕННО в боссфайте уже даёт
+    # throne_denied в отдельной ветке выше — не дублируем два уведомления
+    # на одно и то же событие. Независимый if (не elif к блоку выше) — оба
+    # случая могут сработать за один матч: старый претендент проиграл, а
+    # победитель этим же результатом обогнал чемпиона и стал новым претендентом.
+    #
+    # Осознанно ловит НЕ ТОЛЬКО «чемпион обогнал обратно» и «претендент
+    # проиграл» — переиспользует challenger_before/after, который уже
+    # пересчитывается после КАЖДОГО завершённого матча в клубе (это фича
+    # уведомления «ты обошёл чемпиона» чуть выше). Раз дорогая часть
+    # (пересчёт get_challenger) уже оплачена, честный обгон претендента
+    # ТРЕТЬЕЙ стороной (двое посторонних сыграли между собой) тоже ловится —
+    # без этого пришлось бы искусственно резать до двух случаев без всякой
+    # экономии на запросах. См. test_chance_blown_also_fires_on_third_party_overtake.
+    if (
+        not match.is_boss_fight
+        and challenger_before_id is not None
+        and challenger_before_id != challenger_after_id
+    ):
+        new_ach_blown = await check_chance_blown_achievement(challenger_before)
+        if new_ach_blown:
+            await session.commit()
+            await _notify_achievements(bot, challenger_before, new_ach_blown)
+        try:
+            await bot.send_message(
+                challenger_before.telegram_id,
+                "💸 <b>ПОТРАЧЕНО.</b>\n\n"
+                "Твой шанс вызвать чемпиона на босс-файт только что испарился — "
+                "ты выпал из претендентов, не дойдя до боссфайта.",
             )
         except Exception:
             pass
