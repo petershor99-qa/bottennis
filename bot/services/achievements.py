@@ -79,6 +79,7 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("night_king",     "🌙", "Король ночи",               "Обыграть всех игроков клуба за один день", category=CAT_MILESTONES, hidden=True),
     Achievement("throne_defended", "🛡", "Трон удержан",             "Отбиться от претендента в босс-файте", category=CAT_THRONE, hidden=True),
     Achievement("throne_denied",  "🚪", "Мимо трона",                "Проиграть босс-файт за трон, оставшись претендентом", category=CAT_THRONE, hidden=True),
+    Achievement("chance_blown",   "💸", "Просран шанс",              "Потерять статус претендента на трон, не дойдя до босс-файта", category=CAT_THRONE, hidden=True),
     Achievement("night_owl",      "🦉", "Полуночник",                "Выиграть матч, завершённый ночью (0:00–6:00 МСК)", category=CAT_SPECIAL, hidden=True),
     Achievement("deuce_storm",    "🌪", "Дьюсопад",                  "Выиграть матч, где каждая партия закончилась на дьюсе", category=CAT_SPECIAL, hidden=True),
     Achievement("no_rest_win",    "🔁", "Добивашка",                 "Выиграть матч, начатый в течение 10 минут после предыдущего с тем же соперником", category=CAT_SPECIAL, hidden=True),
@@ -622,6 +623,30 @@ async def check_boss_fight_challenger_defeat_achievement(challenger: Player) -> 
     return new_ids
 
 
+# ── Check after losing challenger status (before reaching a boss fight) ──────────
+
+async def check_chance_blown_achievement(ex_challenger: Player) -> list[str]:
+    """'Просран шанс' — игрок был претендентом на трон и перестал им быть, не
+    дойдя до босс-файта: чемпион обошёл его обратно очками, сам потерял очки
+    (в т.ч. проиграв кому-то другому — не обязательно чемпиону), или его тихо
+    обогнал по рейтингу третий игрок, вообще не игравший ни с чемпионом,
+    ни с ним самим.
+
+    Вызывается из confirm_result() (match_result.py) в общем хвосте, который
+    уже сравнивает претендента до/после матча (challenger_before/after) —
+    переиспользует тот же снапшот, что и уведомление «появился новый
+    претендент», только для противоположного случая. Не для боссфайтов —
+    поражение непосредственно в боссфайте даёт отдельную throne_denied.
+    Не восстанавливается бэкфиллом — та же причина, что у throne_denied.
+    """
+    earned = get_achievements(ex_challenger)
+    new_ids: list[str] = []
+    if _add_new(earned, "chance_blown"):
+        new_ids.append("chance_blown")
+        ex_challenger.achievements = json.dumps(earned)
+    return new_ids
+
+
 # ── Backfill ───────────────────────────────────────────────────────────────────
 
 async def backfill_achievements(session: AsyncSession) -> None:
@@ -630,9 +655,9 @@ async def backfill_achievements(session: AsyncSession) -> None:
     Идемпотентна: повторный вызов не изменит уже заработанные.
     Вызывается при старте из init_db().
 
-    Примечание: highlander, david_goliath, revenge и throne_denied не
-    восстанавливаются (требуют снапшоты рейтинга/роли на момент матча) —
-    будут начислены в реальном времени.
+    Примечание: highlander, david_goliath, revenge, throne_denied и
+    chance_blown не восстанавливаются (требуют снапшоты рейтинга/роли
+    на момент матча) — будут начислены в реальном времени.
     """
     players_r = await session.execute(
         select(Player).where(Player.backfill_version < BACKFILL_VERSION)
