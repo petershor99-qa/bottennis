@@ -887,6 +887,20 @@ def test_throne_distance_gap_when_below_champion():
     assert "200.0" in result
 
 
+def test_throne_distance_exact_tie_is_not_shown_as_arrived():
+    """РЕГРЕССИЯ: при <= рейтинг==чемпионскому давал «−0.0 pts», хотя
+    get_challenger() требует СТРОГО больше — тай ещё не даёт претендентства."""
+    champion = _player(1, "Champion", rating=1000.0)
+    champion.id = 1
+    tied = _player(2, "Tied", rating=1000.0)
+    tied.id = 2
+
+    result = _throne_distance_line(tied, champion, None, total_matches=20)
+    assert result is not None
+    assert "−0.0" not in result
+    assert "сравнялся" in result
+
+
 def test_throne_distance_needs_more_matches_when_above_champion():
     """Обогнал чемпиона по очкам, но не набрал порог матчей — претендента ВООБЩЕ нет."""
     champion = _player(1, "Champion", rating=1000.0)
@@ -2168,6 +2182,8 @@ async def test_h2h_milestone_egg_silent_on_non_round_count(db):
 # -- быстрый реванш --
 
 async def test_quick_rematch_egg_fires_within_10_minutes(db):
+    """Гэп меряется от СТАРТА текущего матча (created_at), а не от его конца —
+    та же семантика, что у ачивки no_rest_win."""
     p1, p2 = _player(1, "A"), _player(2, "B")
     db.add_all([p1, p2])
     await db.flush()
@@ -2175,12 +2191,41 @@ async def test_quick_rematch_egg_fires_within_10_minutes(db):
     db.add(prev)
     await db.commit()
 
-    current = _completed(p2, p1, p2.id, 5.0, datetime(2026, 6, 1, 12, 5, 0))
+    current = Match(
+        challenger_id=p2.id, challenged_id=p1.id, status=MatchStatus.completed,
+        winner_id=p2.id, sets_data=[{"w": 11, "l": 5}], rating_change=5.0,
+        created_at=datetime(2026, 6, 1, 12, 5, 0), completed_at=datetime(2026, 6, 1, 12, 5, 0),
+    )
     db.add(current)
     await db.commit()
 
     bot = AsyncMock()
-    await _send_quick_rematch_egg(bot, db, p1, p2, current.completed_at, current.id)
+    await _send_quick_rematch_egg(bot, db, p1, p2, current.created_at, current.id)
+    assert any("Не наигрался" in t for t in _texts(bot))
+
+
+async def test_quick_rematch_egg_fires_even_if_rematch_itself_runs_long(db):
+    """РЕГРЕССИЯ: раньше гэп мерился от completed_at этого матча — честный
+    быстрый реванш, который сам оказался долгим (много партий), не считался
+    «быстрым», хотя начался сразу после предыдущего."""
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    prev = _completed(p1, p2, p1.id, 5.0, datetime(2026, 6, 1, 12, 0, 0))
+    db.add(prev)
+    await db.commit()
+
+    # начат через 30 секунд после предыдущего, но сам матч тянулся 12 минут
+    current = Match(
+        challenger_id=p2.id, challenged_id=p1.id, status=MatchStatus.completed,
+        winner_id=p2.id, sets_data=[{"w": 11, "l": 5}], rating_change=5.0,
+        created_at=datetime(2026, 6, 1, 12, 0, 30), completed_at=datetime(2026, 6, 1, 12, 12, 30),
+    )
+    db.add(current)
+    await db.commit()
+
+    bot = AsyncMock()
+    await _send_quick_rematch_egg(bot, db, p1, p2, current.created_at, current.id)
     assert any("Не наигрался" in t for t in _texts(bot))
 
 
@@ -2192,12 +2237,16 @@ async def test_quick_rematch_egg_silent_when_gap_too_large(db):
     db.add(prev)
     await db.commit()
 
-    current = _completed(p2, p1, p2.id, 5.0, datetime(2026, 6, 1, 13, 0, 0))
+    current = Match(
+        challenger_id=p2.id, challenged_id=p1.id, status=MatchStatus.completed,
+        winner_id=p2.id, sets_data=[{"w": 11, "l": 5}], rating_change=5.0,
+        created_at=datetime(2026, 6, 1, 13, 0, 0), completed_at=datetime(2026, 6, 1, 13, 0, 0),
+    )
     db.add(current)
     await db.commit()
 
     bot = AsyncMock()
-    await _send_quick_rematch_egg(bot, db, p1, p2, current.completed_at, current.id)
+    await _send_quick_rematch_egg(bot, db, p1, p2, current.created_at, current.id)
     bot.send_message.assert_not_called()
 
 
@@ -2210,7 +2259,7 @@ async def test_quick_rematch_egg_silent_without_prior_match(db):
     await db.commit()
 
     bot = AsyncMock()
-    await _send_quick_rematch_egg(bot, db, p1, p2, current.completed_at, current.id)
+    await _send_quick_rematch_egg(bot, db, p1, p2, current.created_at, current.id)
     bot.send_message.assert_not_called()
 
 

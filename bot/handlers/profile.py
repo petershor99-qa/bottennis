@@ -324,7 +324,11 @@ def _throne_distance_line(
         return "🗡 Ты претендент — вызови чемпиона на босс-файт!"
     if player.rating <= champion.rating:
         gap = round(champion.rating - player.rating, 1)
-        return f"👑 До трона: −{gap} pts"
+        if gap > 0:
+            return f"👑 До трона: −{gap} pts"
+        # Точное совпадение рейтинга (gap == 0) — get_challenger() требует
+        # СТРОГО больше, ровно столько же ещё не считается «уже выше».
+        return "👑 До трона: рейтинг сравнялся с чемпионом — нужно чуть больше очков"
     # Рейтинг уже выше чемпиона — дело за порогом матчей или за тем, что
     # претендентское место сейчас занято кем-то ещё с рейтингом выше.
     if total_matches < NEWCOMER_THRESHOLD:
