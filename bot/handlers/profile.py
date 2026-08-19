@@ -23,12 +23,12 @@ from bot.services.achievements import (
 )
 from bot.utils import (
     NEWCOMER_THRESHOLD,
+    _challenger_among,
     _match_line,
     boss_fight_rematch_blocked,
     compute_ranks,
     format_rank,
     get_active_match,
-    get_champion_and_challenger,
     get_match_counts,
     get_player,
     match_rating_delta,
@@ -305,13 +305,19 @@ def _rank_gap_line(player: Player, players_all: list, ranks: dict[int, int]) -> 
     return f"📶 До #{my_rank - 1} (<b>{h(prev.display_name)}</b>): −{gap} pts"
 
 
-async def _throne_distance_line(session: AsyncSession, player: Player, total_matches: int) -> str | None:
+def _throne_distance_line(
+    player: Player, champion: Player | None, challenger_player: Player | None, total_matches: int,
+) -> str | None:
     """«До трона» — статус игрока в боссфайт-механике: сколько не хватает
     рейтинга/матчей до претендентства, либо призыв вызвать чемпиона, если
     претендент — уже сам игрок. None, если фича боссфайта не активирована
     (чемпион не назначен) или игрок сам чемпион (highlander уже это отражает).
+
+    champion/challenger_player — передаются вызывающим (уже посчитаны для
+    ranks/compute_ranks на этом же экране), а не считаются здесь заново —
+    иначе каждый просмотр статистики/профиля заново сканировал бы всю
+    историю матчей клуба через get_challenger().
     """
-    champion, challenger_player = await get_champion_and_challenger(session)
     if champion is None or champion.id == player.id:
         return None
     if challenger_player is not None and challenger_player.id == player.id:
@@ -393,11 +399,10 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
 
     players_all = (await session.execute(select(Player))).scalars().all()
     champion = next((p for p in players_all if p.is_champion), None)
-    ranks = compute_ranks(
-        players_all, await get_match_counts(session),
-        champion_id=champion.id if champion else None,
-    )
+    match_counts = await get_match_counts(session)
+    ranks = compute_ranks(players_all, match_counts, champion_id=champion.id if champion else None)
     rank_str = format_rank(ranks, player.id)
+    challenger_player = _challenger_among(players_all, champion, match_counts) if champion else None
 
     all_r = await session.execute(
         select(Match)
@@ -435,7 +440,9 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
     rank_gap = _rank_gap_line(player, players_all, ranks)
     if rank_gap:
         lines.append(rank_gap)
-    throne_line = await _throne_distance_line(session, player, s["wins"] + s["draws"] + s["losses"])
+    throne_line = _throne_distance_line(
+        player, champion, challenger_player, s["wins"] + s["draws"] + s["losses"]
+    )
     if throne_line:
         lines.append(throne_line)
 
@@ -490,11 +497,10 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
 
     players_all = (await session.execute(select(Player))).scalars().all()
     champion = next((p for p in players_all if p.is_champion), None)
-    ranks = compute_ranks(
-        players_all, await get_match_counts(session),
-        champion_id=champion.id if champion else None,
-    )
+    match_counts = await get_match_counts(session)
+    ranks = compute_ranks(players_all, match_counts, champion_id=champion.id if champion else None)
     rank_str = format_rank(ranks, player.id)
+    challenger_player = _challenger_among(players_all, champion, match_counts) if champion else None
 
     all_r = await session.execute(
         select(Match)
@@ -523,7 +529,9 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
     rank_gap = _rank_gap_line(player, players_all, ranks)
     if rank_gap:
         lines.append(rank_gap)
-    throne_line = await _throne_distance_line(session, player, s["wins"] + s["draws"] + s["losses"])
+    throne_line = _throne_distance_line(
+        player, champion, challenger_player, s["wins"] + s["draws"] + s["losses"]
+    )
     if throne_line:
         lines.append(throne_line)
 

@@ -176,7 +176,25 @@ async def get_champion(session: AsyncSession) -> Player | None:
     return r.scalar_one_or_none()
 
 
-async def get_challenger(session: AsyncSession, champion: Player | None) -> Player | None:
+def _challenger_among(candidates: list[Player], champion: Player, match_counts: dict[int, int]) -> Player | None:
+    """Претендент среди уже загруженного списка игроков — та же логика, что и
+    get_challenger(), но без похода в БД. Для мест, где players_all и
+    match_counts уже на руках (профиль/статистика) — экономит повторный
+    полный скан завершённых матчей на каждый просмотр экрана."""
+    eligible = [
+        p for p in candidates
+        if p.id != champion.id and p.rating > champion.rating
+        and match_counts.get(p.id, 0) >= NEWCOMER_THRESHOLD
+    ]
+    if not eligible:
+        return None
+    eligible.sort(key=lambda p: (-p.rating, p.id))
+    return eligible[0]
+
+
+async def get_challenger(
+    session: AsyncSession, champion: Player | None, match_counts: dict[int, int] | None = None,
+) -> Player | None:
     """Претендент — игрок, обошедший чемпиона по очкам и имеющий право вызвать
     его на босс-файт. Условия: не чемпион, рейтинг строго выше чемпионского,
     ≥NEWCOMER_THRESHOLD завершённых матчей. При равенстве рейтинга — меньший id.
@@ -184,18 +202,17 @@ async def get_challenger(session: AsyncSession, champion: Player | None) -> Play
     None, если чемпиона нет ВООБЩЕ, либо если единственные кандидаты выше
     чемпиона по очкам не набрали порог матчей (претендент НЕ откатывается на
     следующего по рейтингу — право появляется только по достижении порога).
+
+    match_counts — передать уже посчитанный словарь, если он есть у вызывающего
+    (иначе считается заново полным сканом завершённых матчей).
     """
     if champion is None:
         return None
-    counts = await get_match_counts(session)
+    counts = match_counts if match_counts is not None else await get_match_counts(session)
     r = await session.execute(
         select(Player).where(Player.id != champion.id, Player.rating > champion.rating)
     )
-    candidates = [p for p in r.scalars().all() if counts.get(p.id, 0) >= NEWCOMER_THRESHOLD]
-    if not candidates:
-        return None
-    candidates.sort(key=lambda p: (-p.rating, p.id))
-    return candidates[0]
+    return _challenger_among(r.scalars().all(), champion, counts)
 
 
 async def _close_open_reign(session: AsyncSession, ended_at: datetime) -> None:
