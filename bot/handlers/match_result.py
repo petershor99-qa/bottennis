@@ -791,6 +791,225 @@ async def redo_result(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+# ── confirm_result — извлечённые под-блоки ────────────────────────────────────
+# Разбито на именованные корутины (не меняя поведения) — сама confirm_result
+# разрослась до ~480 строк одним куском (ветка ничьей + победы + трон + ачивки +
+# пасхалки), каждое добавление было маленьким и оправданным само по себе, но
+# сумма уже плохо читалась. Расчёт рейтинга и мутация Match/Player намеренно
+# остаются прямо в confirm_result — самая чувствительная часть, трогать её
+# лишний раз не нужно; извлечены только более «листовые» блоки уведомлений/
+# ачивок/пасхалок.
+
+async def _handle_boss_fight_outcome(
+    session: AsyncSession, bot: Bot, match: Match,
+    challenger: Player, challenged: Player, winner: Player, loser: Player,
+) -> None:
+    """Боссфайт: перенос трона + клубное уведомление об исходе + ачивки защиты/поражения претендента.
+
+    is_champion берём с challenger/challenged ДО этого блока — рейтинги уже
+    обновлены и закоммичены выше (в confirm_result), но флаг трона ещё не
+    тронут, поэтому тут он всё ещё отражает истинное положение на момент
+    старта этого матча.
+    """
+    champion_role = challenger if challenger.is_champion else (
+        challenged if challenged.is_champion else None
+    )
+    bf_result_text = None
+    if champion_role is not None:
+        if winner.id != champion_role.id:
+            # CAS: если трон уже сменился где-то ещё (гонка с авто-освобождением
+            # трона, scheduler.py) — не додаём его насильно поверх; исход этого
+            # конкретного боссфайта в плане трона устарел, рейтинг уже применён.
+            if await try_transfer_champion(
+                session, champion_role.id, winner.id, at=match.completed_at
+            ):
+                await session.commit()
+                bf_result_text = f"👑 <b>Новый чемпион — {h(winner.display_name)}!</b>"
+        else:
+            bf_result_text = (
+                f"🛡 <b>Трон удержан!</b> {h(winner.display_name)} остаётся чемпионом."
+            )
+            new_ach_defense = await check_boss_fight_defense_achievement(winner)
+            if new_ach_defense:
+                await session.commit()
+                await _notify_achievements(bot, winner, new_ach_defense)
+            # loser здесь по построению — проигравший претендент (winner
+            # уже подтверждён как champion_role в этой ветке "трон удержан")
+            new_ach_denied = await check_boss_fight_challenger_defeat_achievement(loser)
+            if new_ach_denied:
+                await session.commit()
+                await _notify_achievements(bot, loser, new_ach_denied)
+    if bf_result_text is not None:
+        await notify_all_players(bot, session, bf_result_text)
+
+
+async def _award_draw_achievements_and_eggs(
+    session: AsyncSession, bot: Bot, challenger: Player, challenged: Player,
+    final_sets: list, match: Match, match_id: int,
+) -> None:
+    """Достижения обоих участников ничьей + пасхалки (Договорнячок / марафон /
+    7 матчей за день / время / H2H-юбилей / быстрый реванш)."""
+    new_ch_ach = await check_draw_achievements(session, challenger, final_sets, is_challenger=True)
+    new_cd_ach = await check_draw_achievements(session, challenged, final_sets, is_challenger=False)
+    await session.commit()
+    await _notify_achievements(bot, challenger, new_ch_ach)
+    await _notify_achievements(bot, challenged, new_cd_ach)
+
+    # Пасхалка — ничья
+    for p in (challenger, challenged):
+        try:
+            await bot.send_message(p.telegram_id, "🤝 Договорнячок")
+        except Exception:
+            pass
+
+    # Пасхалка — марафон (5+ партий) при ничье
+    marathon = len(final_sets) >= 5
+    if marathon:
+        for p in (challenger, challenged):
+            try:
+                await bot.send_message(p.telegram_id, "🕰 Три часа спустя…")
+            except Exception:
+                pass
+
+    # Пасхалка — 7 матчей за день (ничья)
+    today_start = msk_day_start()
+    for p in (challenger, challenged):
+        today_count_r = await session.execute(
+            select(func.count()).select_from(Match).where(
+                or_(Match.challenger_id == p.id, Match.challenged_id == p.id),
+                Match.status == MatchStatus.completed,
+                Match.completed_at >= today_start,
+            )
+        )
+        if today_count_r.scalar() == 7:
+            try:
+                await bot.send_message(p.telegram_id, "7 матчей за сегодня! А поработать не хочешь? 😄")
+            except Exception:
+                pass
+
+    await _send_time_based_eggs(bot, [challenger, challenged], match.completed_at)
+    await _send_h2h_milestone_egg(bot, session, challenger, challenged)
+    await _send_quick_rematch_egg(bot, session, challenger, challenged, match.completed_at, match_id)
+
+
+async def _award_win_achievements_and_eggs(
+    session: AsyncSession, bot: Bot, winner: Player, loser: Player,
+    final_sets: list, match: Match, match_id: int,
+    old_winner_rating: float, old_loser_rating: float,
+    winner_db_id: int, loser_db_id: int,
+) -> None:
+    """Достижения победителя/проигравшего, пасхалки после победы, уведомление
+    о серии побед над одним соперником, кратной 10."""
+    new_ach_winner = await check_win_achievements(
+        session, winner, loser, final_sets, match, old_winner_rating, old_loser_rating,
+    )
+    new_ach_loser = await check_loss_achievements(session, loser, final_sets)
+    await session.commit()
+    await _notify_achievements(bot, winner, new_ach_winner)
+    await _notify_achievements(bot, loser, new_ach_loser)
+
+    await _send_easter_eggs(
+        bot, session, winner, loser, old_winner_rating, old_loser_rating, final_sets, match_id,
+        completed_at=match.completed_at,
+    )
+
+    # Проверка серии побед над одним соперником
+    r_series = await session.execute(
+        select(Match)
+        .where(
+            Match.status == MatchStatus.completed,
+            or_(
+                and_(Match.challenger_id == winner_db_id, Match.challenged_id == loser_db_id),
+                and_(Match.challenger_id == loser_db_id, Match.challenged_id == winner_db_id),
+            ),
+        )
+        .order_by(desc(Match.completed_at))
+    )
+    series_matches = r_series.scalars().all()
+
+    consecutive = 0
+    for m in series_matches:
+        if m.winner_id == winner_db_id:
+            consecutive += 1
+        else:
+            break
+
+    if consecutive > 0 and consecutive % 10 == 0:
+        try:
+            await bot.send_message(
+                winner.telegram_id,
+                f"💀 <b>То что мертво — умереть не может.</b>\n\n"
+                f"Ты победил <b>{h(loser.display_name)}</b> уже {consecutive} раз подряд.\n"
+                f"Попробуй выбрать ещё какого-нибудь соперника 😏",
+            )
+        except Exception:
+            pass
+
+
+async def _notify_challenger_status_change(
+    session: AsyncSession, bot: Bot, match: Match,
+    challenger_before: Player | None, challenger_before_id: int | None,
+) -> None:
+    """Уведомления о смене претендента после матча — «обошёл чемпиона» и «Просран
+    шанс» / «ПОТРАЧЕНО». Только если личность претендента РЕАЛЬНО изменилась
+    (антиспам) — иначе каждый обычный матч претендента слал бы повторные уведомления.
+    """
+    champion_after = await get_champion(session)
+    challenger_after = await get_challenger(session, champion_after)
+    challenger_after_id = challenger_after.id if challenger_after else None
+    if challenger_after_id is not None and challenger_after_id != challenger_before_id:
+        try:
+            await bot.send_message(
+                challenger_after.telegram_id,
+                "⚔️ <b>Ты обошёл чемпиона по очкам!</b>\n"
+                "Чтобы занять 1-е место, победи его в босс-файте.",
+            )
+        except Exception:
+            pass
+        try:
+            await bot.send_message(
+                champion_after.telegram_id,
+                f"⚔️ Тебя догнал по очкам <b>{h(challenger_after.display_name)}</b> — "
+                f"он может вызвать тебя на босс-файт.",
+            )
+        except Exception:
+            pass
+
+    # ── Претендент потерял статус, не дойдя до боссфайта — «Просран шанс» ──────
+    # Не для боссфайтов: поражение НЕПОСРЕДСТВЕННО в боссфайте уже даёт
+    # throne_denied в отдельной ветке выше — не дублируем два уведомления
+    # на одно и то же событие. Независимый if (не elif к блоку выше) — оба
+    # случая могут сработать за один матч: старый претендент проиграл, а
+    # победитель этим же результатом обогнал чемпиона и стал новым претендентом.
+    #
+    # Осознанно ловит НЕ ТОЛЬКО «чемпион обогнал обратно» и «претендент
+    # проиграл» — переиспользует challenger_before/after, который уже
+    # пересчитывается после КАЖДОГО завершённого матча в клубе (это фича
+    # уведомления «ты обошёл чемпиона» чуть выше). Раз дорогая часть
+    # (пересчёт get_challenger) уже оплачена, честный обгон претендента
+    # ТРЕТЬЕЙ стороной (двое посторонних сыграли между собой) тоже ловится —
+    # без этого пришлось бы искусственно резать до двух случаев без всякой
+    # экономии на запросах. См. test_chance_blown_also_fires_on_third_party_overtake.
+    if (
+        not match.is_boss_fight
+        and challenger_before_id is not None
+        and challenger_before_id != challenger_after_id
+    ):
+        new_ach_blown = await check_chance_blown_achievement(challenger_before)
+        if new_ach_blown:
+            await session.commit()
+            await _notify_achievements(bot, challenger_before, new_ach_blown)
+        try:
+            await bot.send_message(
+                challenger_before.telegram_id,
+                "💸 <b>ПОТРАЧЕНО.</b>\n\n"
+                "Твой шанс вызвать чемпиона на босс-файт только что испарился — "
+                "ты выпал из претендентов, не дойдя до боссфайта.",
+            )
+        except Exception:
+            pass
+
+
 @router.callback_query(F.data.startswith("confirm_"), MatchResultStates.confirming)
 async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: FSMContext, bot: Bot):
     try:
@@ -952,48 +1171,10 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
         except Exception:
             pass
 
-        # Достижения — ничья
-        new_ch_ach = await check_draw_achievements(session, challenger, final_sets, is_challenger=True)
-        new_cd_ach = await check_draw_achievements(session, challenged, final_sets, is_challenger=False)
-        await session.commit()
-        await _notify_achievements(bot, challenger, new_ch_ach)
-        await _notify_achievements(bot, challenged, new_cd_ach)
-
-        # Пасхалка — ничья
-        for p in (challenger, challenged):
-            try:
-                await bot.send_message(p.telegram_id, "🤝 Договорнячок")
-            except Exception:
-                pass
-
-        # Пасхалка — марафон (5+ партий) при ничье
-        marathon = len(final_sets) >= 5
-        if marathon:
-            for p in (challenger, challenged):
-                try:
-                    await bot.send_message(p.telegram_id, "🕰 Три часа спустя…")
-                except Exception:
-                    pass
-
-        # Пасхалка — 7 матчей за день (ничья)
-        today_start = msk_day_start()
-        for p in (challenger, challenged):
-            today_count_r = await session.execute(
-                select(func.count()).select_from(Match).where(
-                    or_(Match.challenger_id == p.id, Match.challenged_id == p.id),
-                    Match.status == MatchStatus.completed,
-                    Match.completed_at >= today_start,
-                )
-            )
-            if today_count_r.scalar() == 7:
-                try:
-                    await bot.send_message(p.telegram_id, "7 матчей за сегодня! А поработать не хочешь? 😄")
-                except Exception:
-                    pass
-
-        await _send_time_based_eggs(bot, [challenger, challenged], match.completed_at)
-        await _send_h2h_milestone_egg(bot, session, challenger, challenged)
-        await _send_quick_rematch_egg(bot, session, challenger, challenged, match.completed_at, match_id)
+        # Достижения обоих участников + пасхалки ничьей
+        await _award_draw_achievements_and_eggs(
+            session, bot, challenger, challenged, final_sets, match, match_id,
+        )
 
     else:
         # Определяем победителя с учётом инверсии (reporter мог проиграть)
@@ -1085,41 +1266,9 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
         await session.commit()
         await state.clear()
 
-        # ── Босс-файт: перенос трона + клубное уведомление об исходе ───────────
-        # is_champion берём с challenger/challenged ДО этого блока — рейтинги уже
-        # обновлены и закоммичены выше, но флаг трона ещё не тронут, поэтому тут
-        # он всё ещё отражает истинное положение на момент старта этого матча.
+        # ── Босс-файт: перенос трона + клубное уведомление об исходе + ачивки ──
         if match.is_boss_fight:
-            champion_role = challenger if challenger.is_champion else (
-                challenged if challenged.is_champion else None
-            )
-            bf_result_text = None
-            if champion_role is not None:
-                if winner.id != champion_role.id:
-                    # CAS: если трон уже сменился где-то ещё (гонка с авто-освобождением
-                    # трона, scheduler.py) — не додаём его насильно поверх; исход этого
-                    # конкретного боссфайта в плане трона устарел, рейтинг уже применён.
-                    if await try_transfer_champion(
-                        session, champion_role.id, winner.id, at=match.completed_at
-                    ):
-                        await session.commit()
-                        bf_result_text = f"👑 <b>Новый чемпион — {h(winner.display_name)}!</b>"
-                else:
-                    bf_result_text = (
-                        f"🛡 <b>Трон удержан!</b> {h(winner.display_name)} остаётся чемпионом."
-                    )
-                    new_ach_defense = await check_boss_fight_defense_achievement(winner)
-                    if new_ach_defense:
-                        await session.commit()
-                        await _notify_achievements(bot, winner, new_ach_defense)
-                    # loser здесь по построению — проигравший претендент (winner
-                    # уже подтверждён как champion_role в этой ветке "трон удержан")
-                    new_ach_denied = await check_boss_fight_challenger_defeat_achievement(loser)
-                    if new_ach_denied:
-                        await session.commit()
-                        await _notify_achievements(bot, loser, new_ach_denied)
-            if bf_result_text is not None:
-                await notify_all_players(bot, session, bf_result_text)
+            await _handle_boss_fight_outcome(session, bot, match, challenger, challenged, winner, loser)
 
         actual_loser_delta = round(old_loser_rating - loser.rating, 1)
         loser_delta_str = f"-{actual_loser_delta}" if actual_loser_delta > 0 else "0.0"
@@ -1164,109 +1313,13 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             except Exception:
                 pass
 
-        # Достижения победителя и проигравшего
-        new_ach_winner = await check_win_achievements(
-            session, winner, loser, final_sets, match, old_winner_rating, old_loser_rating,
-        )
-        new_ach_loser = await check_loss_achievements(session, loser, final_sets)
-        await session.commit()
-        await _notify_achievements(bot, winner, new_ach_winner)
-        await _notify_achievements(bot, loser, new_ach_loser)
-
-        # Пасхалки после победы
-        await _send_easter_eggs(
-            bot, session, winner, loser, old_winner_rating, old_loser_rating, final_sets, match_id,
-            completed_at=match.completed_at,
+        # Достижения победителя/проигравшего, пасхалки, серия 10x подряд
+        await _award_win_achievements_and_eggs(
+            session, bot, winner, loser, final_sets, match, match_id,
+            old_winner_rating, old_loser_rating, winner_db_id, loser_db_id,
         )
 
-        # Проверка серии побед над одним соперником
-        r_series = await session.execute(
-            select(Match)
-            .where(
-                Match.status == MatchStatus.completed,
-                or_(
-                    and_(Match.challenger_id == winner_db_id, Match.challenged_id == loser_db_id),
-                    and_(Match.challenger_id == loser_db_id, Match.challenged_id == winner_db_id),
-                ),
-            )
-            .order_by(desc(Match.completed_at))
-        )
-        series_matches = r_series.scalars().all()
-
-        consecutive = 0
-        for m in series_matches:
-            if m.winner_id == winner_db_id:
-                consecutive += 1
-            else:
-                break
-
-        if consecutive > 0 and consecutive % 10 == 0:
-            try:
-                await bot.send_message(
-                    winner.telegram_id,
-                    f"💀 <b>То что мертво — умереть не может.</b>\n\n"
-                    f"Ты победил <b>{h(loser.display_name)}</b> уже {consecutive} раз подряд.\n"
-                    f"Попробуй выбрать ещё какого-нибудь соперника 😏",
-                )
-            except Exception:
-                pass
-
-    # ── Претендент появился/сменился — уведомляем обгоняющего и чемпиона ───────
-    # Только если личность претендента РЕАЛЬНО изменилась (антиспам) — иначе
-    # каждый обычный матч претендента слал бы повторные уведомления.
-    champion_after = await get_champion(session)
-    challenger_after = await get_challenger(session, champion_after)
-    challenger_after_id = challenger_after.id if challenger_after else None
-    if challenger_after_id is not None and challenger_after_id != challenger_before_id:
-        try:
-            await bot.send_message(
-                challenger_after.telegram_id,
-                "⚔️ <b>Ты обошёл чемпиона по очкам!</b>\n"
-                "Чтобы занять 1-е место, победи его в босс-файте.",
-            )
-        except Exception:
-            pass
-        try:
-            await bot.send_message(
-                champion_after.telegram_id,
-                f"⚔️ Тебя догнал по очкам <b>{h(challenger_after.display_name)}</b> — "
-                f"он может вызвать тебя на босс-файт.",
-            )
-        except Exception:
-            pass
-
-    # ── Претендент потерял статус, не дойдя до боссфайта — «Просран шанс» ──────
-    # Не для боссфайтов: поражение НЕПОСРЕДСТВЕННО в боссфайте уже даёт
-    # throne_denied в отдельной ветке выше — не дублируем два уведомления
-    # на одно и то же событие. Независимый if (не elif к блоку выше) — оба
-    # случая могут сработать за один матч: старый претендент проиграл, а
-    # победитель этим же результатом обогнал чемпиона и стал новым претендентом.
-    #
-    # Осознанно ловит НЕ ТОЛЬКО «чемпион обогнал обратно» и «претендент
-    # проиграл» — переиспользует challenger_before/after, который уже
-    # пересчитывается после КАЖДОГО завершённого матча в клубе (это фича
-    # уведомления «ты обошёл чемпиона» чуть выше). Раз дорогая часть
-    # (пересчёт get_challenger) уже оплачена, честный обгон претендента
-    # ТРЕТЬЕЙ стороной (двое посторонних сыграли между собой) тоже ловится —
-    # без этого пришлось бы искусственно резать до двух случаев без всякой
-    # экономии на запросах. См. test_chance_blown_also_fires_on_third_party_overtake.
-    if (
-        not match.is_boss_fight
-        and challenger_before_id is not None
-        and challenger_before_id != challenger_after_id
-    ):
-        new_ach_blown = await check_chance_blown_achievement(challenger_before)
-        if new_ach_blown:
-            await session.commit()
-            await _notify_achievements(bot, challenger_before, new_ach_blown)
-        try:
-            await bot.send_message(
-                challenger_before.telegram_id,
-                "💸 <b>ПОТРАЧЕНО.</b>\n\n"
-                "Твой шанс вызвать чемпиона на босс-файт только что испарился — "
-                "ты выпал из претендентов, не дойдя до боссфайта.",
-            )
-        except Exception:
-            pass
+    # Смена претендента — «обошёл чемпиона» / «Просран шанс» / «ПОТРАЧЕНО»
+    await _notify_challenger_status_change(session, bot, match, challenger_before, challenger_before_id)
 
     await callback.answer()
