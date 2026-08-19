@@ -22,11 +22,13 @@ from bot.services.achievements import (
     get_achievements,
 )
 from bot.utils import (
+    NEWCOMER_THRESHOLD,
     _match_line,
     boss_fight_rematch_blocked,
     compute_ranks,
     format_rank,
     get_active_match,
+    get_champion_and_challenger,
     get_match_counts,
     get_player,
     match_rating_delta,
@@ -65,18 +67,25 @@ def _compute_player_stats(player, all_matches: list) -> dict:
             break
 
     sets_won = sets_total = 0
+    deuce_total = deuce_won = 0
     for m in all_matches:
         if m.sets_data:
             i_am_ch = m.challenger_id == player.id
             i_am_winner = m.winner_id == player.id
             for s in m.sets_data:
                 sets_total += 1
-                if m.winner_id is None:
-                    if (i_am_ch and s["w"] > s["l"]) or (not i_am_ch and s["l"] > s["w"]):
-                        sets_won += 1
-                else:
-                    if (i_am_winner and s["w"] > s["l"]) or (not i_am_winner and s["l"] > s["w"]):
-                        sets_won += 1
+                won_this_set = (
+                    (i_am_ch and s["w"] > s["l"]) or (not i_am_ch and s["l"] > s["w"])
+                    if m.winner_id is None else
+                    (i_am_winner and s["w"] > s["l"]) or (not i_am_winner and s["l"] > s["w"])
+                )
+                if won_this_set:
+                    sets_won += 1
+                # Дьюс: партия дошла до 10:10+ и выиграна с отрывом ровно 2
+                if max(s["w"], s["l"]) >= 12 and abs(s["w"] - s["l"]) == 2:
+                    deuce_total += 1
+                    if won_this_set:
+                        deuce_won += 1
 
     opp_stats: dict[int, dict] = {}
     for m in all_matches:
@@ -107,6 +116,12 @@ def _compute_player_stats(player, all_matches: list) -> dict:
         [m for m in all_matches if m.completed_at and m.completed_at >= week_ago],
         key=lambda m: m.completed_at,
     )
+
+    # Тренд за 30 дней — отдельно от «за карьеру»: тот копится бесконечно и
+    # не показывает, как дела ПРЯМО СЕЙЧАС.
+    month_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=30)
+    recent_30 = [m for m in all_matches if m.completed_at and m.completed_at >= month_ago]
+    trend_30d = round(sum(match_rating_delta(m, player.id) for m in recent_30), 1) if recent_30 else None
 
     best_streak = cur_s = 0
     for m in reversed(all_matches):
@@ -167,6 +182,8 @@ def _compute_player_stats(player, all_matches: list) -> dict:
         "best_day": best_day, "best_day_count": best_day_count,
         "beaten_opponents_count": beaten_opponents_count,
         "boss_fights_played": len(boss_fights), "boss_fights_won": boss_fight_wins,
+        "trend_30d": trend_30d, "trend_30d_matches": len(recent_30),
+        "deuce_total": deuce_total, "deuce_won": deuce_won,
     }
 
 
@@ -225,6 +242,11 @@ def _render_stats_lines(player, s: dict) -> list[str]:
 
     if player.peak_rating and player.peak_rating > player.rating:
         rating_lines.append(f"📈 Пик рейтинга: <b>{round(player.peak_rating, 1)}</b> pts")
+    if s["trend_30d"] is not None:
+        sign = "+" if s["trend_30d"] >= 0 else ""
+        rating_lines.append(
+            f"📅 За 30 дней: <b>{sign}{s['trend_30d']} pts</b> ({s['trend_30d_matches']} матчей)"
+        )
     avg_delta = s["avg_delta"]
     if avg_delta is not None:
         sign = "+" if avg_delta >= 0 else ""
@@ -240,6 +262,8 @@ def _render_stats_lines(player, s: dict) -> list[str]:
 
     if s["total_sets_played"] > 0:
         misc_lines.append(f"🎮 Партий сыграно: <b>{s['total_sets_played']}</b>")
+    if s["deuce_total"] > 0:
+        misc_lines.append(f"🎢 Партий на дьюсе: <b>{s['deuce_total']}</b> (выиграно {s['deuce_won']})")
     if s["first_set_conv"] is not None:
         misc_lines.append(f"⚡ После 1-й партии: <b>{s['first_set_conv']}%</b> побед")
     if s["fav_format"]:
@@ -256,6 +280,58 @@ def _render_stats_lines(player, s: dict) -> list[str]:
                 lines.append("")
             lines.extend(group)
     return lines
+
+
+# ── Разрыв до соседей по таблице / до трона ───────────────────────────────────
+
+def _rank_gap_line(player: Player, players_all: list, ranks: dict[int, int]) -> str | None:
+    """«До следующего места» — разрыв в рейтинге до игрока рангом выше.
+
+    При пиннинге чемпиона (боссфайт — #1 не пересчитывается на лету) ранг НЕ
+    всегда соответствует сырому рейтингу: игрок рангом выше может иметь более
+    низкий сырой рейтинг, чем ты (см. фикс сортировки списка вызова, v2.93.0).
+    Если разрыв получается <= 0 — не показываем строку, чтобы не путать
+    отрицательным «разрывом» (тебя обгоняют по позиции не по очкам, а по трону).
+    """
+    my_rank = ranks.get(player.id)
+    if not my_rank or my_rank <= 1:
+        return None
+    prev = next((p for p in players_all if ranks.get(p.id) == my_rank - 1), None)
+    if not prev:
+        return None
+    gap = round(prev.rating - player.rating, 1)
+    if gap <= 0:
+        return None
+    return f"📶 До #{my_rank - 1} (<b>{h(prev.display_name)}</b>): −{gap} pts"
+
+
+async def _throne_distance_line(session: AsyncSession, player: Player, total_matches: int) -> str | None:
+    """«До трона» — статус игрока в боссфайт-механике: сколько не хватает
+    рейтинга/матчей до претендентства, либо призыв вызвать чемпиона, если
+    претендент — уже сам игрок. None, если фича боссфайта не активирована
+    (чемпион не назначен) или игрок сам чемпион (highlander уже это отражает).
+    """
+    champion, challenger_player = await get_champion_and_challenger(session)
+    if champion is None or champion.id == player.id:
+        return None
+    if challenger_player is not None and challenger_player.id == player.id:
+        return "🗡 Ты претендент — вызови чемпиона на босс-файт!"
+    if player.rating <= champion.rating:
+        gap = round(champion.rating - player.rating, 1)
+        return f"👑 До трона: −{gap} pts"
+    # Рейтинг уже выше чемпиона — дело за порогом матчей или за тем, что
+    # претендентское место сейчас занято кем-то ещё с рейтингом выше.
+    if total_matches < NEWCOMER_THRESHOLD:
+        left = NEWCOMER_THRESHOLD - total_matches
+        return f"🗡 До статуса претендента: рейтинг уже выше чемпиона, не хватает матчей ({left})"
+    if challenger_player is not None:
+        gap = round(challenger_player.rating - player.rating, 1)
+        if gap > 0:
+            return (
+                f"🗡 До статуса претендента: −{gap} pts "
+                f"(сейчас впереди <b>{h(challenger_player.display_name)}</b>)"
+            )
+    return None
 
 
 # ── Achievement progress ──────────────────────────────────────────────────────
@@ -356,6 +432,13 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
 
     lines.extend(_render_stats_lines(player, s))
 
+    rank_gap = _rank_gap_line(player, players_all, ranks)
+    if rank_gap:
+        lines.append(rank_gap)
+    throne_line = await _throne_distance_line(session, player, s["wins"] + s["draws"] + s["losses"])
+    if throne_line:
+        lines.append(throne_line)
+
     progress = _nearest_achievement_progress(player, s, len(players_all))
     if progress:
         lines.append(progress)
@@ -436,6 +519,13 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
     ]
 
     lines.extend(_render_stats_lines(player, s))
+
+    rank_gap = _rank_gap_line(player, players_all, ranks)
+    if rank_gap:
+        lines.append(rank_gap)
+    throne_line = await _throne_distance_line(session, player, s["wins"] + s["draws"] + s["losses"])
+    if throne_line:
+        lines.append(throne_line)
 
     if matches:
         lines.append("\n<b>Последние матчи:</b>")
