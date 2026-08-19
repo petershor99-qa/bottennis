@@ -334,10 +334,18 @@ async def _send_h2h_milestone_egg(bot: Bot, session: AsyncSession, p1: Player, p
 
 
 async def _send_quick_rematch_egg(
-    bot: Bot, session: AsyncSession, p1: Player, p2: Player, completed_at: datetime, match_id: int
+    bot: Bot, session: AsyncSession, p1: Player, p2: Player, created_at: datetime, match_id: int
 ) -> None:
-    """Пасхалка: та же пара сыграла повторно в течение 10 минут после предыдущего матча."""
-    if completed_at is None:
+    """Пасхалка: та же пара сыграла повторно в течение 10 минут после предыдущего матча.
+
+    Сравнивает СТАРТ этого матча (created_at) с ОКОНЧАНИЕМ предыдущего —
+    та же семантика, что у ачивки no_rest_win (achievements.py). Раньше тут
+    ошибочно использовался completed_at этого матча — из-за этого пасхалка
+    могла не сработать для честного быстрого реванша, если сам матч-реванш
+    оказался долгим (гэп мерился от конца затянувшегося матча, а не от его
+    старта сразу после предыдущего).
+    """
+    if created_at is None:
         return
     r = await session.execute(
         select(Match)
@@ -355,7 +363,7 @@ async def _send_quick_rematch_egg(
     prev = r.scalar_one_or_none()
     if prev is None or not prev.completed_at:
         return
-    gap = (completed_at - prev.completed_at).total_seconds()
+    gap = (created_at - prev.completed_at).total_seconds()
     if not (0 <= gap <= 600):
         return
     for p in (p1, p2):
@@ -375,6 +383,7 @@ async def _send_easter_eggs(
     final_sets: list[dict],
     match_id: int,
     completed_at: datetime | None = None,
+    created_at: datetime | None = None,
 ) -> None:
     """Пасхалки после матча — победителю, проигравшему и обоим."""
     ctx = await _collect_egg_context(
@@ -409,7 +418,8 @@ async def _send_easter_eggs(
     if completed_at is not None:
         await _send_time_based_eggs(bot, [winner, loser], completed_at)
         await _send_h2h_milestone_egg(bot, session, winner, loser)
-        await _send_quick_rematch_egg(bot, session, winner, loser, completed_at, match_id)
+    if created_at is not None:
+        await _send_quick_rematch_egg(bot, session, winner, loser, created_at, match_id)
 
 
 def _restart_notice_kb() -> InlineKeyboardMarkup:
@@ -889,7 +899,7 @@ async def _award_draw_achievements_and_eggs(
 
     await _send_time_based_eggs(bot, [challenger, challenged], match.completed_at)
     await _send_h2h_milestone_egg(bot, session, challenger, challenged)
-    await _send_quick_rematch_egg(bot, session, challenger, challenged, match.completed_at, match_id)
+    await _send_quick_rematch_egg(bot, session, challenger, challenged, match.created_at, match_id)
 
 
 async def _award_win_achievements_and_eggs(
@@ -910,7 +920,7 @@ async def _award_win_achievements_and_eggs(
 
     await _send_easter_eggs(
         bot, session, winner, loser, old_winner_rating, old_loser_rating, final_sets, match_id,
-        completed_at=match.completed_at,
+        completed_at=match.completed_at, created_at=match.created_at,
     )
 
     # Проверка серии побед над одним соперником
