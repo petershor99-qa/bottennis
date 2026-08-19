@@ -1136,6 +1136,29 @@ async def test_challenge_list_hides_champion_when_rematch_blocked(db):
     assert not any(champion.display_name in t for t in texts)
 
 
+async def test_challenge_list_order_matches_displayed_rank(db):
+    """РЕГРЕССИЯ: список сортировался по сырому рейтингу, а показанный #N —
+    по compute_ranks (учитывает пиннинг чемпиона). Из-за этого чемпион с более
+    низким сырым рейтингом мог показывать #1, но стоять НИЖЕ в списке игрока
+    с рангом #2. Список должен идти в том же порядке, что и ранги."""
+    champion = _player(1, "Champion", rating=1000.0)
+    champion.is_champion = True
+    strong = _player(2, "Strong", rating=1500.0)  # выше чемпиона по рейтингу, но ранг #2
+    viewer = _player(3, "Viewer", rating=900.0)
+    db.add_all([champion, strong, viewer])
+    await db.flush()
+    await db.commit()
+
+    cb = _callback(viewer.telegram_id, "menu_play")
+    await show_players_for_challenge(cb, db)
+
+    kb = cb.message.edit_text.await_args.kwargs["reply_markup"]
+    texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    champ_idx = next(i for i, t in enumerate(texts) if "Champion" in t)
+    strong_idx = next(i for i, t in enumerate(texts) if "Strong" in t)
+    assert champ_idx < strong_idx
+
+
 async def test_profile_can_challenge_false_when_rematch_blocked(db):
     champion, challenger_p = await _bf_pair_with_block(db)
 

@@ -18,6 +18,7 @@ from bot.keyboards.inline import (
 from bot.services.achievements import ACHIEVEMENTS_MAP, check_cancel_achievements
 from bot.services.rating import win_probability
 from bot.utils import (
+    _pin_champion,
     boss_fight_rematch_blocked,
     compute_ranks,
     get_active_match,
@@ -155,6 +156,13 @@ async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSess
     # иначе кнопка «Вызвать» на его строке вела бы в тот же тупик.
     if viewer_champion_blocked:
         others = [p for p in others if p.id != champion.id]
+
+    # Список сортирован по сырому рейтингу, но показанный рядом ранг #N уже
+    # учитывает пиннинг чемпиона (compute_ranks) — без этого шага порядок
+    # строк расходился с рангом: чемпион мог показывать #1, стоя НИЖЕ игрока
+    # с более высоким сырым рейтингом (но рангом #2). Тот же приём, что и на
+    # лидерборде (leaderboard.py).
+    others = _pin_champion(others, champion_id)
 
     await callback.message.edit_text(
         header,

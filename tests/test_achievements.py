@@ -1243,6 +1243,242 @@ async def test_no_round_hundred_on_non_round_rating(db):
     assert "round_hundred" not in new
 
 
+# ── absolute_zero ─────────────────────────────────────────────────────────────
+
+_ALL_ZERO_SETS = [{"w": 11, "l": 0}, {"w": 11, "l": 0}]
+
+
+async def test_absolute_zero_fires_when_every_set_is_11_0(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = await _do_win(db, p1, p2, sets=_ALL_ZERO_SETS)
+    assert "absolute_zero" in new
+
+
+async def test_no_absolute_zero_when_one_set_is_not_11_0(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    sets = [{"w": 11, "l": 0}, {"w": 11, "l": 5}]
+    new = await _do_win(db, p1, p2, sets=sets)
+    assert "absolute_zero" not in new
+
+
+async def test_backfill_assigns_absolute_zero(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=p1.id,
+        sets_data=_ALL_ZERO_SETS, completed_at=_ts(),
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "absolute_zero" in get_achievements(p1)
+
+
+# ── weekend_warrior ───────────────────────────────────────────────────────────
+
+_SATURDAY = datetime(2024, 1, 6, 12, 0, 0)   # суббота
+_MONDAY = datetime(2024, 1, 8, 12, 0, 0)     # понедельник
+
+
+async def test_weekend_warrior_fires_on_saturday_win(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = await _do_win(db, p1, p2, dt=_SATURDAY)
+    assert "weekend_warrior" in new
+
+
+async def test_no_weekend_warrior_on_weekday_win(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = await _do_win(db, p1, p2, dt=_MONDAY)
+    assert "weekend_warrior" not in new
+
+
+async def test_backfill_assigns_weekend_warrior(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=p1.id,
+        sets_data=_DEFAULT_SETS, completed_at=_SATURDAY,
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "weekend_warrior" in get_achievements(p1)
+
+
+# ── rock_bottom ───────────────────────────────────────────────────────────────
+
+async def test_rock_bottom_fires_when_loser_hits_exactly_900(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob", rating=900.0)
+    db.add_all([p1, p2])
+    await db.flush()
+
+    m = await _add_win(db, p1, p2)
+    new = await check_loss_achievements(db, p2, _DEFAULT_SETS)
+    assert "rock_bottom" in new
+    assert m is not None
+
+
+async def test_no_rock_bottom_when_not_exactly_900(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob", rating=905.3)
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _add_win(db, p1, p2)
+    new = await check_loss_achievements(db, p2, _DEFAULT_SETS)
+    assert "rock_bottom" not in new
+
+
+# ── full_circle_week ──────────────────────────────────────────────────────────
+
+async def test_full_circle_week_fires_after_beating_everyone_within_7_days(db):
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    await _do_win(db, p1, p2, dt=_ts(0))
+    new = await _do_win(db, p1, p3, dt=_ts(1))
+    assert "full_circle_week" in new
+
+
+async def test_no_full_circle_week_when_one_opponent_never_beaten(db):
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    new = await _do_win(db, p1, p2, dt=_ts(0))
+    assert "full_circle_week" not in new
+
+
+async def test_backfill_assigns_full_circle_week(db):
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=_DEFAULT_SETS, completed_at=_ts(0),
+    ))
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p3.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=_DEFAULT_SETS, completed_at=_ts(1),
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "full_circle_week" in get_achievements(p1)
+
+
+# ── draw_double ───────────────────────────────────────────────────────────────
+
+async def test_draw_double_fires_on_two_consecutive_draws(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _add_draw(db, p1, p2, dt=_ts(0))
+    await _add_draw(db, p1, p2, dt=_ts(1))
+    new = await check_draw_achievements(db, p1, _DEFAULT_SETS, is_challenger=True)
+    assert "draw_double" in new
+
+
+async def test_no_draw_double_on_single_draw(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = await check_draw_achievements(db, p1, _DEFAULT_SETS, is_challenger=True)
+    assert "draw_double" not in new
+
+
+async def test_backfill_assigns_draw_double(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=None, sets_data=_DEFAULT_SETS, completed_at=_ts(0),
+    ))
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=None, sets_data=_DEFAULT_SETS, completed_at=_ts(1),
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "draw_double" in get_achievements(p1)
+
+
+# ── first_crown ───────────────────────────────────────────────────────────────
+
+async def test_first_crown_fires_on_first_boss_fight_win(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m = Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=_DEFAULT_SETS, completed_at=_ts(0), is_boss_fight=True,
+    )
+    db.add(m)
+    await db.flush()
+
+    new = await check_win_achievements(db, p1, p2, _DEFAULT_SETS, m, 1000.0, 1000.0)
+    assert "first_crown" in new
+
+
+async def test_no_first_crown_on_second_boss_fight_win(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=_DEFAULT_SETS, completed_at=_ts(0), is_boss_fight=True,
+    ))
+    await db.flush()
+    m2 = Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=_DEFAULT_SETS, completed_at=_ts(1), is_boss_fight=True,
+    )
+    db.add(m2)
+    await db.flush()
+
+    new = await check_win_achievements(db, p1, p2, _DEFAULT_SETS, m2, 1000.0, 1000.0)
+    assert "first_crown" not in new
+
+
+async def test_backfill_assigns_first_crown(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=_DEFAULT_SETS, completed_at=_ts(0), is_boss_fight=True,
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "first_crown" in get_achievements(p1)
+
+
 # ── categories ────────────────────────────────────────────────────────────────
 
 async def test_every_achievement_has_a_category():
