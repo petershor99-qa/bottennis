@@ -14,8 +14,9 @@ import pytest_asyncio
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import selectinload, sessionmaker
 
 from bot.db.models import Base, Match, MatchStatus, Player
 from bot.handlers.challenge import do_cancel_match, send_challenge, show_players_for_challenge
@@ -30,7 +31,13 @@ from bot.handlers.match_result import (
     process_set_score,
     start_report,
 )
-from bot.handlers.profile import _nearest_achievement_progress, _render_stats_lines
+from bot.handlers.profile import (
+    _compute_player_stats,
+    _nearest_achievement_progress,
+    _rank_gap_line,
+    _render_stats_lines,
+    _throne_distance_line,
+)
 from bot.services.achievements import get_achievements
 from bot.states.states import MatchResultStates
 from bot.utils import (
@@ -670,6 +677,8 @@ def _full_stats(**overrides) -> dict:
         "first_set_conv": None, "fav_format": None,
         "best_day": None, "best_day_count": 0,
         "boss_fights_played": 0, "boss_fights_won": 0,
+        "trend_30d": None, "trend_30d_matches": 0,
+        "deuce_total": 0, "deuce_won": 0,
     }
     base.update(overrides)
     return base
@@ -726,6 +735,179 @@ def test_render_stats_lines_order_form_then_opponents_then_rating_then_misc():
     idx_best_win = next(i for i, ln in enumerate(lines) if "Лучший матч" in ln)
     idx_format = next(i for i, ln in enumerate(lines) if "Любимый формат" in ln)
     assert idx_streak < idx_nemesis < idx_best_win < idx_format
+
+
+def test_render_stats_lines_shows_trend_30d():
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    s = _full_stats(trend_30d=12.4, trend_30d_matches=3)
+    lines = _render_stats_lines(p, s)
+    assert any("За 30 дней" in ln and "+12.4" in ln for ln in lines)
+
+
+def test_render_stats_lines_no_trend_line_when_no_recent_matches():
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    lines = _render_stats_lines(p, _full_stats())
+    assert not any("За 30 дней" in ln for ln in lines)
+
+
+def test_render_stats_lines_shows_deuce_stats():
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    s = _full_stats(deuce_total=5, deuce_won=3)
+    lines = _render_stats_lines(p, s)
+    assert any("Партий на дьюсе" in ln and "5" in ln and "3" in ln for ln in lines)
+
+
+def test_render_stats_lines_no_deuce_line_when_zero():
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    lines = _render_stats_lines(p, _full_stats())
+    assert not any("дьюсе" in ln for ln in lines)
+
+
+# ── _compute_player_stats: тренд за 30 дней / статистика по дьюсу ───────────────
+
+async def test_compute_stats_trend_30d_sums_recent_deltas(db):
+    """_compute_player_stats читает m.challenger/m.challenged (relationship,
+    не просто id) — матчи должны быть реально закоммичены, не голые объекты."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.add(_completed(p1, p2, p1.id, 10.0, now - timedelta(days=5)))
+    db.add(_completed(p2, p1, p2.id, 4.0, now - timedelta(days=2)))  # p1 проиграл: -4.0
+    await db.commit()
+
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["trend_30d"] == 6.0
+    assert s["trend_30d_matches"] == 2
+
+
+async def test_compute_stats_trend_30d_excludes_old_matches(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.add(_completed(p1, p2, p1.id, 10.0, now - timedelta(days=45)))  # за пределами 30 дней
+    await db.commit()
+
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["trend_30d"] is None
+    assert s["trend_30d_matches"] == 0
+
+
+async def test_compute_stats_deuce_counts_total_and_won(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=p1.id,
+        # sets_data в перспективе challenger (p1): "w"=очки p1, "l"=очки p2
+        sets_data=[{"w": 12, "l": 10}, {"w": 10, "l": 12}, {"w": 11, "l": 7}],
+        completed_at=now,
+    ))
+    await db.commit()
+
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    # партия 1 (12:10) — на дьюсе, p1 выиграл; партия 2 (10:12) — на дьюсе, p1 проиграл
+    assert s["deuce_total"] == 2
+    assert s["deuce_won"] == 1
+
+
+# ── _rank_gap_line ────────────────────────────────────────────────────────────
+
+def test_rank_gap_line_shows_positive_gap():
+    me = SimpleNamespace(id=1, display_name="Me", rating=1000.0)
+    above = SimpleNamespace(id=2, display_name="Above", rating=1050.0)
+    result = _rank_gap_line(me, [me, above], ranks={1: 2, 2: 1})
+    assert result is not None
+    assert "Above" in result
+    assert "50.0" in result
+
+
+def test_rank_gap_line_none_for_rank_1():
+    me = SimpleNamespace(id=1, display_name="Me", rating=1000.0)
+    assert _rank_gap_line(me, [me], ranks={1: 1}) is None
+
+
+def test_rank_gap_line_none_when_gap_not_positive():
+    """Пиннинг чемпиона: игрок рангом выше может иметь более низкий сырой
+    рейтинг — строку не показываем, чтобы не путать «отрицательным разрывом»."""
+    me = SimpleNamespace(id=1, display_name="Me", rating=1300.0)
+    champion = SimpleNamespace(id=2, display_name="Champion", rating=1200.0)
+    result = _rank_gap_line(me, [me, champion], ranks={1: 2, 2: 1})
+    assert result is None
+
+
+# ── _throne_distance_line ───────────────────────────────────────────────────────
+
+async def test_throne_distance_none_when_no_champion(db):
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.flush()
+    assert await _throne_distance_line(db, p1, total_matches=20) is None
+
+
+async def test_throne_distance_none_for_champion_himself(db):
+    champion = _player(1, "Champion", rating=1200.0)
+    champion.is_champion = True
+    db.add(champion)
+    await db.flush()
+    assert await _throne_distance_line(db, champion, total_matches=20) is None
+
+
+async def test_throne_distance_challenger_gets_call_to_action(db):
+    champion = _player(1, "Champion", rating=1000.0)
+    champion.is_champion = True
+    contender = _player(2, "Contender", rating=1100.0)
+    db.add_all([champion, contender])
+    await db.flush()
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    for i in range(15):
+        db.add(_completed(contender, champion, contender.id, 5.0, base + timedelta(days=i)))
+    await db.commit()
+
+    result = await _throne_distance_line(db, contender, total_matches=15)
+    assert result is not None
+    assert "вызови чемпиона" in result
+
+
+async def test_throne_distance_gap_when_below_champion(db):
+    champion = _player(1, "Champion", rating=1200.0)
+    champion.is_champion = True
+    weaker = _player(2, "Weaker", rating=1000.0)
+    db.add_all([champion, weaker])
+    await db.flush()
+
+    result = await _throne_distance_line(db, weaker, total_matches=5)
+    assert result is not None
+    assert "До трона" in result
+    assert "200.0" in result
+
+
+async def test_throne_distance_needs_more_matches_when_above_champion(db):
+    """Обогнал чемпиона по очкам, но не набрал порог матчей — претендента ВООБЩЕ нет."""
+    champion = _player(1, "Champion", rating=1000.0)
+    champion.is_champion = True
+    newcomer = _player(2, "Newcomer", rating=1100.0)
+    db.add_all([champion, newcomer])
+    await db.flush()
+
+    result = await _throne_distance_line(db, newcomer, total_matches=5)
+    assert result is not None
+    assert "не хватает матчей" in result
 
 
 # ── env_int / pluralize_sets ─────────────────────────────────────────────────────
