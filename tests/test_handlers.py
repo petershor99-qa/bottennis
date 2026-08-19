@@ -851,63 +851,67 @@ def test_rank_gap_line_none_when_gap_not_positive():
     assert result is None
 
 
-# ── _throne_distance_line ───────────────────────────────────────────────────────
+# ── _throne_distance_line (чистая функция — champion/challenger уже на руках) ───
 
-async def test_throne_distance_none_when_no_champion(db):
+def test_throne_distance_none_when_no_champion():
     p1 = _player(1, "Alice")
-    db.add(p1)
-    await db.flush()
-    assert await _throne_distance_line(db, p1, total_matches=20) is None
+    assert _throne_distance_line(p1, None, None, total_matches=20) is None
 
 
-async def test_throne_distance_none_for_champion_himself(db):
+def test_throne_distance_none_for_champion_himself():
     champion = _player(1, "Champion", rating=1200.0)
-    champion.is_champion = True
-    db.add(champion)
-    await db.flush()
-    assert await _throne_distance_line(db, champion, total_matches=20) is None
+    champion.id = 1
+    assert _throne_distance_line(champion, champion, None, total_matches=20) is None
 
 
-async def test_throne_distance_challenger_gets_call_to_action(db):
+def test_throne_distance_challenger_gets_call_to_action():
     champion = _player(1, "Champion", rating=1000.0)
-    champion.is_champion = True
+    champion.id = 1
     contender = _player(2, "Contender", rating=1100.0)
-    db.add_all([champion, contender])
-    await db.flush()
-    base = datetime(2026, 6, 1, 12, 0, 0)
-    for i in range(15):
-        db.add(_completed(contender, champion, contender.id, 5.0, base + timedelta(days=i)))
-    await db.commit()
+    contender.id = 2
 
-    result = await _throne_distance_line(db, contender, total_matches=15)
+    result = _throne_distance_line(contender, champion, contender, total_matches=15)
     assert result is not None
     assert "вызови чемпиона" in result
 
 
-async def test_throne_distance_gap_when_below_champion(db):
+def test_throne_distance_gap_when_below_champion():
     champion = _player(1, "Champion", rating=1200.0)
-    champion.is_champion = True
+    champion.id = 1
     weaker = _player(2, "Weaker", rating=1000.0)
-    db.add_all([champion, weaker])
-    await db.flush()
+    weaker.id = 2
 
-    result = await _throne_distance_line(db, weaker, total_matches=5)
+    result = _throne_distance_line(weaker, champion, None, total_matches=5)
     assert result is not None
     assert "До трона" in result
     assert "200.0" in result
 
 
-async def test_throne_distance_needs_more_matches_when_above_champion(db):
+def test_throne_distance_needs_more_matches_when_above_champion():
     """Обогнал чемпиона по очкам, но не набрал порог матчей — претендента ВООБЩЕ нет."""
     champion = _player(1, "Champion", rating=1000.0)
-    champion.is_champion = True
+    champion.id = 1
     newcomer = _player(2, "Newcomer", rating=1100.0)
-    db.add_all([champion, newcomer])
-    await db.flush()
+    newcomer.id = 2
 
-    result = await _throne_distance_line(db, newcomer, total_matches=5)
+    result = _throne_distance_line(newcomer, champion, None, total_matches=5)
     assert result is not None
     assert "не хватает матчей" in result
+
+
+def test_throne_distance_shows_who_is_ahead():
+    """Обогнал чемпиона и набрал порог, но претендентское место занято третьим."""
+    champion = _player(1, "Champion", rating=1000.0)
+    champion.id = 1
+    me = _player(2, "Me", rating=1100.0)
+    me.id = 2
+    ahead = _player(3, "Ahead", rating=1150.0)
+    ahead.id = 3
+
+    result = _throne_distance_line(me, champion, ahead, total_matches=20)
+    assert result is not None
+    assert "Ahead" in result
+    assert "50.0" in result
 
 
 # ── env_int / pluralize_sets ─────────────────────────────────────────────────────
