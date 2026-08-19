@@ -12,7 +12,7 @@
 import json
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -84,13 +84,19 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("deuce_storm",    "🌪", "Дьюсопад",                  "Выиграть матч, где каждая партия закончилась на дьюсе", category=CAT_SPECIAL, hidden=True),
     Achievement("no_rest_win",    "🔁", "Добивашка",                 "Выиграть матч, начатый в течение 10 минут после предыдущего с тем же соперником", category=CAT_SPECIAL, hidden=True),
     Achievement("round_hundred",  "💯", "Круглая цифра",             "Рейтинг стал ровно кратен 100", category=CAT_MILESTONES, hidden=True),
+    Achievement("absolute_zero",  "🥶", "Абсолютный ноль",           "Выиграть матч, где КАЖДАЯ партия закончилась 11:0", category=CAT_SPECIAL, hidden=True),
+    Achievement("weekend_warrior", "🏖", "Выходного дня",            "Выиграть матч, сыгранный в субботу или воскресенье", category=CAT_SPECIAL, hidden=True),
+    Achievement("rock_bottom",    "🕳", "Дно",                       "Рейтинг упал ровно до 900.0 (пол ветерана)", category=CAT_MILESTONES, hidden=True),
+    Achievement("full_circle_week", "🌐", "Полный круг за неделю",   "Обыграть каждого игрока клуба минимум раз за 7 дней", category=CAT_CLUB, hidden=True),
+    Achievement("draw_double",    "🕊", "Дубль мира",                "Сыграть 2 ничьи подряд", category=CAT_CLUB, hidden=True),
+    Achievement("first_crown",    "🎉", "Первая корона",             "Выиграть свой самый первый босс-файт в карьере", category=CAT_THRONE, hidden=True),
 ]
 
 ACHIEVEMENTS_MAP: dict[str, Achievement] = {a.id: a for a in ACHIEVEMENTS_LIST}
 
 # Увеличивай при добавлении новых ачивок, требующих бэкфилл.
 # Игроки с player.backfill_version < BACKFILL_VERSION будут обработаны один раз при старте.
-BACKFILL_VERSION = 8
+BACKFILL_VERSION = 9
 
 TERMINATOR_STREAK_LEN = 5  # активная серия соперника для «Вынес терминатора»
 
@@ -267,6 +273,14 @@ async def check_win_achievements(
     ):
         maybe("deuce_storm")
 
+    # ── Абсолютный ноль: КАЖДАЯ партия закончилась 11:0 (соперник вообще не набрал) ─
+    if len(sets_data) >= 2 and all(s["w"] == 11 and s["l"] == 0 for s in sets_data):
+        maybe("absolute_zero")
+
+    # ── Выходного дня: матч завершился в субботу или воскресенье (по МСК) ────
+    if match.completed_at and (match.completed_at.replace(tzinfo=None) + MSK_OFFSET).weekday() >= 5:
+        maybe("weekend_warrior")
+
     # ── Вынес терминатора: у соперника была активная серия 5+ побед ДО этого матча ─
     loser_prev_r = await session.execute(
         select(Match)
@@ -341,6 +355,25 @@ async def check_win_achievements(
     }
     if other_ids and other_ids.issubset(beaten_ids):
         maybe("collector")
+
+    # ── Полный круг за неделю: обыграл каждого игрока клуба за трейлинг 7 дней ─
+    if other_ids and match.completed_at:
+        week_ago = match.completed_at.replace(tzinfo=None) - timedelta(days=7)
+        beaten_week_ids = {
+            (m.challenged_id if m.challenger_id == winner.id else m.challenger_id)
+            for m in all_matches
+            if m.winner_id == winner.id
+            and m.completed_at
+            and m.completed_at.replace(tzinfo=None) >= week_ago
+        }
+        if other_ids.issubset(beaten_week_ids):
+            maybe("full_circle_week")
+
+    # ── Первая корона: выиграл свой самый первый босс-файт в карьере ─────────
+    if match.is_boss_fight:
+        prior_boss_fights = any(m.is_boss_fight for m in all_matches if m.id != match.id)
+        if not prior_boss_fights:
+            maybe("first_crown")
 
     # ── Рейтинг 1200 ─────────────────────────────────────────────────────────
     if winner.rating >= 1200.0:
@@ -480,6 +513,12 @@ async def check_loss_achievements(
     if _has_alternating_tail(all_matches, loser.id):
         maybe("takova_zhis")
 
+    # ── Дно: рейтинг упал ровно до пола ветерана (900.0) ─────────────────────
+    # round(x*10) вместо x == 900.0 — защита от погрешности float, тот же приём,
+    # что у «Круглая цифра» в check_win_achievements.
+    if round(loser.rating * 10) == 9000:
+        maybe("rock_bottom")
+
     if new_ids:
         loser.achievements = json.dumps(earned)
 
@@ -524,6 +563,11 @@ async def check_draw_achievements(
     total_draws = sum(1 for m in all_matches if m.winner_id is None)
     if total_draws >= 5:
         maybe("diplomat")
+
+    # Дубль мира: 2 ничьи подряд (необязательно с одним и тем же соперником) —
+    # all_matches[-1] это текущий матч (уже ничья, раз мы в этой функции)
+    if len(all_matches) >= 2 and all_matches[-2].winner_id is None:
+        maybe("draw_double")
 
     # Совсем абанулись: 5+ партий
     if len(sets_data) >= 5:
@@ -655,9 +699,9 @@ async def backfill_achievements(session: AsyncSession) -> None:
     Идемпотентна: повторный вызов не изменит уже заработанные.
     Вызывается при старте из init_db().
 
-    Примечание: highlander, david_goliath, revenge, throne_denied и
-    chance_blown не восстанавливаются (требуют снапшоты рейтинга/роли
-    на момент матча) — будут начислены в реальном времени.
+    Примечание: highlander, david_goliath, revenge, throne_denied,
+    chance_blown и rock_bottom не восстанавливаются (требуют снапшоты
+    рейтинга/роли на момент матча) — будут начислены в реальном времени.
     """
     players_r = await session.execute(
         select(Player).where(Player.backfill_version < BACKFILL_VERSION)
@@ -726,11 +770,19 @@ async def backfill_achievements(session: AsyncSession) -> None:
         had_phoenix = False
         alt_window: list[bool] = []  # для «Такова жись» — скользящее окно исходов
         last_completed_vs: dict[int, datetime] = {}  # для «Добивашка» — по опоненту
+        prev_was_draw = False  # для «Дубль мира»
+        had_boss_fight_before = False  # для «Первая корона»
+        other_ids_bf = all_player_ids - {player.id}  # для «Полный круг за неделю»
 
         for m in matches:
             opp_id = m.challenged_id if m.challenger_id == player.id else m.challenger_id
             is_win = m.winner_id == player.id
             is_draw = m.winner_id is None
+
+            if m.is_boss_fight:
+                if is_win and not had_boss_fight_before:
+                    _add_new(earned, "first_crown")
+                had_boss_fight_before = True
 
             if is_draw:
                 alt_window = []
@@ -778,15 +830,38 @@ async def backfill_achievements(session: AsyncSession) -> None:
                         for s in m.sets_data
                     ):
                         _add_new(earned, "deuce_storm")
+                    # Абсолютный ноль: КАЖДАЯ партия закончилась 11:0
+                    if len(m.sets_data) >= 2 and all(
+                        s["w"] == 11 and s["l"] == 0 for s in m.sets_data
+                    ):
+                        _add_new(earned, "absolute_zero")
+                # Выходного дня: матч завершился в субботу/воскресенье (по МСК)
+                if m.completed_at and (m.completed_at + MSK_OFFSET).weekday() >= 5:
+                    _add_new(earned, "weekend_warrior")
                 # Добивашка: начат в течение 10 минут после предыдущего с этим же соперником
                 prev_vs = last_completed_vs.get(opp_id)
                 if prev_vs and m.created_at and 0 <= (m.created_at - prev_vs).total_seconds() <= 600:
                     _add_new(earned, "no_rest_win")
+                # Полный круг за неделю: обыграл каждого игрока клуба за трейлинг 7 дней
+                if other_ids_bf and m.completed_at:
+                    week_ago = m.completed_at - timedelta(days=7)
+                    beaten_week_ids = {
+                        (mm.challenged_id if mm.challenger_id == player.id else mm.challenger_id)
+                        for mm in matches
+                        if mm.winner_id == player.id
+                        and mm.completed_at
+                        and week_ago <= mm.completed_at <= m.completed_at
+                    }
+                    if other_ids_bf.issubset(beaten_week_ids):
+                        _add_new(earned, "full_circle_week")
 
             elif is_draw:
                 total_draws += 1
                 win_streak = 0
                 loss_streak = 0
+
+                if prev_was_draw:
+                    _add_new(earned, "draw_double")
 
                 if m.sets_data:
                     is_ch = m.challenger_id == player.id
@@ -821,6 +896,7 @@ async def backfill_achievements(session: AsyncSession) -> None:
 
             if m.completed_at:
                 last_completed_vs[opp_id] = m.completed_at
+            prev_was_draw = is_draw
 
         # Первая победа / новичкам везёт
         if total_wins >= 1:

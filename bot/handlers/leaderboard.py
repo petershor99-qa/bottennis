@@ -11,6 +11,7 @@ from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import back_to_leaderboard_kb, back_to_menu_kb, leaderboard_kb
 from bot.utils import (
     MSK_OFFSET,
+    _pin_champion,
     compute_alltime_streak,
     get_champion_and_challenger,
     get_player,
@@ -27,18 +28,6 @@ from bot.utils import (
 )
 
 router = Router()
-
-
-def _pin_champion(ranked: list[Player], champion_id: int | None) -> list[Player]:
-    """Ставит чемпиона первым в уже отсортированном списке, не трогая порядок
-    остальных. Общая для текущего и «недельного» снапшота порядка — иначе
-    пиннинг применяется только к одному из них, и ▲▼ показывают ложное
-    движение позиции у чемпиона и вытесненных им игроков."""
-    if champion_id is not None and any(p.id == champion_id for p in ranked):
-        champ_p = next(p for p in ranked if p.id == champion_id)
-        rest = [p for p in ranked if p.id != champion_id]
-        return [champ_p, *rest]
-    return ranked
 
 
 # ── Leaderboard ───────────────────────────────────────────────────────────────

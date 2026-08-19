@@ -450,6 +450,21 @@ def compute_ranks(
     return {p.id: i + 1 for i, p in enumerate(ranked)}
 
 
+def _pin_champion(ranked: list[Player], champion_id: int | None) -> list[Player]:
+    """Ставит чемпиона первым в уже отсортированном списке, не трогая порядок
+    остальных. Общая для лидерборда (текущий и «недельный» снапшот — иначе
+    пиннинг применяется только к одному из них, и ▲▼ показывают ложное
+    движение позиции у чемпиона и вытесненных им игроков) и списка вызова
+    (challenge.py) — там список раньше сортировался чисто по рейтингу, из-за
+    чего порядок строк расходился с показанным рангом #N (тот уже учитывал
+    пиннинг через compute_ranks)."""
+    if champion_id is not None and any(p.id == champion_id for p in ranked):
+        champ_p = next(p for p in ranked if p.id == champion_id)
+        rest = [p for p in ranked if p.id != champion_id]
+        return [champ_p, *rest]
+    return ranked
+
+
 def format_rank(ranks: dict[int, int], player_id: int) -> str:
     """«#N из M» для игравшего, либо «вне рейтинга» для игрока с 0 матчей."""
     r = ranks.get(player_id)
