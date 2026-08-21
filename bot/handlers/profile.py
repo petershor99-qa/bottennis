@@ -355,10 +355,16 @@ def _render_achievements(earned_ids: list[str], title: str) -> str:
     Пустая строка между КАЖДЫМ пунктом (не только между категориями, v2.98.0) —
     по просьбе пользователя после живого скриншота прод-экрана: плотный список
     из 43 длинных строк (имя + условие) читался тяжело даже разбитым на 6
-    категорий. Стоит копейки по длине (пустая строка — это один лишний '\\n'
-    на пункт, не повтор текста) — даже в худшем случае (все 43 заработаны,
-    у каждой строки развёрнутое имя+условие) укладывается в лимит Telegram
-    на сообщение (4096 символов) с запасом, см. test_render_achievements_stays_under_telegram_limit.
+    категорий.
+
+    Заголовок категории отбит ДВУМЯ пустыми строками сверху и одной снизу
+    (v2.99.0) — с одинарным отступом заголовок визуально не отличался от
+    обычного разрыва между пунктами и разделы «сливались» друг с другом.
+
+    Стоит копейки по длине (несколько лишних '\\n', не повтор текста) — даже
+    в худшем случае (все 43 заработаны, у каждой строки развёрнутое
+    имя+условие) укладывается в лимит Telegram на сообщение (4096 символов)
+    с запасом, см. test_render_achievements_stays_under_telegram_limit.
     """
     total = len(ACHIEVEMENTS_LIST)
     earned_set = set(earned_ids)
@@ -373,7 +379,7 @@ def _render_achievements(earned_ids: list[str], title: str) -> str:
         achs = by_category.get(category, [])
         if not achs:
             continue
-        lines.append(f"\n<b>{category}</b>\n")
+        lines.append(f"\n\n<b>{category}</b>\n")
         entries = []
         for a in sorted(achs, key=lambda a: a.id not in earned_set):
             if a.id in earned_set:
