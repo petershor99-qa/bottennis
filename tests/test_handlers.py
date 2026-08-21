@@ -1442,6 +1442,35 @@ async def test_hidden_achievement_revealed_when_earned(db):
     assert "✅" in text
 
 
+# ── Отступы между пунктами достижений (v2.98.0) ─────────────────────────────────
+
+def test_render_achievements_has_blank_line_between_entries():
+    """Пустая строка между КАЖДЫМ пунктом внутри категории, не только между
+    категориями — плотный список из 43 строк читался тяжело даже по категориям."""
+    from bot.handlers.profile import _render_achievements
+    from bot.services.achievements import ACHIEVEMENTS_LIST
+
+    earned = [a.id for a in ACHIEVEMENTS_LIST[:3]]  # первые 3 из одной категории (Старт карьеры)
+    text = _render_achievements(earned, "Мои достижения")
+
+    # Три подряд заработанные ачивки из "Старт карьеры" должны быть разделены
+    # пустыми строками (двойной перевод строки), а не идтиплотно одна за другой.
+    assert "\n\n✅" in text
+
+
+def test_render_achievements_stays_under_telegram_limit():
+    """Худший случай (все 43 ачивки заработаны — каждая строка развёрнута с
+    именем и условием) укладывается в лимит Telegram на одно сообщение (4096
+    символов) с запасом — иначе edit_text здесь упадёт с ошибкой Telegram API,
+    а этот хендлер (в отличие от admin._send) не режет текст на части."""
+    from bot.handlers.profile import _render_achievements
+    from bot.services.achievements import ACHIEVEMENTS_LIST
+
+    earned_all = [a.id for a in ACHIEVEMENTS_LIST]
+    text = _render_achievements(earned_all, "Мои достижения")
+    assert len(text) < 4096
+
+
 async def test_non_hidden_locked_achievement_still_shown(db):
     """Обычная (не скрытая) незаработанная ачивка по-прежнему показывает имя и условие."""
     from bot.handlers.profile import show_my_achievements
@@ -1649,6 +1678,68 @@ async def test_help_lists_icon_legend():
     assert "💪" in text and "❄️" in text and "🔥" in text and "👑" in text
 
 
+# ── /feedback ────────────────────────────────────────────────────────────────────
+
+def _feedback_message(user_id: int = 1, full_name: str = "Alice", username: str | None = None) -> AsyncMock:
+    msg = AsyncMock()
+    msg.from_user = SimpleNamespace(id=user_id, full_name=full_name, username=username)
+    msg.answer = AsyncMock()
+    return msg
+
+
+async def test_feedback_empty_args_shows_usage(monkeypatch):
+    import bot.handlers.start as start_module
+
+    monkeypatch.setattr(start_module, "ADMIN_ID", 999)
+    msg = _feedback_message()
+    bot = AsyncMock()
+    await start_module.cmd_feedback(msg, SimpleNamespace(args=None), bot)
+
+    msg.answer.assert_awaited_once()
+    assert "/feedback" in msg.answer.call_args[0][0]
+    bot.send_message.assert_not_called()
+
+
+async def test_feedback_no_admin_configured(monkeypatch):
+    import bot.handlers.start as start_module
+
+    monkeypatch.setattr(start_module, "ADMIN_ID", 0)
+    msg = _feedback_message()
+    bot = AsyncMock()
+    await start_module.cmd_feedback(msg, SimpleNamespace(args="хочу радар-диаграмму"), bot)
+
+    bot.send_message.assert_not_called()
+    assert "не настроена" in msg.answer.call_args[0][0]
+
+
+async def test_feedback_forwarded_to_admin_with_sender_context(monkeypatch):
+    import bot.handlers.start as start_module
+
+    monkeypatch.setattr(start_module, "ADMIN_ID", 999)
+    msg = _feedback_message(user_id=42, full_name="Пётр Шор")
+    bot = AsyncMock()
+    await start_module.cmd_feedback(msg, SimpleNamespace(args="хочу радар-диаграмму для H2H"), bot)
+
+    bot.send_message.assert_awaited_once()
+    admin_id, text = bot.send_message.call_args[0][0], bot.send_message.call_args[0][1]
+    assert admin_id == 999
+    assert "Пётр Шор" in text
+    assert "хочу радар-диаграмму для H2H" in text
+    assert "Спасибо" in msg.answer.call_args[0][0]
+
+
+async def test_feedback_send_failure_notifies_sender_gracefully(monkeypatch):
+    import bot.handlers.start as start_module
+
+    monkeypatch.setattr(start_module, "ADMIN_ID", 999)
+    msg = _feedback_message()
+    bot = AsyncMock()
+    bot.send_message.side_effect = Exception("boom")
+    await start_module.cmd_feedback(msg, SimpleNamespace(args="тест"), bot)
+
+    assert "⚠️" in msg.answer.call_args[0][0]
+
+
 # ── Пик рейтинга обновляется при ничьей (баг-фикс) ──────────────────────────────
 
 async def test_peak_rating_updated_on_draw(db):
@@ -1719,7 +1810,7 @@ async def test_daily_summary_new_sections(monkeypatch):
     assert "Чаще всего самбовались" in text
     assert "3 победы подряд" in text       # текущая серия Alice
     assert "Отрицательный рост" in text     # Bob ушёл в минус
-    assert "Матчи дня:" in text             # общий лог матчей со счётом
+    assert "Все матчи:" in text             # общий лог матчей со счётом
 
 
 async def test_weekly_digest_standings_and_heroes(monkeypatch):
@@ -1887,6 +1978,95 @@ async def test_monthly_summary_renamed_and_heroes(monkeypatch):
     assert "Тяжелее всех" not in text
     assert "Чаще всего самбовались" in text
     assert "Нагибатель месяца" in text
+
+
+# ── Итоги квартала (v2.98.0) ────────────────────────────────────────────────────
+
+def test_quarter_bounds_jan_1_covers_prev_oct_dec():
+    """Джоба стартует 1 января -> завершившийся квартал = окт-дек прошлого года."""
+    import bot.scheduler as sched
+
+    now = datetime(2026, 1, 1, 10, 30, 0)
+    start, end = sched._quarter_bounds_msk(now)
+    assert start == datetime(2025, 10, 1, 0, 0, 0)
+    assert end == datetime(2026, 1, 1, 0, 0, 0)
+
+
+def test_quarter_bounds_apr_1_covers_jan_mar():
+    import bot.scheduler as sched
+
+    now = datetime(2026, 4, 1, 10, 30, 0)
+    start, end = sched._quarter_bounds_msk(now)
+    assert start == datetime(2026, 1, 1, 0, 0, 0)
+    assert end == datetime(2026, 4, 1, 0, 0, 0)
+
+
+def test_quarter_bounds_oct_1_covers_jul_sep():
+    import bot.scheduler as sched
+
+    now = datetime(2026, 10, 1, 10, 30, 0)
+    start, end = sched._quarter_bounds_msk(now)
+    assert start == datetime(2026, 7, 1, 0, 0, 0)
+    assert end == datetime(2026, 10, 1, 0, 0, 0)
+
+
+async def test_quarterly_summary_content_and_labels(monkeypatch):
+    """Итоги квартала: заголовок-диапазон месяцев, топ, без-суффиксные метрики
+    (переиспользуют _longest_no_loss_streak/_biggest_swing), топ-матч квартала."""
+    import bot.scheduler as sched
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    msk_now = datetime.now(timezone.utc).replace(tzinfo=None) + sched.MSK_OFFSET
+    quarter_start, quarter_end = sched._quarter_bounds_msk(msk_now)
+    inside = (quarter_start + timedelta(days=5)) - sched.MSK_OFFSET
+
+    async with factory() as s:
+        p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+        s.add_all([p1, p2])
+        await s.flush()
+        for i in range(3):  # Alice 3-0 над Bob внутри квартала
+            s.add(_completed(p1, p2, p1.id, 10.0, inside + timedelta(hours=i)))
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.send_quarterly_summary(bot)
+    await engine.dispose()
+
+    assert bot.send_message.await_count == 2  # обоим игрокам
+    text = bot.send_message.call_args_list[0][0][1]
+    assert "Итоги квартала" in text
+    assert "Топ квартала" in text
+    assert "Главный теннисист" in text
+    assert "Без поражений" in text        # переиспользует _longest_no_loss_streak
+    assert "дня" not in text and "недели" not in text  # без суффикса периода
+    # «Топ-матч квартала» тут не проверяем — три одинаковых разгромных 1-сетовых
+    # матча не проходят DRAMA_THRESHOLD в pick_match_of_day (как и в тесте
+    # test_monthly_summary_renamed_and_heroes выше, та же синтетика).
+
+
+async def test_quarterly_summary_skipped_when_no_matches(monkeypatch):
+    import bot.scheduler as sched
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    async with factory() as s:
+        s.add(_player(1, "Alice"))
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.send_quarterly_summary(bot)
+    await engine.dispose()
+
+    bot.send_message.assert_not_called()
 
 
 # ── fsm_reset_notice: сброс FSM рестартом бота (MemoryStorage) ─────────────────
