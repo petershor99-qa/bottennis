@@ -6,8 +6,9 @@ from datetime import datetime, timedelta, timezone
 from html import escape as h
 
 from aiogram import Bot
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from bot.db.models import ChampionReign, Match, MatchStatus, Player
 
@@ -153,6 +154,58 @@ def pluralize_points(n: int) -> str:
 async def get_player(session: AsyncSession, telegram_id: int) -> Player | None:
     r = await session.execute(select(Player).where(Player.telegram_id == telegram_id))
     return r.scalar_one_or_none()
+
+
+async def get_career_matches(
+    session: AsyncSession, player_id: int, *, with_opponents: bool = False,
+) -> list[Match]:
+    """Все завершённые матчи игрока за карьеру, desc(completed_at).
+
+    Общий источник карьерной истории — раньше запрашивался независимо тем же
+    паттерном в profile.py (дважды) и в еженедельном дайджесте (scheduler.py).
+
+    with_opponents=True догружает Match.challenger/challenged (selectinload) —
+    нужно там, где сразу читается opponent.display_name (profile.py). В
+    scheduler.py не нужно: все игроки клуба уже в identity map сессии к этому
+    моменту (полный select(Player) чуть выше), лишнего похода в БД не будет.
+    """
+    stmt = (
+        select(Match)
+        .where(
+            or_(Match.challenger_id == player_id, Match.challenged_id == player_id),
+            Match.status == MatchStatus.completed,
+        )
+        .order_by(desc(Match.completed_at))
+    )
+    if with_opponents:
+        stmt = stmt.options(selectinload(Match.challenger), selectinload(Match.challenged))
+    r = await session.execute(stmt)
+    return r.scalars().all()
+
+
+async def get_h2h_matches(
+    session: AsyncSession, id_a: int, id_b: int, exclude_match_id: int | None = None,
+) -> list[Match]:
+    """Завершённые матчи между id_a и id_b, desc(completed_at) — свежие первыми.
+
+    Единый источник h2h-истории после подтверждения матча: раньше запрашивался
+    независимо в 3 местах за одно подтверждение результата (check_win_achievements
+    для revenge/no_rest_win, _collect_egg_context и _send_quick_rematch_egg
+    в match_result.py) — теперь считается один раз и переиспользуется.
+    """
+    conditions = [
+        Match.status == MatchStatus.completed,
+        or_(
+            and_(Match.challenger_id == id_a, Match.challenged_id == id_b),
+            and_(Match.challenger_id == id_b, Match.challenged_id == id_a),
+        ),
+    ]
+    if exclude_match_id is not None:
+        conditions.append(Match.id != exclude_match_id)
+    r = await session.execute(
+        select(Match).where(*conditions).order_by(desc(Match.completed_at))
+    )
+    return r.scalars().all()
 
 
 async def get_active_match(session: AsyncSession, player_id: int) -> Match | None:

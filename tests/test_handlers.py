@@ -47,6 +47,7 @@ from bot.utils import (
     compute_ranks,
     env_int,
     format_rank,
+    get_h2h_matches,
     get_match_counts,
     get_rec_signal,
     msk_day_start,
@@ -2231,7 +2232,8 @@ async def test_quick_rematch_egg_fires_within_10_minutes(db):
     await db.commit()
 
     bot = AsyncMock()
-    await _send_quick_rematch_egg(bot, db, p1, p2, current.created_at, current.id)
+    h2h_matches = await get_h2h_matches(db, p1.id, p2.id, exclude_match_id=current.id)
+    await _send_quick_rematch_egg(bot, p1, p2, current.created_at, h2h_matches)
     assert any("Не наигрался" in t for t in _texts(bot))
 
 
@@ -2256,7 +2258,8 @@ async def test_quick_rematch_egg_fires_even_if_rematch_itself_runs_long(db):
     await db.commit()
 
     bot = AsyncMock()
-    await _send_quick_rematch_egg(bot, db, p1, p2, current.created_at, current.id)
+    h2h_matches = await get_h2h_matches(db, p1.id, p2.id, exclude_match_id=current.id)
+    await _send_quick_rematch_egg(bot, p1, p2, current.created_at, h2h_matches)
     assert any("Не наигрался" in t for t in _texts(bot))
 
 
@@ -2277,7 +2280,8 @@ async def test_quick_rematch_egg_silent_when_gap_too_large(db):
     await db.commit()
 
     bot = AsyncMock()
-    await _send_quick_rematch_egg(bot, db, p1, p2, current.created_at, current.id)
+    h2h_matches = await get_h2h_matches(db, p1.id, p2.id, exclude_match_id=current.id)
+    await _send_quick_rematch_egg(bot, p1, p2, current.created_at, h2h_matches)
     bot.send_message.assert_not_called()
 
 
@@ -2290,7 +2294,8 @@ async def test_quick_rematch_egg_silent_without_prior_match(db):
     await db.commit()
 
     bot = AsyncMock()
-    await _send_quick_rematch_egg(bot, db, p1, p2, current.created_at, current.id)
+    h2h_matches = await get_h2h_matches(db, p1.id, p2.id, exclude_match_id=current.id)
+    await _send_quick_rematch_egg(bot, p1, p2, current.created_at, h2h_matches)
     bot.send_message.assert_not_called()
 
 
@@ -2311,3 +2316,45 @@ async def test_confirm_result_shutout_egg_fires_end_to_end(db):
     await confirm_result(cb, db, st, bot)
 
     assert any("Читы включил" in t for t in _texts(bot))
+
+
+async def test_ten_in_a_row_notification_fires_end_to_end(db):
+    """РЕГРЕССИЯ: уведомление о серии побед подряд над одним соперником раньше
+    считалось отдельным запросом (r_series) — теперь переиспользует h2h_matches,
+    общий с check_win_achievements/пасхалками. 10-я подряд победа над тем же
+    соперником должна прислать 'То что мертво — умереть не может.'"""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(9):
+        db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 6, 1, 12, 0, 0) + timedelta(days=i)))
+    await db.commit()
+
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 5}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert any("умереть не может" in t and "10 раз подряд" in t for t in _texts(bot))
+
+
+async def test_no_ten_in_a_row_notification_on_ninth_win(db):
+    """Граница: 9-я подряд победа над тем же соперником не должна присылать
+    уведомление — проверяет, что consecutive считается верно (не сдвинута на 1)."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(8):
+        db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 6, 1, 12, 0, 0) + timedelta(days=i)))
+    await db.commit()
+
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 5}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert not any("умереть не может" in t for t in _texts(bot))

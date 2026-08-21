@@ -145,10 +145,15 @@ async def check_win_achievements(
     match: Match,
     old_winner_rating: float,
     old_loser_rating: float,
+    h2h_matches: list[Match],
 ) -> list[str]:
     """
     Проверяет все достижения после победы.
     Возвращает список id новых (только что заработанных) достижений победителя.
+
+    h2h_matches — завершённые матчи между winner/loser ДО текущего (desc по
+    completed_at), из общего bot.utils.get_h2h_matches() — переиспользуется
+    вызывающим вместо повторного похода в БД за той же историей.
     """
     sets_data = match.sets_data  # winner perspective: [{"w": winner_pts, "l": loser_pts}, ...]
     earned = get_achievements(winner)
@@ -234,27 +239,14 @@ async def check_win_achievements(
         maybe("no_sweat")
 
     # ── Ответ_очка: предыдущий матч между ними выиграл соперник ─────────────
-    h2h_r = await session.execute(
-        select(Match)
-        .where(
-            or_(
-                and_(Match.challenger_id == winner.id, Match.challenged_id == loser.id),
-                and_(Match.challenger_id == loser.id, Match.challenged_id == winner.id),
-            ),
-            Match.status == MatchStatus.completed,
-        )
-        .order_by(desc(Match.completed_at))
-        .limit(2)
-    )
-    h2h = h2h_r.scalars().all()
-    # h2h[0] — текущий матч, h2h[1] — предыдущий между ними
-    if len(h2h) >= 2 and h2h[1].winner_id == loser.id:
+    prev_h2h = h2h_matches[0] if h2h_matches else None
+    if prev_h2h is not None and prev_h2h.winner_id == loser.id:
         maybe("revenge")
 
     # ── Добивашка: этот матч начат в течение 10 минут после предыдущего между
-    # этой же парой — переиспользует h2h[1], уже загруженный для «Ответ_очка».
-    if len(h2h) >= 2 and match.created_at and h2h[1].completed_at:
-        gap = (as_naive(match.created_at) - as_naive(h2h[1].completed_at)).total_seconds()
+    # этой же парой — переиспользует prev_h2h, уже загруженный для «Ответ_очка».
+    if prev_h2h is not None and match.created_at and prev_h2h.completed_at:
+        gap = (as_naive(match.created_at) - as_naive(prev_h2h.completed_at)).total_seconds()
         if 0 <= gap <= 600:
             maybe("no_rest_win")
 
