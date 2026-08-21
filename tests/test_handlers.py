@@ -932,6 +932,34 @@ def test_throne_distance_shows_who_is_ahead():
     assert "50.0" in result
 
 
+# ── _append_rank_and_throne_lines (v2.99.0) ─────────────────────────────────────
+
+def test_append_rank_and_throne_lines_adds_blank_line_before_group():
+    """rank_gap/throne_line — отдельная группа, как остальные в _render_stats_lines():
+    должна быть отбита пустой строкой от предыдущей группы, а не слипаться с ней."""
+    from bot.handlers.profile import _append_rank_and_throne_lines
+
+    lines = ["🏅 Рекорд: 5"]
+    _append_rank_and_throne_lines(lines, "📶 До #2: -10 pts", "👑 До трона: -50 pts")
+    assert lines == ["🏅 Рекорд: 5", "", "📶 До #2: -10 pts", "👑 До трона: -50 pts"]
+
+
+def test_append_rank_and_throne_lines_noop_when_both_none():
+    from bot.handlers.profile import _append_rank_and_throne_lines
+
+    lines = ["🏅 Рекорд: 5"]
+    _append_rank_and_throne_lines(lines, None, None)
+    assert lines == ["🏅 Рекорд: 5"]
+
+
+def test_append_rank_and_throne_lines_handles_only_one_present():
+    from bot.handlers.profile import _append_rank_and_throne_lines
+
+    lines = ["🏅 Рекорд: 5"]
+    _append_rank_and_throne_lines(lines, None, "👑 До трона: -50 pts")
+    assert lines == ["🏅 Рекорд: 5", "", "👑 До трона: -50 pts"]
+
+
 # ── env_int / pluralize_sets ─────────────────────────────────────────────────────
 
 def test_env_int_missing(monkeypatch):
@@ -1458,6 +1486,24 @@ def test_render_achievements_has_blank_line_between_entries():
     assert "\n\n✅" in text
 
 
+def test_render_achievements_category_header_stands_out_from_entries():
+    """Заголовок категории отбит двойной пустой строкой сверху (v2.99.0) —
+    с одинарной он визуально не отличался от обычного разрыва между пунктами,
+    и разделы («Старт карьеры», «Серии» и т.д.) сливались друг с другом."""
+    from bot.handlers.profile import _render_achievements
+    from bot.services.achievements import ACHIEVEMENTS_LIST, CATEGORY_ORDER
+
+    earned = [a.id for a in ACHIEVEMENTS_LIST]  # все категории непустые
+    text = _render_achievements(earned, "Мои достижения")
+
+    second_category = CATEGORY_ORDER[1]
+    header = f"<b>{second_category}</b>"
+    idx = text.index(header)
+    # перед вторым (и далее) заголовком — двойной перевод строки, а не одинарный,
+    # как между обычными пунктами
+    assert text[idx - 3 : idx] == "\n\n\n"
+
+
 def test_render_achievements_stays_under_telegram_limit():
     """Худший случай (все 43 ачивки заработаны — каждая строка развёрнута с
     именем и условием) укладывается в лимит Telegram на одно сообщение (4096
@@ -1678,6 +1724,22 @@ async def test_help_lists_icon_legend():
     assert "💪" in text and "❄️" in text and "🔥" in text and "👑" in text
 
 
+async def test_help_uses_back_to_menu_keyboard_not_full_menu():
+    """/help — справочный экран, не экран навигации: полный набор кнопок
+    главного меню (Вызвать на матч/Рейтинг/Статистика/Мои матчи) под ним не
+    нужен, достаточно одной кнопки «« В меню»."""
+    from bot.handlers.start import cmd_help
+
+    msg = AsyncMock()
+    msg.answer = AsyncMock()
+    await cmd_help(msg)
+
+    kb = msg.answer.call_args.kwargs["reply_markup"]
+    buttons = [b for row in kb.inline_keyboard for b in row]
+    assert len(buttons) == 1
+    assert buttons[0].text == "« В меню"
+
+
 # ── /feedback ────────────────────────────────────────────────────────────────────
 
 def _feedback_message(user_id: int = 1, full_name: str = "Alice", username: str | None = None) -> AsyncMock:
@@ -1777,6 +1839,17 @@ def test_pluralize_wins():
     assert pluralize_wins(5) == "5 побед"
     assert pluralize_wins(11) == "11 побед"
     assert pluralize_wins(21) == "21 победа"
+
+
+def test_pluralize_defenses():
+    """Рекорд «Больше всего защит трона подряд» — отдельное склонение, не
+    «победа»: 1 защита читалась как обычная победа, а не как оборона трона."""
+    from bot.utils import pluralize_defenses
+    assert pluralize_defenses(1) == "1 защита"
+    assert pluralize_defenses(2) == "2 защиты"
+    assert pluralize_defenses(5) == "5 защит"
+    assert pluralize_defenses(11) == "11 защит"
+    assert pluralize_defenses(21) == "21 защита"
 
 
 # ── Итоги дня: новые секции ─────────────────────────────────────────────────────

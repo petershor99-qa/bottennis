@@ -206,6 +206,17 @@ def _throne_distance_line(
     return None
 
 
+def _append_rank_and_throne_lines(lines: list[str], rank_gap: str | None, throne_line: str | None) -> None:
+    """Добавляет «до соседа»/«до трона» как отдельную группу — с пустой строкой
+    перед ней, как и остальные группы _render_stats_lines() (v2.99.0). Раньше
+    строки добавлялись напрямую через lines.append() без разделителя и
+    физически слипались с последней группой статистики."""
+    extra = [x for x in (rank_gap, throne_line) if x]
+    if extra:
+        lines.append("")
+        lines.extend(extra)
+
+
 # ── My stats ──────────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "menu_stats")
@@ -246,13 +257,10 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
     lines.extend(_render_stats_lines(player, s))
 
     rank_gap = _rank_gap_line(player, players_all, ranks)
-    if rank_gap:
-        lines.append(rank_gap)
     throne_line = _throne_distance_line(
         player, champion, challenger_player, s["wins"] + s["draws"] + s["losses"]
     )
-    if throne_line:
-        lines.append(throne_line)
+    _append_rank_and_throne_lines(lines, rank_gap, throne_line)
 
     progress = _nearest_achievement_progress(player, s, len(players_all))
     if progress:
@@ -323,13 +331,10 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
     lines.extend(_render_stats_lines(player, s))
 
     rank_gap = _rank_gap_line(player, players_all, ranks)
-    if rank_gap:
-        lines.append(rank_gap)
     throne_line = _throne_distance_line(
         player, champion, challenger_player, s["wins"] + s["draws"] + s["losses"]
     )
-    if throne_line:
-        lines.append(throne_line)
+    _append_rank_and_throne_lines(lines, rank_gap, throne_line)
 
     if matches:
         lines.append("\n<b>Последние матчи:</b>")
@@ -355,10 +360,16 @@ def _render_achievements(earned_ids: list[str], title: str) -> str:
     Пустая строка между КАЖДЫМ пунктом (не только между категориями, v2.98.0) —
     по просьбе пользователя после живого скриншота прод-экрана: плотный список
     из 43 длинных строк (имя + условие) читался тяжело даже разбитым на 6
-    категорий. Стоит копейки по длине (пустая строка — это один лишний '\\n'
-    на пункт, не повтор текста) — даже в худшем случае (все 43 заработаны,
-    у каждой строки развёрнутое имя+условие) укладывается в лимит Telegram
-    на сообщение (4096 символов) с запасом, см. test_render_achievements_stays_under_telegram_limit.
+    категорий.
+
+    Заголовок категории отбит ДВУМЯ пустыми строками сверху и одной снизу
+    (v2.99.0) — с одинарным отступом заголовок визуально не отличался от
+    обычного разрыва между пунктами и разделы «сливались» друг с другом.
+
+    Стоит копейки по длине (несколько лишних '\\n', не повтор текста) — даже
+    в худшем случае (все 43 заработаны, у каждой строки развёрнутое
+    имя+условие) укладывается в лимит Telegram на сообщение (4096 символов)
+    с запасом, см. test_render_achievements_stays_under_telegram_limit.
     """
     total = len(ACHIEVEMENTS_LIST)
     earned_set = set(earned_ids)
@@ -373,7 +384,7 @@ def _render_achievements(earned_ids: list[str], title: str) -> str:
         achs = by_category.get(category, [])
         if not achs:
             continue
-        lines.append(f"\n<b>{category}</b>\n")
+        lines.append(f"\n\n<b>{category}</b>\n")
         entries = []
         for a in sorted(achs, key=lambda a: a.id not in earned_set):
             if a.id in earned_set:

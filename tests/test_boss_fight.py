@@ -1394,6 +1394,7 @@ async def test_club_records_shows_most_defenses(db):
     text = cb.message.edit_text.await_args.args[0]
     assert "Больше всего защит трона подряд" in text
     assert "Defender" in text
+    assert "1 защита" in text  # не "1 победа" — иначе звучит как обычная победа, не оборона трона
 
 
 # -- «Самый долгий боссфайт» --
