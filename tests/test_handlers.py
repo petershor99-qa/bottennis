@@ -932,6 +932,34 @@ def test_throne_distance_shows_who_is_ahead():
     assert "50.0" in result
 
 
+# ── _append_rank_and_throne_lines (v2.99.0) ─────────────────────────────────────
+
+def test_append_rank_and_throne_lines_adds_blank_line_before_group():
+    """rank_gap/throne_line — отдельная группа, как остальные в _render_stats_lines():
+    должна быть отбита пустой строкой от предыдущей группы, а не слипаться с ней."""
+    from bot.handlers.profile import _append_rank_and_throne_lines
+
+    lines = ["🏅 Рекорд: 5"]
+    _append_rank_and_throne_lines(lines, "📶 До #2: -10 pts", "👑 До трона: -50 pts")
+    assert lines == ["🏅 Рекорд: 5", "", "📶 До #2: -10 pts", "👑 До трона: -50 pts"]
+
+
+def test_append_rank_and_throne_lines_noop_when_both_none():
+    from bot.handlers.profile import _append_rank_and_throne_lines
+
+    lines = ["🏅 Рекорд: 5"]
+    _append_rank_and_throne_lines(lines, None, None)
+    assert lines == ["🏅 Рекорд: 5"]
+
+
+def test_append_rank_and_throne_lines_handles_only_one_present():
+    from bot.handlers.profile import _append_rank_and_throne_lines
+
+    lines = ["🏅 Рекорд: 5"]
+    _append_rank_and_throne_lines(lines, None, "👑 До трона: -50 pts")
+    assert lines == ["🏅 Рекорд: 5", "", "👑 До трона: -50 pts"]
+
+
 # ── env_int / pluralize_sets ─────────────────────────────────────────────────────
 
 def test_env_int_missing(monkeypatch):
