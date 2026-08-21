@@ -79,10 +79,12 @@ def _longest_streak(matches: list, name_map: dict, period: str) -> str | None:
     )
 
 
-def _longest_no_loss_streak(matches: list, name_map: dict, period: str) -> str | None:
+def _longest_no_loss_streak(matches: list, name_map: dict) -> str | None:
     """«Без поражений» — самая длинная серия без поражений (победа ИЛИ ничья,
     прерывается только поражением) внутри периода (от 2). Отдельная метрика от
-    _longest_streak (тот считает только чистые победные серии, ничья их обнуляет)."""
+    _longest_streak (тот считает только чистые победные серии, ничья их обнуляет).
+    Без суффикса периода в тексте (v2.97.0) — заголовок сообщения («Итоги дня»/
+    «Итоги недели») уже задаёт период, повтор в каждой строке был лишним."""
     by_player: dict[int, list] = {}
     for m in sorted(matches, key=lambda m: m.completed_at or datetime.min):
         for pid in (m.challenger_id, m.challenged_id):
@@ -101,16 +103,17 @@ def _longest_no_loss_streak(matches: list, name_map: dict, period: str) -> str |
     if best_pid is None or best_n < 2:
         return None
     return (
-        f"🧱 Без поражений {period} — <b>{h(name_map.get(best_pid, '?'))}</b>: "
+        f"🧱 Без поражений — <b>{h(name_map.get(best_pid, '?'))}</b>: "
         f"{pluralize_matches(best_n)} подряд"
     )
 
 
-def _biggest_swing(matches: list, name_map: dict, period: str) -> str | None:
+def _biggest_swing(matches: list, name_map: dict) -> str | None:
     """«Американские горки» — у кого рейтинг сильнее всего мотало туда-обратно
     за период: сумма |дельт| минус |итоговая дельта| — то, что отыграно назад,
     а значит НЕ видно в «Лучшем росте»/«Отрицательном росте» (те смотрят только
-    на чистый net-результат, а не на волатильность самого пути)."""
+    на чистый net-результат, а не на волатильность самого пути). Без суффикса
+    периода в тексте (v2.97.0) — см. _longest_no_loss_streak."""
     net: dict[int, float] = {}
     abs_total: dict[int, float] = {}
     for m in matches:
@@ -125,7 +128,7 @@ def _biggest_swing(matches: list, name_map: dict, period: str) -> str | None:
     if swing[best_pid] < 20:
         return None
     return (
-        f"🎢 Американские горки {period} — <b>{h(name_map.get(best_pid, '?'))}</b>: "
+        f"🎢 Американские горки — <b>{h(name_map.get(best_pid, '?'))}</b>: "
         f"рейтинг мотало на {round(swing[best_pid], 1)} pts туда-обратно"
     )
 
@@ -391,10 +394,10 @@ async def send_weekly_digest(bot: Bot) -> None:
         streak = _longest_streak(all_week_matches, player_name_map, "недели")
         if streak:
             hero_lines.append(streak)
-        no_loss = _longest_no_loss_streak(all_week_matches, player_name_map, "недели")
+        no_loss = _longest_no_loss_streak(all_week_matches, player_name_map)
         if no_loss:
             hero_lines.append(no_loss)
-        swing = _biggest_swing(all_week_matches, player_name_map, "недели")
+        swing = _biggest_swing(all_week_matches, player_name_map)
         if swing:
             hero_lines.append(swing)
 
@@ -610,11 +613,11 @@ async def send_daily_summary(bot: Bot) -> None:
                     f"<b>{h(name_map.get(pb, '?'))}</b>: {pluralize_matches(pn)}"
                 )
 
-        no_loss = _longest_no_loss_streak(matches, name_map, "дня")
+        no_loss = _longest_no_loss_streak(matches, name_map)
         if no_loss:
             lines.append(no_loss)
 
-        swing = _biggest_swing(matches, name_map, "дня")
+        swing = _biggest_swing(matches, name_map)
         if swing:
             lines.append(swing)
 
