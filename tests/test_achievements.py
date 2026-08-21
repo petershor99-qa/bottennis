@@ -18,7 +18,7 @@ from bot.services.achievements import (
     check_win_achievements,
     get_achievements,
 )
-from bot.utils import msk_day_start
+from bot.utils import get_h2h_matches, msk_day_start
 
 # ── Fixtures & helpers ─────────────────────────────────────────────────────────
 
@@ -100,8 +100,9 @@ async def _do_win(
     """Добавить победный матч в БД и вызвать check_win_achievements."""
     sets = sets or _DEFAULT_SETS
     m = await _add_win(session, winner, loser, sets=sets, dt=dt or _ts(), created_at=created_at)
+    h2h_matches = await get_h2h_matches(session, winner.id, loser.id, exclude_match_id=m.id)
     return await check_win_achievements(
-        session, winner, loser, m, old_wr, old_lr,
+        session, winner, loser, m, old_wr, old_lr, h2h_matches,
     )
 
 
@@ -1225,9 +1226,9 @@ async def test_round_hundred_fires_directly(db):
     await db.flush()
     p1.rating = 1100.0  # имитирует результат, попавший ровно на круглую цифру
 
-    new = await check_win_achievements(
-        db, p1, p2, await _add_win(db, p1, p2), 1090.0, 1000.0,
-    )
+    m = await _add_win(db, p1, p2)
+    h2h_matches = await get_h2h_matches(db, p1.id, p2.id, exclude_match_id=m.id)
+    new = await check_win_achievements(db, p1, p2, m, 1090.0, 1000.0, h2h_matches)
     assert "round_hundred" in new
 
 
@@ -1237,9 +1238,9 @@ async def test_no_round_hundred_on_non_round_rating(db):
     await db.flush()
     p1.rating = 1113.7
 
-    new = await check_win_achievements(
-        db, p1, p2, await _add_win(db, p1, p2), 1090.0, 1000.0,
-    )
+    m = await _add_win(db, p1, p2)
+    h2h_matches = await get_h2h_matches(db, p1.id, p2.id, exclude_match_id=m.id)
+    new = await check_win_achievements(db, p1, p2, m, 1090.0, 1000.0, h2h_matches)
     assert "round_hundred" not in new
 
 
@@ -1488,7 +1489,8 @@ async def test_first_crown_fires_on_first_boss_fight_win(db):
     db.add(m)
     await db.flush()
 
-    new = await check_win_achievements(db, p1, p2, m, 1000.0, 1000.0)
+    h2h_matches = await get_h2h_matches(db, p1.id, p2.id, exclude_match_id=m.id)
+    new = await check_win_achievements(db, p1, p2, m, 1000.0, 1000.0, h2h_matches)
     assert "first_crown" in new
 
 
@@ -1508,7 +1510,8 @@ async def test_no_first_crown_on_second_boss_fight_win(db):
     db.add(m2)
     await db.flush()
 
-    new = await check_win_achievements(db, p1, p2, m2, 1000.0, 1000.0)
+    h2h_matches = await get_h2h_matches(db, p1.id, p2.id, exclude_match_id=m2.id)
+    new = await check_win_achievements(db, p1, p2, m2, 1000.0, 1000.0, h2h_matches)
     assert "first_crown" not in new
 
 
