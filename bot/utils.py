@@ -44,6 +44,36 @@ def msk_day_start() -> datetime:
     return msk_midnight - MSK_OFFSET
 
 
+def as_naive(dt: datetime) -> datetime:
+    """Приводит datetime к naive (как хранятся все даты в БД).
+
+    Защита от tz-aware объектов, которые изредка проскакивают — без неё
+    арифметика с MSK_OFFSET/timedelta падает TypeError на миксе aware/naive.
+    """
+    return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
+
+
+def msk_hour_and_weekday(dt: datetime) -> tuple[int, int]:
+    """Час и день недели (0=Пн) момента dt по МСК.
+
+    Общий хелпер для realtime-проверок ачивок (achievements.py), их бэкфилла
+    и пасхалок по времени (match_result.py) — раньше каждое место считало это
+    независимо, с расхождением в защите от tz-aware дат.
+    """
+    msk = as_naive(dt) + MSK_OFFSET
+    return msk.hour, msk.weekday()
+
+
+def rating_tenths(rating: float) -> int:
+    """rating × 10, округлённое до целого.
+
+    Общая защита от погрешности float при проверке уже округлённого до 1
+    знака рейтинга на кратность/равенство конкретному значению (ачивки
+    round_hundred/rock_bottom, пасхалка «Ровно N» в match_result.py).
+    """
+    return round(rating * 10)
+
+
 def _match_line(m: Match, player_id: int) -> str:
     """Форматирует одну строку матча для истории/статистики/дайджеста.
 
@@ -80,64 +110,44 @@ def _match_line(m: Match, player_id: int) -> str:
     return f"{icon} {date_str} vs {h(opponent.display_name)}{sets_str}{delta_str}"
 
 
+def _ru_plural(n: int, one: str, few: str, many: str) -> str:
+    """Русское склонение по числу: 1 → one, 2-4 → few, 5+/11-14 → many."""
+    if 11 <= n % 100 <= 14:
+        word = many
+    else:
+        r = n % 10
+        if r == 1:
+            word = one
+        elif 2 <= r <= 4:
+            word = few
+        else:
+            word = many
+    return f"{n} {word}"
+
+
 def pluralize_matches(n: int) -> str:
     """1 матч / 2 матча / 5 матчей"""
-    if 11 <= n % 100 <= 14:
-        return f"{n} матчей"
-    r = n % 10
-    if r == 1:
-        return f"{n} матч"
-    if 2 <= r <= 4:
-        return f"{n} матча"
-    return f"{n} матчей"
+    return _ru_plural(n, "матч", "матча", "матчей")
 
 
 def pluralize_sets(n: int) -> str:
     """1 партия / 2 партии / 5 партий"""
-    if 11 <= n % 100 <= 14:
-        return f"{n} партий"
-    r = n % 10
-    if r == 1:
-        return f"{n} партия"
-    if 2 <= r <= 4:
-        return f"{n} партии"
-    return f"{n} партий"
+    return _ru_plural(n, "партия", "партии", "партий")
 
 
 def pluralize_days(n: int) -> str:
     """1 день / 2 дня / 5 дней"""
-    if 11 <= n % 100 <= 14:
-        return f"{n} дней"
-    r = n % 10
-    if r == 1:
-        return f"{n} день"
-    if 2 <= r <= 4:
-        return f"{n} дня"
-    return f"{n} дней"
+    return _ru_plural(n, "день", "дня", "дней")
 
 
 def pluralize_wins(n: int) -> str:
     """1 победа / 2 победы / 5 побед"""
-    if 11 <= n % 100 <= 14:
-        return f"{n} побед"
-    r = n % 10
-    if r == 1:
-        return f"{n} победа"
-    if 2 <= r <= 4:
-        return f"{n} победы"
-    return f"{n} побед"
+    return _ru_plural(n, "победа", "победы", "побед")
 
 
 def pluralize_points(n: int) -> str:
     """1 очко / 2 очка / 5 очков"""
-    if 11 <= n % 100 <= 14:
-        return f"{n} очков"
-    r = n % 10
-    if r == 1:
-        return f"{n} очко"
-    if 2 <= r <= 4:
-        return f"{n} очка"
-    return f"{n} очков"
+    return _ru_plural(n, "очко", "очка", "очков")
 
 
 async def get_player(session: AsyncSession, telegram_id: int) -> Player | None:
@@ -703,16 +713,7 @@ def get_rec_signal(
     if h2h[0].completed_at:
         days = (now - h2h[0].completed_at).days
         if days >= 3:
-            rem = days % 10
-            if 11 <= days % 100 <= 14:
-                days_str = f"{days} дней"
-            elif rem == 1:
-                days_str = f"{days} день"
-            elif 2 <= rem <= 4:
-                days_str = f"{days} дня"
-            else:
-                days_str = f"{days} дней"
-            return f"не играли {days_str}"
+            return f"не играли {pluralize_days(days)}"
 
     if opponent_rating - viewer_rating >= 30:
         return f"он сильнее на +{int(opponent_rating - viewer_rating)}"

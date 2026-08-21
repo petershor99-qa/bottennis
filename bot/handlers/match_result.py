@@ -24,13 +24,14 @@ from bot.services.rating import calculate_draw_rating_change, calculate_rating_c
 from bot.services.validation import validate_set_score
 from bot.states.states import MatchResultStates
 from bot.utils import (
-    MSK_OFFSET,
     NEWCOMER_THRESHOLD,
     get_challenger,
     get_champion,
     get_player,
     msk_day_start,
+    msk_hour_and_weekday,
     notify_all_players,
+    rating_tenths,
     try_transfer_champion,
 )
 
@@ -214,7 +215,7 @@ async def _send_winner_eggs(bot: Bot, winner: Player, loser: Player, ctx: dict) 
         await _msg("Читы включил? 🎮")
     if ctx["deuce_decider"]:
         await _msg("⚡ Драматично!")
-    if round(winner.rating * 10) % 500 == 0:
+    if rating_tenths(winner.rating) % 500 == 0:
         await _msg(f"🎯 Ровно {round(winner.rating, 1)}. Как ты это подгадал?")
 
     # Серийная пасхалка (по приоритету)
@@ -283,19 +284,13 @@ async def _send_loser_eggs(
         await _msg(milestone)
 
 
-def _msk_hour_and_weekday(dt: datetime) -> tuple[int, int]:
-    """Час и день недели (0=Пн) момента матча по МСК, из naive-UTC datetime."""
-    msk = dt + MSK_OFFSET
-    return msk.hour, msk.weekday()
-
-
 async def _send_time_based_eggs(bot: Bot, players: list[Player], completed_at: datetime) -> None:
     """Пасхалки по времени завершения матча (ночь / выходной / вечер пятницы) —
     обоим участникам. Взаимоисключающие (приоритет сверху вниз), чтобы на один
     матч не сыпалось сразу несколько сообщений об одном и том же факте времени."""
     if completed_at is None:
         return
-    hour, weekday = _msk_hour_and_weekday(completed_at)
+    hour, weekday = msk_hour_and_weekday(completed_at)
     if 0 <= hour < 6:
         text = "🌙 Тебе точно не спится?"
     elif weekday >= 5:
@@ -911,7 +906,7 @@ async def _award_win_achievements_and_eggs(
     """Достижения победителя/проигравшего, пасхалки после победы, уведомление
     о серии побед над одним соперником, кратной 10."""
     new_ach_winner = await check_win_achievements(
-        session, winner, loser, final_sets, match, old_winner_rating, old_loser_rating,
+        session, winner, loser, match, old_winner_rating, old_loser_rating,
     )
     new_ach_loser = await check_loss_achievements(session, loser, final_sets)
     await session.commit()

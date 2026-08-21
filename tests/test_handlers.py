@@ -42,6 +42,7 @@ from bot.services.achievements import get_achievements
 from bot.states.states import MatchResultStates
 from bot.utils import (
     MSK_OFFSET,
+    as_naive,
     compute_alltime_streak,
     compute_ranks,
     env_int,
@@ -49,7 +50,9 @@ from bot.utils import (
     get_match_counts,
     get_rec_signal,
     msk_day_start,
+    msk_hour_and_weekday,
     pluralize_sets,
+    rating_tenths,
 )
 
 # ── Фикстуры и хелперы ──────────────────────────────────────────────────────────
@@ -958,6 +961,34 @@ def test_pluralize_sets():
     assert pluralize_sets(11) == "11 партий"
     assert pluralize_sets(21) == "21 партия"
     assert pluralize_sets(22) == "22 партии"
+
+
+# ── as_naive / msk_hour_and_weekday / rating_tenths ───────────────────────────
+
+def test_as_naive_strips_tzinfo():
+    aware = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    assert as_naive(aware) == datetime(2024, 1, 1, 12, 0, 0)
+    assert as_naive(aware).tzinfo is None
+
+
+def test_as_naive_passthrough_for_naive():
+    naive = datetime(2024, 1, 1, 12, 0, 0)
+    assert as_naive(naive) is naive
+
+
+def test_msk_hour_and_weekday_matches_for_naive_and_aware():
+    """Живой путь и бэкфилл раньше по-разному защищались от tz-aware дат —
+    общий хелпер должен давать одинаковый результат для naive и aware входа."""
+    naive = datetime(2024, 1, 1, 23, 30, 0)  # понедельник 23:30 UTC → вторник 02:30 МСК
+    aware = naive.replace(tzinfo=timezone.utc)
+    assert msk_hour_and_weekday(naive) == msk_hour_and_weekday(aware) == (2, 1)
+
+
+def test_rating_tenths_handles_float_noise():
+    assert rating_tenths(1100.0) == 11000
+    assert rating_tenths(900.0) == 9000
+    assert rating_tenths(1099.9999999) == 11000
+    assert rating_tenths(1113.7) == 11137
 
 
 # ── Скрытие игроков с 0 матчей / график по игроку ───────────────────────────────

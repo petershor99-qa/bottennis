@@ -13,8 +13,8 @@ from sqlalchemy.orm import selectinload
 
 from bot.db.database import DATABASE_URL, async_session
 from bot.db.models import Match, MatchStatus, Player
-from bot.handlers.profile import _compute_player_stats, _nearest_achievement_progress
 from bot.keyboards.inline import busy_with_match_kb
+from bot.services.stats import _compute_player_stats, _nearest_achievement_progress
 from bot.utils import (
     MSK_OFFSET,
     NEWCOMER_THRESHOLD,
