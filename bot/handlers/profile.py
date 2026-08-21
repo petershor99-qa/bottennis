@@ -2,11 +2,10 @@ from html import escape as h
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
-from sqlalchemy import desc, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from bot.db.models import Match, MatchStatus, Player
+from bot.db.models import Player
 from bot.keyboards.inline import (
     achievements_kb,
     player_achievements_kb,
@@ -27,6 +26,7 @@ from bot.utils import (
     compute_ranks,
     format_rank,
     get_active_match,
+    get_career_matches,
     get_match_counts,
     get_player,
 )
@@ -221,16 +221,7 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
         await _load_ranking_context(session, player)
     )
 
-    all_r = await session.execute(
-        select(Match)
-        .where(
-            or_(Match.challenger_id == player.id, Match.challenged_id == player.id),
-            Match.status == MatchStatus.completed,
-        )
-        .order_by(desc(Match.completed_at))
-        .options(selectinload(Match.challenger), selectinload(Match.challenged))
-    )
-    all_matches = all_r.scalars().all()
+    all_matches = await get_career_matches(session, player.id, with_opponents=True)
 
     if not all_matches:
         await callback.message.edit_text(
@@ -316,16 +307,7 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
         await _load_ranking_context(session, player)
     )
 
-    all_r = await session.execute(
-        select(Match)
-        .where(
-            or_(Match.challenger_id == player.id, Match.challenged_id == player.id),
-            Match.status == MatchStatus.completed,
-        )
-        .order_by(desc(Match.completed_at))
-        .options(selectinload(Match.challenger), selectinload(Match.challenged))
-    )
-    all_matches = all_r.scalars().all()
+    all_matches = await get_career_matches(session, player.id, with_opponents=True)
     matches = all_matches[:5]
 
     s = _compute_player_stats(player, all_matches)

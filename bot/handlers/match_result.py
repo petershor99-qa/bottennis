@@ -27,6 +27,7 @@ from bot.utils import (
     NEWCOMER_THRESHOLD,
     get_challenger,
     get_champion,
+    get_h2h_matches,
     get_player,
     msk_day_start,
     msk_hour_and_weekday,
@@ -79,8 +80,14 @@ async def _collect_egg_context(
     match_id: int,
     old_winner_rating: float,
     old_loser_rating: float,
+    h2h_matches: list[Match],
 ) -> dict:
-    """Собирает все данные для пасхалок из БД. Возвращает контекст."""
+    """Собирает все данные для пасхалок из БД. Возвращает контекст.
+
+    h2h_matches — завершённые матчи winner/loser ДО текущего (desc по
+    completed_at), уже загруженные вызывающим через bot.utils.get_h2h_matches()
+    — раньше здесь были ещё 2 отдельных запроса за той же историей.
+    """
 
     # ── Матчи победителя ─────────────────────────────────────────────────────
     w_r = await session.execute(
@@ -111,28 +118,8 @@ async def _collect_egg_context(
             break
 
     # ── H2H: первая кровь и реванш ───────────────────────────────────────────
-    h2h_cond = or_(
-        and_(Match.challenger_id == winner.id, Match.challenged_id == loser.id),
-        and_(Match.challenger_id == loser.id, Match.challenged_id == winner.id),
-    )
-    fb_r = await session.execute(
-        select(func.count()).select_from(Match).where(
-            Match.status == MatchStatus.completed,
-            Match.id != match_id,
-            Match.winner_id == winner.id,
-            h2h_cond,
-        )
-    )
-    first_blood = fb_r.scalar() == 0
-
-    h2h_r = await session.execute(
-        select(Match)
-        .where(Match.status == MatchStatus.completed, Match.id != match_id, h2h_cond)
-        .order_by(desc(Match.completed_at))
-        .limit(1)
-    )
-    last_h2h = h2h_r.scalar_one_or_none()
-    revenge = last_h2h is not None and last_h2h.winner_id == loser.id
+    first_blood = not any(m.winner_id == winner.id for m in h2h_matches)
+    revenge = bool(h2h_matches) and h2h_matches[0].winner_id == loser.id
 
     # ── Впервые на #1 ────────────────────────────────────────────────────────
     first_time_top1 = False
@@ -329,7 +316,7 @@ async def _send_h2h_milestone_egg(bot: Bot, session: AsyncSession, p1: Player, p
 
 
 async def _send_quick_rematch_egg(
-    bot: Bot, session: AsyncSession, p1: Player, p2: Player, created_at: datetime, match_id: int
+    bot: Bot, p1: Player, p2: Player, created_at: datetime | None, h2h_matches: list[Match],
 ) -> None:
     """Пасхалка: та же пара сыграла повторно в течение 10 минут после предыдущего матча.
 
@@ -339,23 +326,13 @@ async def _send_quick_rematch_egg(
     могла не сработать для честного быстрого реванша, если сам матч-реванш
     оказался долгим (гэп мерился от конца затянувшегося матча, а не от его
     старта сразу после предыдущего).
+
+    h2h_matches — завершённые матчи между p1/p2 ДО текущего (desc completed_at),
+    из общего bot.utils.get_h2h_matches() — раньше запрашивались здесь же отдельно.
     """
     if created_at is None:
         return
-    r = await session.execute(
-        select(Match)
-        .where(
-            Match.status == MatchStatus.completed,
-            Match.id != match_id,
-            or_(
-                and_(Match.challenger_id == p1.id, Match.challenged_id == p2.id),
-                and_(Match.challenger_id == p2.id, Match.challenged_id == p1.id),
-            ),
-        )
-        .order_by(desc(Match.completed_at))
-        .limit(1)
-    )
-    prev = r.scalar_one_or_none()
+    prev = h2h_matches[0] if h2h_matches else None
     if prev is None or not prev.completed_at:
         return
     gap = (created_at - prev.completed_at).total_seconds()
@@ -377,12 +354,13 @@ async def _send_easter_eggs(
     old_loser_rating: float,
     final_sets: list[dict],
     match_id: int,
+    h2h_matches: list[Match],
     completed_at: datetime | None = None,
     created_at: datetime | None = None,
 ) -> None:
     """Пасхалки после матча — победителю, проигравшему и обоим."""
     ctx = await _collect_egg_context(
-        session, winner, loser, final_sets, match_id, old_winner_rating, old_loser_rating
+        session, winner, loser, final_sets, match_id, old_winner_rating, old_loser_rating, h2h_matches,
     )
     await _send_winner_eggs(bot, winner, loser, ctx)
     await _send_loser_eggs(bot, loser, winner, ctx, old_loser_rating)
@@ -414,7 +392,7 @@ async def _send_easter_eggs(
         await _send_time_based_eggs(bot, [winner, loser], completed_at)
         await _send_h2h_milestone_egg(bot, session, winner, loser)
     if created_at is not None:
-        await _send_quick_rematch_egg(bot, session, winner, loser, created_at, match_id)
+        await _send_quick_rematch_egg(bot, winner, loser, created_at, h2h_matches)
 
 
 def _restart_notice_kb() -> InlineKeyboardMarkup:
@@ -894,7 +872,8 @@ async def _award_draw_achievements_and_eggs(
 
     await _send_time_based_eggs(bot, [challenger, challenged], match.completed_at)
     await _send_h2h_milestone_egg(bot, session, challenger, challenged)
-    await _send_quick_rematch_egg(bot, session, challenger, challenged, match.created_at, match_id)
+    h2h_matches = await get_h2h_matches(session, challenger.id, challenged.id, exclude_match_id=match_id)
+    await _send_quick_rematch_egg(bot, challenger, challenged, match.created_at, h2h_matches)
 
 
 async def _award_win_achievements_and_eggs(
@@ -904,9 +883,17 @@ async def _award_win_achievements_and_eggs(
     winner_db_id: int, loser_db_id: int,
 ) -> None:
     """Достижения победителя/проигравшего, пасхалки после победы, уведомление
-    о серии побед над одним соперником, кратной 10."""
+    о серии побед над одним соперником, кратной 10.
+
+    h2h-история между winner/loser запрашивается один раз и переиспользуется
+    в check_win_achievements (revenge/no_rest_win), пасхалках (_collect_egg_context,
+    _send_quick_rematch_egg) и ниже для серии побед подряд — раньше эти 4 места
+    независимо запрашивали одну и ту же историю по 4 отдельных запроса.
+    """
+    h2h_matches = await get_h2h_matches(session, winner.id, loser.id, exclude_match_id=match_id)
+
     new_ach_winner = await check_win_achievements(
-        session, winner, loser, match, old_winner_rating, old_loser_rating,
+        session, winner, loser, match, old_winner_rating, old_loser_rating, h2h_matches,
     )
     new_ach_loser = await check_loss_achievements(session, loser, final_sets)
     await session.commit()
@@ -915,31 +902,19 @@ async def _award_win_achievements_and_eggs(
 
     await _send_easter_eggs(
         bot, session, winner, loser, old_winner_rating, old_loser_rating, final_sets, match_id,
-        completed_at=match.completed_at, created_at=match.created_at,
+        h2h_matches, completed_at=match.completed_at, created_at=match.created_at,
     )
 
-    # Проверка серии побед над одним соперником
-    r_series = await session.execute(
-        select(Match)
-        .where(
-            Match.status == MatchStatus.completed,
-            or_(
-                and_(Match.challenger_id == winner_db_id, Match.challenged_id == loser_db_id),
-                and_(Match.challenger_id == loser_db_id, Match.challenged_id == winner_db_id),
-            ),
-        )
-        .order_by(desc(Match.completed_at))
-    )
-    series_matches = r_series.scalars().all()
-
-    consecutive = 0
-    for m in series_matches:
+    # Проверка серии побед над одним соперником — текущий матч (всегда победа
+    # winner_db_id) + трейлинг серия побед в уже загруженном h2h_matches.
+    consecutive = 1
+    for m in h2h_matches:
         if m.winner_id == winner_db_id:
             consecutive += 1
         else:
             break
 
-    if consecutive > 0 and consecutive % 10 == 0:
+    if consecutive % 10 == 0:
         try:
             await bot.send_message(
                 winner.telegram_id,

@@ -22,6 +22,7 @@ from bot.utils import (
     compute_ranks,
     env_int,
     get_active_match,
+    get_career_matches,
     get_champion,
     get_match_counts,
     match_drama_reason,
@@ -460,13 +461,7 @@ async def send_weekly_digest(bot: Bot) -> None:
             # Прогресс до ближайшей незаработанной ачивки — та же логика, что и
             # в личной статистике (profile.py), просто раз в неделю напоминанием,
             # а не только по запросу на экране «Статистика».
-            career_r = await session.execute(
-                select(Match).where(
-                    or_(Match.challenger_id == player.id, Match.challenged_id == player.id),
-                    Match.status == MatchStatus.completed,
-                ).order_by(desc(Match.completed_at))
-            )
-            career_matches = career_r.scalars().all()
+            career_matches = await get_career_matches(session, player.id)
             progress = _nearest_achievement_progress(
                 player, _compute_player_stats(player, career_matches), len(players)
             )
