@@ -111,6 +111,7 @@ Telegram-бот для рейтинговых игр в настольный т�
 | `bot/handlers/admin.py` | Админ-команды: `/dbstats`, `/myid`, `/backup` (бэкап БД по запросу) |
 | `bot/keyboards/inline.py` | Все inline-клавиатуры проекта |
 | `bot/services/rating.py` | Формула ELO с бонусом за доминирование |
+| `bot/services/stats.py` | `_compute_player_stats`, `_nearest_achievement_progress` — общие для profile.py и еженедельного дайджеста (scheduler.py), вынесены из profile.py, чтобы хендлер не импортировал напрямую из другого хендлера |
 | `bot/db/models.py` | Модели Player (+`is_champion`), Match (+`is_boss_fight`), MatchStatus, `ChampionReign` (журнал правлений на #1) |
 | `bot/db/database.py` | Engine, async_session, init_db (бэкфилл ачивок + `bootstrap_champion`) |
 | `bot/middleware.py` | DatabaseMiddleware — открывает сессию на каждый апдейт |
@@ -272,7 +273,7 @@ ssh root@НОВЫЙ_IP "cd /opt/bottennis && git pull && systemctl restart botte
 # Текущий статус (август 2026)
 
 **Статус проекта:** активная разработка. Проект живой и дорабатывается — новые фичи, UX-правки, багфиксы. Никакого фич-фриза (был maintenance mode с v2.63.2, снят в июле 2026). Идеи обсуждаем и делаем, а не складываем в backlog по умолчанию.
-**Готово:** всё перечисленное в разделе "Что умеет бот" (включая боссфайт за 1-е место, v2.84.0, и его харденинг по итогам код-ревью, v2.85.0). Код в `develop`, ждёт релизного PR в `main`; 299 тестов, CI зелёный.
+**Готово:** всё перечисленное в разделе "Что умеет бот" (включая боссфайт за 1-е место, v2.84.0, и его харденинг по итогам код-ревью, v2.85.0). Код в `develop`, ждёт релизного PR в `main`; 405 тестов, CI зелёный.
 **Хостинг:** ✅ переезд завершён — бот живой на новом сервере FirstVDS (Нидерланды), systemd-сервис `bottennis`, БД в `/data/bottennis.db`. BOT_TOKEN перевыпущен, секреты CI обновлены под новый сервер.
 **Автодеплой:** ✅ с v2.55.0 — job `deploy` в `.github/workflows/tests.yml`. Мерж PR `develop→main` → при зелёных `lint`+`pytest` job по SSH делает `git pull` + `systemctl restart bottennis`. Секреты репозитория: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` (выделенный ed25519 deploy-ключ).
 **Авторелиз:** ✅ — job `release` в том же workflow при мерже в `main` создаёт GitHub Release из верхней секции `RELEASE_NOTES.md` (идемпотентно, по тегу).

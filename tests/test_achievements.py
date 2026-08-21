@@ -101,7 +101,7 @@ async def _do_win(
     sets = sets or _DEFAULT_SETS
     m = await _add_win(session, winner, loser, sets=sets, dt=dt or _ts(), created_at=created_at)
     return await check_win_achievements(
-        session, winner, loser, sets, m, old_wr, old_lr,
+        session, winner, loser, m, old_wr, old_lr,
     )
 
 
@@ -1226,7 +1226,7 @@ async def test_round_hundred_fires_directly(db):
     p1.rating = 1100.0  # имитирует результат, попавший ровно на круглую цифру
 
     new = await check_win_achievements(
-        db, p1, p2, _DEFAULT_SETS, await _add_win(db, p1, p2), 1090.0, 1000.0,
+        db, p1, p2, await _add_win(db, p1, p2), 1090.0, 1000.0,
     )
     assert "round_hundred" in new
 
@@ -1238,7 +1238,7 @@ async def test_no_round_hundred_on_non_round_rating(db):
     p1.rating = 1113.7
 
     new = await check_win_achievements(
-        db, p1, p2, _DEFAULT_SETS, await _add_win(db, p1, p2), 1090.0, 1000.0,
+        db, p1, p2, await _add_win(db, p1, p2), 1090.0, 1000.0,
     )
     assert "round_hundred" not in new
 
@@ -1386,6 +1386,54 @@ async def test_backfill_assigns_full_circle_week(db):
     assert "full_circle_week" in get_achievements(p1)
 
 
+async def test_backfill_full_circle_week_respects_trailing_window(db):
+    """Победа над p2 больше 7 дней назад не должна засчитываться в «Полный
+    круг» — регресс на скользящее окно (recent_wins), заменившее полный скан
+    matches на каждой победе."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    eight_days = 8 * 24 * 3600
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=_DEFAULT_SETS, completed_at=_ts(0),
+    ))
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p3.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=_DEFAULT_SETS, completed_at=_ts(eight_days),
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "full_circle_week" not in get_achievements(p1)
+
+
+async def test_backfill_full_circle_week_fires_with_fresh_win_in_window(db):
+    """Та же связка, но повторная победа над p2 внутри окна — уже засчитывается."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    eight_days = 8 * 24 * 3600
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=_DEFAULT_SETS, completed_at=_ts(0),
+    ))
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=_DEFAULT_SETS, completed_at=_ts(eight_days - 3600),
+    ))
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p3.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=_DEFAULT_SETS, completed_at=_ts(eight_days),
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "full_circle_week" in get_achievements(p1)
+
+
 # ── draw_double ───────────────────────────────────────────────────────────────
 
 async def test_draw_double_fires_on_two_consecutive_draws(db):
@@ -1440,7 +1488,7 @@ async def test_first_crown_fires_on_first_boss_fight_win(db):
     db.add(m)
     await db.flush()
 
-    new = await check_win_achievements(db, p1, p2, _DEFAULT_SETS, m, 1000.0, 1000.0)
+    new = await check_win_achievements(db, p1, p2, m, 1000.0, 1000.0)
     assert "first_crown" in new
 
 
@@ -1460,7 +1508,7 @@ async def test_no_first_crown_on_second_boss_fight_win(db):
     db.add(m2)
     await db.flush()
 
-    new = await check_win_achievements(db, p1, p2, _DEFAULT_SETS, m2, 1000.0, 1000.0)
+    new = await check_win_achievements(db, p1, p2, m2, 1000.0, 1000.0)
     assert "first_crown" not in new
 
 

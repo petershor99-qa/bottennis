@@ -10,7 +10,7 @@
 Хранение: player.achievements — JSON-список заработанных id.
 """
 import json
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -18,7 +18,7 @@ from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Match, MatchStatus, Player
-from bot.utils import MSK_OFFSET, msk_day_start
+from bot.utils import MSK_OFFSET, as_naive, msk_day_start, msk_hour_and_weekday, rating_tenths
 
 
 @dataclass
@@ -142,7 +142,6 @@ async def check_win_achievements(
     session: AsyncSession,
     winner: Player,
     loser: Player,
-    sets_data: list[dict],          # winner perspective: [{"w": winner_pts, "l": loser_pts}, ...]
     match: Match,
     old_winner_rating: float,
     old_loser_rating: float,
@@ -151,6 +150,7 @@ async def check_win_achievements(
     Проверяет все достижения после победы.
     Возвращает список id новых (только что заработанных) достижений победителя.
     """
+    sets_data = match.sets_data  # winner perspective: [{"w": winner_pts, "l": loser_pts}, ...]
     earned = get_achievements(winner)
     new_ids: list[str] = []
 
@@ -253,17 +253,13 @@ async def check_win_achievements(
 
     # ── Добивашка: этот матч начат в течение 10 минут после предыдущего между
     # этой же парой — переиспользует h2h[1], уже загруженный для «Ответ_очка».
-    # completed_at/created_at в проде naive-UTC; .replace(tzinfo=None) защищает
-    # от tz-aware дат (тот же приём, что и у «Неистого» выше по файлу) ────────
     if len(h2h) >= 2 and match.created_at and h2h[1].completed_at:
-        gap = (
-            match.created_at.replace(tzinfo=None) - h2h[1].completed_at.replace(tzinfo=None)
-        ).total_seconds()
+        gap = (as_naive(match.created_at) - as_naive(h2h[1].completed_at)).total_seconds()
         if 0 <= gap <= 600:
             maybe("no_rest_win")
 
     # ── Полуночник: матч завершился ночью (0:00–6:00 МСК) ────────────────────
-    if match.completed_at and 0 <= (match.completed_at.replace(tzinfo=None) + MSK_OFFSET).hour < 6:
+    if match.completed_at and 0 <= msk_hour_and_weekday(match.completed_at)[0] < 6:
         maybe("night_owl")
 
     # ── Дьюсопад: КАЖДАЯ партия матча закончилась на дьюсе (12+ очков, выиграна ──
@@ -278,7 +274,7 @@ async def check_win_achievements(
         maybe("absolute_zero")
 
     # ── Выходного дня: матч завершился в субботу или воскресенье (по МСК) ────
-    if match.completed_at and (match.completed_at.replace(tzinfo=None) + MSK_OFFSET).weekday() >= 5:
+    if match.completed_at and msk_hour_and_weekday(match.completed_at)[1] >= 5:
         maybe("weekend_warrior")
 
     # ── Вынес терминатора: у соперника была активная серия 5+ побед ДО этого матча ─
@@ -358,13 +354,13 @@ async def check_win_achievements(
 
     # ── Полный круг за неделю: обыграл каждого игрока клуба за трейлинг 7 дней ─
     if other_ids and match.completed_at:
-        week_ago = match.completed_at.replace(tzinfo=None) - timedelta(days=7)
+        week_ago = as_naive(match.completed_at) - timedelta(days=7)
         beaten_week_ids = {
             (m.challenged_id if m.challenger_id == winner.id else m.challenger_id)
             for m in all_matches
             if m.winner_id == winner.id
             and m.completed_at
-            and m.completed_at.replace(tzinfo=None) >= week_ago
+            and as_naive(m.completed_at) >= week_ago
         }
         if other_ids.issubset(beaten_week_ids):
             maybe("full_circle_week")
@@ -380,9 +376,7 @@ async def check_win_achievements(
         maybe("rating_1200")
 
     # ── Круглая цифра: рейтинг стал ровно кратен 100 ─────────────────────────
-    # round(x*10) вместо x % 100 == 0 — защита от погрешности float (winner.rating
-    # уже округлён до 1 знака выше по коду, но остаточная неточность бывает).
-    if round(winner.rating * 10) % 1000 == 0:
+    if rating_tenths(winner.rating) % 1000 == 0:
         maybe("round_hundred")
 
     # ── CumБэк: выиграл, проиграв первые две партии (0:2 → победа) ───────────
@@ -402,10 +396,9 @@ async def check_win_achievements(
         maybe("titans")
 
     # ── Неистого: все матчи за сегодня — победы (от 3) ──────────────────────
-    # completed_at в проде naive-UTC; .replace(tzinfo=None) защищает от tz-aware дат
     today_matches = [
         m for m in all_matches
-        if m.completed_at and m.completed_at.replace(tzinfo=None) >= today_start
+        if m.completed_at and as_naive(m.completed_at) >= today_start
     ]
     if len(today_matches) >= 3 and all(m.winner_id == winner.id for m in today_matches):
         maybe("relentless")
@@ -514,9 +507,7 @@ async def check_loss_achievements(
         maybe("takova_zhis")
 
     # ── Дно: рейтинг упал ровно до пола ветерана (900.0) ─────────────────────
-    # round(x*10) вместо x == 900.0 — защита от погрешности float, тот же приём,
-    # что у «Круглая цифра» в check_win_achievements.
-    if round(loser.rating * 10) == 9000:
+    if rating_tenths(loser.rating) == 9000:
         maybe("rock_bottom")
 
     if new_ids:
@@ -773,6 +764,9 @@ async def backfill_achievements(session: AsyncSession) -> None:
         prev_was_draw = False  # для «Дубль мира»
         had_boss_fight_before = False  # для «Первая корона»
         other_ids_bf = all_player_ids - {player.id}  # для «Полный круг за неделю»
+        # Скользящее окно побед за трейлинг 7 дней для «Полный круг за неделю» —
+        # деque вместо полного скана matches на КАЖДОЙ победе (был O(n²) на игрока).
+        recent_wins: deque[tuple[datetime, int]] = deque()
 
         for m in matches:
             opp_id = m.challenged_id if m.challenger_id == player.id else m.challenger_id
@@ -822,7 +816,7 @@ async def backfill_achievements(session: AsyncSession) -> None:
                     if any(s["w"] >= 12 and s["w"] > s["l"] for s in m.sets_data):
                         _add_new(earned, "deuce_maker")
                     # Полуночник: матч завершился ночью (0:00–6:00 МСК)
-                    if m.completed_at and 0 <= (m.completed_at + MSK_OFFSET).hour < 6:
+                    if m.completed_at and 0 <= msk_hour_and_weekday(m.completed_at)[0] < 6:
                         _add_new(earned, "night_owl")
                     # Дьюсопад: КАЖДАЯ партия закончилась на дьюсе
                     if len(m.sets_data) >= 2 and all(
@@ -836,22 +830,21 @@ async def backfill_achievements(session: AsyncSession) -> None:
                     ):
                         _add_new(earned, "absolute_zero")
                 # Выходного дня: матч завершился в субботу/воскресенье (по МСК)
-                if m.completed_at and (m.completed_at + MSK_OFFSET).weekday() >= 5:
+                if m.completed_at and msk_hour_and_weekday(m.completed_at)[1] >= 5:
                     _add_new(earned, "weekend_warrior")
                 # Добивашка: начат в течение 10 минут после предыдущего с этим же соперником
                 prev_vs = last_completed_vs.get(opp_id)
-                if prev_vs and m.created_at and 0 <= (m.created_at - prev_vs).total_seconds() <= 600:
+                if prev_vs and m.created_at and 0 <= (as_naive(m.created_at) - prev_vs).total_seconds() <= 600:
                     _add_new(earned, "no_rest_win")
-                # Полный круг за неделю: обыграл каждого игрока клуба за трейлинг 7 дней
+                # Полный круг за неделю: обыграл каждого игрока клуба за трейлинг 7 дней —
+                # скользящее окно (recent_wins), а не полный скан matches на каждой победе
                 if other_ids_bf and m.completed_at:
-                    week_ago = m.completed_at - timedelta(days=7)
-                    beaten_week_ids = {
-                        (mm.challenged_id if mm.challenger_id == player.id else mm.challenger_id)
-                        for mm in matches
-                        if mm.winner_id == player.id
-                        and mm.completed_at
-                        and week_ago <= mm.completed_at <= m.completed_at
-                    }
+                    completed_naive = as_naive(m.completed_at)
+                    recent_wins.append((completed_naive, opp_id))
+                    week_ago = completed_naive - timedelta(days=7)
+                    while recent_wins and recent_wins[0][0] < week_ago:
+                        recent_wins.popleft()
+                    beaten_week_ids = {oid for _, oid in recent_wins}
                     if other_ids_bf.issubset(beaten_week_ids):
                         _add_new(earned, "full_circle_week")
 
@@ -895,7 +888,7 @@ async def backfill_achievements(session: AsyncSession) -> None:
                     _add_new(earned, "marathon")
 
             if m.completed_at:
-                last_completed_vs[opp_id] = m.completed_at
+                last_completed_vs[opp_id] = as_naive(m.completed_at)
             prev_was_draw = is_draw
 
         # Первая победа / новичкам везёт
@@ -926,7 +919,7 @@ async def backfill_achievements(session: AsyncSession) -> None:
         day_groups: dict = {}
         for m in matches:
             if m.completed_at:
-                day_groups.setdefault((m.completed_at + MSK_OFFSET).date(), []).append(m)
+                day_groups.setdefault((as_naive(m.completed_at) + MSK_OFFSET).date(), []).append(m)
 
         other_ids_for_day = all_player_ids - {player.id}
         for day_matches in day_groups.values():
@@ -954,7 +947,7 @@ async def backfill_achievements(session: AsyncSession) -> None:
 
         # Теннисный маньячелло: любой день (по МСК) с 10+ матчами
         day_counts = Counter(
-            (m.completed_at + MSK_OFFSET).date() for m in matches if m.completed_at
+            (as_naive(m.completed_at) + MSK_OFFSET).date() for m in matches if m.completed_at
         )
         if any(cnt >= 10 for cnt in day_counts.values()):
             _add_new(earned, "maniac")
