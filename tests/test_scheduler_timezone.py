@@ -61,3 +61,13 @@ def test_monthly_summary_1st_1000_msk():
     assert (nxt.hour, nxt.minute) == (7, 0)
     assert nxt.day == 1
     assert nxt.date() == datetime(2026, 7, 1).date()
+
+
+def test_quarterly_summary_jan_apr_jul_oct_1st_1030_msk():
+    """Итоги квартала: 1-го числа января/апреля/июля/октября 10:30 МСК = 7:30 UTC.
+    От 2026-06-19 ближайшее совпадение месяца (1,4,7,10) и дня (1) — 2026-07-01."""
+    nxt = _next_utc("quarterly_summary", REF)
+    assert (nxt.hour, nxt.minute) == (7, 30)
+    assert nxt.day == 1
+    assert nxt.month in (1, 4, 7, 10)
+    assert nxt.date() == datetime(2026, 7, 1).date()
