@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 from html import escape as h
 
 from aiogram import Bot, F, Router
@@ -13,7 +14,7 @@ from sqlalchemy.orm import selectinload
 from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import back_to_menu_kb, main_menu_kb
 from bot.services.achievements import ACHIEVEMENTS_LIST
-from bot.utils import compute_ranks, env_int, format_rank, get_match_counts, get_player
+from bot.utils import MSK_OFFSET, compute_ranks, env_int, format_rank, get_match_counts, get_player
 
 router = Router()
 
@@ -133,7 +134,8 @@ async def cmd_help(message: Message):
         "<b>Команды:</b>\n"
         "/start — главное меню\n"
         "/cancel — отменить текущее действие\n"
-        "/help — эта справка\n\n"
+        "/help — эта справка\n"
+        "/feedback — отправить идею или баг напрямую разработчику\n\n"
         "<b>Матчи:</b>\n"
         "• ⚔️ Вызов соперника — матч начинается сразу, оба получают уведомление\n"
         "• 📋 Результат вносит любой участник: пошагово или счётом прямо в чат "
@@ -161,6 +163,41 @@ async def cmd_help(message: Message):
         "Разгром в партиях даёт больше очков, чем победа 3:2.",
         reply_markup=main_menu_kb(),
     )
+
+
+# ── /feedback ──────────────────────────────────────────────────────────────────
+
+@router.message(Command("feedback"))
+async def cmd_feedback(message: Message, command: CommandObject, bot: Bot) -> None:
+    """Пересылает отзыв/идею/баг от ЛЮБОГО игрока админу с контекстом (кто, когда).
+
+    В отличие от /fix_rating ниже — доступна всем, не только ADMIN_ID.
+    """
+    text = (command.args or "").strip()
+    if not text:
+        await message.answer(
+            "Напиши отзыв прямо в команде:\n"
+            "<code>/feedback хочу радар-диаграмму для личных встреч</code>",
+        )
+        return
+
+    if not ADMIN_ID:
+        await message.answer("⚠️ Обратная связь пока не настроена — сообщи разработчику лично.")
+        return
+
+    sender = message.from_user
+    sender_name = sender.full_name or (f"@{sender.username}" if sender.username else str(sender.id))
+    date_str = (datetime.now(timezone.utc) + MSK_OFFSET).strftime("%d.%m %H:%M")
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"💬 <b>Обратная связь</b>\n"
+            f"От: <b>{h(sender_name)}</b> ({date_str} МСК)\n\n"
+            f"{h(text)}",
+        )
+        await message.answer("Спасибо! Передал 🙏")
+    except Exception:
+        await message.answer("⚠️ Не получилось отправить — попробуй ещё раз позже.")
 
 
 # ── /fix_rating (admin) ───────────────────────────────────────────────────────

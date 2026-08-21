@@ -79,10 +79,12 @@ def _longest_streak(matches: list, name_map: dict, period: str) -> str | None:
     )
 
 
-def _longest_no_loss_streak(matches: list, name_map: dict, period: str) -> str | None:
+def _longest_no_loss_streak(matches: list, name_map: dict) -> str | None:
     """«Без поражений» — самая длинная серия без поражений (победа ИЛИ ничья,
     прерывается только поражением) внутри периода (от 2). Отдельная метрика от
-    _longest_streak (тот считает только чистые победные серии, ничья их обнуляет)."""
+    _longest_streak (тот считает только чистые победные серии, ничья их обнуляет).
+    Без суффикса периода в тексте (v2.97.0) — заголовок сообщения («Итоги дня»/
+    «Итоги недели») уже задаёт период, повтор в каждой строке был лишним."""
     by_player: dict[int, list] = {}
     for m in sorted(matches, key=lambda m: m.completed_at or datetime.min):
         for pid in (m.challenger_id, m.challenged_id):
@@ -101,16 +103,17 @@ def _longest_no_loss_streak(matches: list, name_map: dict, period: str) -> str |
     if best_pid is None or best_n < 2:
         return None
     return (
-        f"🧱 Без поражений {period} — <b>{h(name_map.get(best_pid, '?'))}</b>: "
+        f"🧱 Без поражений — <b>{h(name_map.get(best_pid, '?'))}</b>: "
         f"{pluralize_matches(best_n)} подряд"
     )
 
 
-def _biggest_swing(matches: list, name_map: dict, period: str) -> str | None:
+def _biggest_swing(matches: list, name_map: dict) -> str | None:
     """«Американские горки» — у кого рейтинг сильнее всего мотало туда-обратно
     за период: сумма |дельт| минус |итоговая дельта| — то, что отыграно назад,
     а значит НЕ видно в «Лучшем росте»/«Отрицательном росте» (те смотрят только
-    на чистый net-результат, а не на волатильность самого пути)."""
+    на чистый net-результат, а не на волатильность самого пути). Без суффикса
+    периода в тексте (v2.97.0) — см. _longest_no_loss_streak."""
     net: dict[int, float] = {}
     abs_total: dict[int, float] = {}
     for m in matches:
@@ -125,7 +128,7 @@ def _biggest_swing(matches: list, name_map: dict, period: str) -> str | None:
     if swing[best_pid] < 20:
         return None
     return (
-        f"🎢 Американские горки {period} — <b>{h(name_map.get(best_pid, '?'))}</b>: "
+        f"🎢 Американские горки — <b>{h(name_map.get(best_pid, '?'))}</b>: "
         f"рейтинг мотало на {round(swing[best_pid], 1)} pts туда-обратно"
     )
 
@@ -391,10 +394,10 @@ async def send_weekly_digest(bot: Bot) -> None:
         streak = _longest_streak(all_week_matches, player_name_map, "недели")
         if streak:
             hero_lines.append(streak)
-        no_loss = _longest_no_loss_streak(all_week_matches, player_name_map, "недели")
+        no_loss = _longest_no_loss_streak(all_week_matches, player_name_map)
         if no_loss:
             hero_lines.append(no_loss)
-        swing = _biggest_swing(all_week_matches, player_name_map, "недели")
+        swing = _biggest_swing(all_week_matches, player_name_map)
         if swing:
             hero_lines.append(swing)
 
@@ -610,15 +613,15 @@ async def send_daily_summary(bot: Bot) -> None:
                     f"<b>{h(name_map.get(pb, '?'))}</b>: {pluralize_matches(pn)}"
                 )
 
-        no_loss = _longest_no_loss_streak(matches, name_map, "дня")
+        no_loss = _longest_no_loss_streak(matches, name_map)
         if no_loss:
             lines.append(no_loss)
 
-        swing = _biggest_swing(matches, name_map, "дня")
+        swing = _biggest_swing(matches, name_map)
         if swing:
             lines.append(swing)
 
-        # Матч дня
+        # Топ-матч дня (было «Матч дня» — путалось с «Матчи дня» чуть ниже, v2.98.0)
         mod = pick_match_of_day(matches)
         if mod:
             ch = name_map.get(mod.challenger_id, "?")
@@ -626,13 +629,14 @@ async def send_daily_summary(bot: Bot) -> None:
             score_str = match_score_challenger_first(mod)
             reason = match_drama_reason(mod)
             lines.append(
-                f"\n🌟 <b>Матч дня</b>\n"
+                f"\n🌟 <b>Топ-матч дня</b>\n"
                 f"<b>{h(ch)}</b> vs <b>{h(cd)}</b> — {score_str}\n"
                 f"<i>{reason}</i>"
             )
 
-        # Матчи дня — общий лог клуба (нейтрально, счёт в перспективе challenger, победитель жирным)
-        log_lines = ["\n📋 <b>Матчи дня:</b>"]
+        # Все матчи — общий лог клуба (было «Матчи дня», v2.98.0). Нейтрально,
+        # счёт в перспективе challenger, победитель жирным.
+        log_lines = ["\n📋 <b>Все матчи:</b>"]
         for m in matches:
             mch = h(name_map.get(m.challenger_id, "?"))
             mcd = h(name_map.get(m.challenged_id, "?"))
@@ -700,6 +704,14 @@ MONTH_NAMES_GEN = {
     1: "января", 2: "февраля", 3: "марта", 4: "апреля",
     5: "мая", 6: "июня", 7: "июля", 8: "августа",
     9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
+}
+
+# Именительный падеж — для диапазона месяцев квартала («июль–сентябрь»), где
+# родительный (MONTH_NAMES_GEN, «месяц ИЮЛЯ») звучит неверно.
+MONTH_NAMES_NOM = {
+    1: "январь", 2: "февраль", 3: "март", 4: "апрель",
+    5: "май", 6: "июнь", 7: "июль", 8: "август",
+    9: "сентябрь", 10: "октябрь", 11: "ноябрь", 12: "декабрь",
 }
 
 
@@ -831,6 +843,157 @@ async def send_monthly_summary(bot: Bot) -> None:
     logger.info("Итоги месяца за %s отправлены", month_label)
 
 
+# ── Итоги квартала (1-е число января/апреля/июля/октября, 10:30 МСК) ─────────
+# «Итог сезона» в духе Spotify Wrapped — редкая (раз в 3 месяца) большая сводка,
+# самая насыщенная метриками из всех периодических дайджестов (в отличие от
+# месячной, сознательно не трогавшейся в v2.91.0 — там материала на квартал
+# накапливается достаточно, чтобы имело смысл добавить «Без поражений» и
+# «Американские горки» из недельной/дневной, плюс суммарные очки).
+
+def _quarter_bounds_msk(now_msk: datetime) -> tuple[datetime, datetime]:
+    """(начало, конец) квартала, ЗАВЕРШИВШЕГОСЯ к моменту now_msk — по МСК,
+    naive. Джоба стартует 1-го числа января/апреля/июля/октября, поэтому
+    «завершившийся квартал» — три календарных месяца перед текущим."""
+    end = now_msk.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    start = end
+    for _ in range(3):
+        start = (start - timedelta(days=1)).replace(day=1)
+    return start, end
+
+
+async def send_quarterly_summary(bot: Bot) -> None:
+    """1-го числа января/апреля/июля/октября в 10:30 МСК — итоги прошедшего квартала."""
+    async with async_session() as session:
+        msk_now = datetime.now(timezone.utc).replace(tzinfo=None) + MSK_OFFSET
+        quarter_start_msk, quarter_end_msk = _quarter_bounds_msk(msk_now)
+        quarter_start_utc = quarter_start_msk - MSK_OFFSET
+        quarter_end_utc = quarter_end_msk - MSK_OFFSET
+
+        first_name = MONTH_NAMES_NOM[quarter_start_msk.month]
+        last_month = quarter_start_msk.month + 2
+        last_name = MONTH_NAMES_NOM[last_month]
+        quarter_label = f"{first_name}–{last_name} {quarter_start_msk.year}"
+
+        matches_r = await session.execute(
+            select(Match)
+            .where(
+                Match.status == MatchStatus.completed,
+                Match.completed_at >= quarter_start_utc,
+                Match.completed_at < quarter_end_utc,
+            )
+            .options(selectinload(Match.challenger), selectinload(Match.challenged))
+        )
+        matches = matches_r.scalars().all()
+
+        if not matches:
+            logger.info("Итоги квартала %s: матчей не было, пропускаем", quarter_label)
+            return
+
+        players_r = await session.execute(select(Player))
+        players = players_r.scalars().all()
+        name_map = {p.id: p.display_name for p in players}
+
+        wins: dict[int, int] = {}
+        losses: dict[int, int] = {}
+        draws: dict[int, int] = {}
+        match_count: dict[int, int] = {}
+        delta_sum: dict[int, float] = {}
+
+        for m in matches:
+            for pid in (m.challenger_id, m.challenged_id):
+                match_count[pid] = match_count.get(pid, 0) + 1
+                delta_sum[pid] = delta_sum.get(pid, 0.0) + match_rating_delta(m, pid)
+            if m.winner_id is None:
+                draws[m.challenger_id] = draws.get(m.challenger_id, 0) + 1
+                draws[m.challenged_id] = draws.get(m.challenged_id, 0) + 1
+            else:
+                wins[m.winner_id] = wins.get(m.winner_id, 0) + 1
+                lid = m.challenged_id if m.winner_id == m.challenger_id else m.challenger_id
+                losses[lid] = losses.get(lid, 0) + 1
+
+        total_sets = sum(len(m.sets_data) if m.sets_data else 0 for m in matches)
+        total_points = _total_points(matches)
+
+        lines = [
+            f"🏆 <b>Итоги квартала — {quarter_label}</b>\n",
+            f"⚡ Сыграно: <b>{pluralize_matches(len(matches))}</b>, "
+            f"<b>{pluralize_sets(total_sets)}</b>, <b>{pluralize_points(total_points)}</b>\n",
+            "🥇 <b>Топ квартала:</b>",
+        ]
+
+        sorted_ids = sorted(
+            match_count,
+            key=lambda pid: (wins.get(pid, 0), match_count.get(pid, 0)),
+            reverse=True,
+        )
+        medals = ["🥇", "🥈", "🥉"]
+        for i, pid in enumerate(sorted_ids):
+            prefix = medals[i] if i < 3 else f"{i + 1}."
+            w = wins.get(pid, 0)
+            lo = losses.get(pid, 0)
+            d = draws.get(pid, 0)
+            total = match_count[pid]
+            wr = int(w / total * 100) if total else 0
+            draws_str = f"–{d}🤝" if d else ""
+            lines.append(
+                f"{prefix} <b>{h(name_map.get(pid, '?'))}</b> — "
+                f"{w}–{lo}{draws_str}  <i>({wr}%)</i>"
+            )
+
+        if delta_sum:
+            best_id = max(delta_sum, key=delta_sum.get)
+            if delta_sum[best_id] > 0:
+                lines.append(
+                    f"\n📈 Лучший рост — <b>{h(name_map.get(best_id, '?'))}</b>: "
+                    f"+{round(delta_sum[best_id], 1)} pts"
+                )
+            worst_id = min(delta_sum, key=delta_sum.get)
+            if delta_sum[worst_id] < 0:
+                lines.append(
+                    f"📉 Отрицательный рост — <b>{h(name_map.get(worst_id, '?'))}</b>: "
+                    f"{round(delta_sum[worst_id], 1)} pts"
+                )
+
+        most_active_id = max(match_count, key=match_count.get)
+        lines.append(
+            f"🏓 Главный теннисист — <b>{h(name_map.get(most_active_id, '?'))}</b>: "
+            f"{pluralize_matches(match_count[most_active_id])}"
+        )
+        derby = _most_played_pair(matches, name_map)
+        if derby:
+            lines.append(derby)
+        streak = _longest_streak(matches, name_map, "квартала")
+        if streak:
+            lines.append(streak)
+        no_loss = _longest_no_loss_streak(matches, name_map)
+        if no_loss:
+            lines.append(no_loss)
+        swing = _biggest_swing(matches, name_map)
+        if swing:
+            lines.append(swing)
+
+        mod = pick_match_of_day(matches)
+        if mod:
+            ch = name_map.get(mod.challenger_id, "?")
+            cd = name_map.get(mod.challenged_id, "?")
+            score_str = match_score_challenger_first(mod)
+            reason = match_drama_reason(mod)
+            lines.append(
+                f"\n🌟 <b>Топ-матч квартала</b>\n"
+                f"<b>{h(ch)}</b> vs <b>{h(cd)}</b> — {score_str}\n"
+                f"<i>{reason}</i>"
+            )
+
+        text = "\n".join(lines)
+        for p in players:
+            try:
+                await bot.send_message(p.telegram_id, text)
+            except Exception:
+                pass
+
+    logger.info("Итоги квартала за %s отправлены", quarter_label)
+
+
 # ── Инициализация планировщика ────────────────────────────────────────────────
 
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
@@ -894,6 +1057,15 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         CronTrigger(day=1, hour=10, minute=0, timezone=msk),
         args=[bot],
         id="monthly_summary",
+    )
+
+    # Итоги квартала — 1-го числа января/апреля/июля/октября в 10:30 МСК
+    # (следом за итогами месяца/бэкапом — та же дата у всех трёх джоб).
+    scheduler.add_job(
+        send_quarterly_summary,
+        CronTrigger(month="1,4,7,10", day=1, hour=10, minute=30, timezone=msk),
+        args=[bot],
+        id="quarterly_summary",
     )
 
     return scheduler
