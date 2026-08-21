@@ -161,7 +161,7 @@ async def cmd_help(message: Message):
         "<b>Рейтинг:</b> модифицированный ELO.\n"
         "Чем слабее соперник — тем меньше очков за победу.\n"
         "Разгром в партиях даёт больше очков, чем победа 3:2.",
-        reply_markup=main_menu_kb(),
+        reply_markup=back_to_menu_kb(),
     )
 
 

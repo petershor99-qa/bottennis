@@ -23,6 +23,7 @@ from bot.utils import (
     most_boss_fight_defenses,
     msk_day_start,
     pluralize_days,
+    pluralize_defenses,
     pluralize_matches,
     pluralize_wins,
 )
@@ -345,7 +346,7 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
         if defense_count >= 1:
             volume_lines.append(
                 f"🛡 Больше всего защит трона подряд — <b>{h(name_map.get(defense_player_id, '?'))}</b>: "
-                f"{pluralize_wins(defense_count)}"
+                f"{pluralize_defenses(defense_count)}"
             )
 
     # Больше всего ничьих

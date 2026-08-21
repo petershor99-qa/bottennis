@@ -146,6 +146,11 @@ def pluralize_wins(n: int) -> str:
     return _ru_plural(n, "победа", "победы", "побед")
 
 
+def pluralize_defenses(n: int) -> str:
+    """1 защита / 2 защиты / 5 защит"""
+    return _ru_plural(n, "защита", "защиты", "защит")
+
+
 def pluralize_points(n: int) -> str:
     """1 очко / 2 очка / 5 очков"""
     return _ru_plural(n, "очко", "очка", "очков")
