@@ -92,8 +92,9 @@ Telegram-бот для рейтинговых игр в настольный т�
 - Экран «Мои матчи»: активные матчи клуба + «С кем сыграть?» с рекомендациями (`get_rec_signal`)
 - Только один активный матч на игрока одновременно + напоминание через 24 часа, если матч завис
 - Итоги дня каждый вечер в 21:30 МСК (топ дня + «матч дня»)
-- Еженедельный дайджест каждый понедельник в 9:00 МСК + итоги месяца 1-го числа в 10:00 МСК
+- Еженедельный дайджест каждый понедельник в 9:00 МСК + итоги месяца 1-го числа в 10:00 МСК + итоги квартала 1-го числа января/апреля/июля/октября в 10:30 МСК
 - Ежемесячный offsite-бэкап БД админу в личку (1-го числа 10:15 МСК) + `/backup` для бэкапа по запросу (админ)
+- `/feedback` — отправить идею/баг напрямую разработчику, доступна всем игрокам
 
 ---
 
@@ -115,7 +116,7 @@ Telegram-бот для рейтинговых игр в настольный т�
 | `bot/db/models.py` | Модели Player (+`is_champion`), Match (+`is_boss_fight`), MatchStatus, `ChampionReign` (журнал правлений на #1) |
 | `bot/db/database.py` | Engine, async_session, init_db (бэкфилл ачивок + `bootstrap_champion`) |
 | `bot/middleware.py` | DatabaseMiddleware — открывает сессию на каждый апдейт |
-| `bot/scheduler.py` | Напоминание о незавершённом матче (раз в час, от 24ч) + авто-освобождение трона (раз в час, от 7 дней) + итоги дня (21:30) / недели (пн 9:00) / месяца (1-го 10:00) + offsite-бэкап БД (`send_backup_file`, общий с `/backup`). Хелперы `_most_played_pair`, `_longest_streak` |
+| `bot/scheduler.py` | Напоминание о незавершённом матче (раз в час, от 24ч) + авто-освобождение трона (раз в час, от 7 дней) + итоги дня (21:30) / недели (пн 9:00) / месяца (1-го 10:00) / квартала (1-го января/апреля/июля/октября 10:30) + offsite-бэкап БД (`send_backup_file`, общий с `/backup`). Хелперы `_most_played_pair`, `_longest_streak`, `_quarter_bounds_msk` |
 | `bot/states/states.py` | FSM-состояния ввода результата |
 | `bot/services/validation.py` | Валидация счёта партии по правилам настольного тенниса |
 | `bot/utils.py` | `get_player`, `match_rating_delta`, `pluralize_matches`/`pluralize_wins`/`pluralize_days`, `_match_line`, H2H (`compute_h2h`), «матч дня» (`match_drama_score`/`pick_match_of_day`), босс-файт (`get_champion`/`get_challenger`/`get_champion_and_challenger`/`bootstrap_champion`/`try_transfer_champion`/`boss_fight_rematch_blocked`/`longest_champion_reign`), `notify_all_players` |
