@@ -20,6 +20,11 @@ from bot.services.achievements import (
     check_loss_achievements,
     check_win_achievements,
 )
+from bot.services.personal_records import (
+    check_personal_records_on_draw,
+    check_personal_records_on_loss,
+    check_personal_records_on_win,
+)
 from bot.services.rating import calculate_draw_rating_change, calculate_rating_change
 from bot.services.validation import validate_set_score
 from bot.states.states import MatchResultStates
@@ -51,6 +56,16 @@ BOSS_FIGHT_MULT = 2.0     # множитель дельты в босс-файт
 def _fmt_delta(d: float) -> str:
     """Форматирует дельту рейтинга: +8.5 или -3.2"""
     return f"+{d}" if d >= 0 else str(d)
+
+
+async def _send_personal_records(bot: Bot, player: Player, messages: list[str]) -> None:
+    """Отправляет игроку все сработавшие уведомления о личных рекордах
+    (bot/services/personal_records.py) — их может быть несколько за один матч."""
+    for text in messages:
+        try:
+            await bot.send_message(player.telegram_id, text)
+        except Exception:
+            pass
 
 
 async def _notify_achievements(bot: Bot, player, new_ids: list[str]) -> None:
@@ -875,6 +890,10 @@ async def _award_draw_achievements_and_eggs(
     h2h_matches = await get_h2h_matches(session, challenger.id, challenged.id, exclude_match_id=match_id)
     await _send_quick_rematch_egg(bot, challenger, challenged, match.created_at, h2h_matches)
 
+    for p in (challenger, challenged):
+        personal_records = await check_personal_records_on_draw(session, p, match)
+        await _send_personal_records(bot, p, personal_records)
+
 
 async def _award_win_achievements_and_eggs(
     session: AsyncSession, bot: Bot, winner: Player, loser: Player,
@@ -904,6 +923,11 @@ async def _award_win_achievements_and_eggs(
         bot, session, winner, loser, old_winner_rating, old_loser_rating, final_sets, match_id,
         h2h_matches, completed_at=match.completed_at, created_at=match.created_at,
     )
+
+    personal_records_winner = await check_personal_records_on_win(session, winner, match)
+    await _send_personal_records(bot, winner, personal_records_winner)
+    personal_records_loser = await check_personal_records_on_loss(session, loser, match)
+    await _send_personal_records(bot, loser, personal_records_loser)
 
     # Проверка серии побед над одним соперником — текущий матч (всегда победа
     # winner_db_id) + трейлинг серия побед в уже загруженном h2h_matches.
