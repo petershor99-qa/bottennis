@@ -2611,3 +2611,22 @@ async def test_no_ten_in_a_row_notification_on_ninth_win(db):
     await confirm_result(cb, db, st, bot)
 
     assert not any("умереть не может" in t for t in _texts(bot))
+
+
+async def test_personal_record_fires_end_to_end(db):
+    """Проверяет реальную проводку личных рекордов через confirm_result, а не
+    только сам модуль в изоляции (см. tests/test_personal_records.py)."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 5}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert any("RAMPAGE" in t and "2 побед подряд" in t for t in _texts(bot))
