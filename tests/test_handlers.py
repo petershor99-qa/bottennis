@@ -1203,6 +1203,71 @@ async def test_dominance_matrix_escapes_player_name(db):
     assert "&lt;" in text
 
 
+# ── Индекс формы ─────────────────────────────────────────────────────────────
+
+async def test_form_index_sorts_by_recent_delta(db):
+    """Alice выигрывает подряд у Bob (растёт), Bob проигрывает (падает) —
+    Alice должна оказаться выше Bob в индексе формы."""
+    from bot.handlers.leaderboard import show_form_index
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(3):
+        db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1 + i, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "form_index")
+    await show_form_index(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Индекс формы" in text
+    assert text.index("Alice") < text.index("Bob")
+    assert "🔥" in text  # Alice +30 за 3 матча — выше порога "в форме"
+    assert "🥶" in text  # Bob -30 — ниже порога "не в форме"
+
+
+async def test_form_index_window_limits_to_last_n_matches(db):
+    """РЕГРЕССИЯ: индекс формы должен учитывать только последние FORM_WINDOW
+    матчей, а не всю карьеру — иначе это просто дубль лидерборда.
+
+    Самый старый матч — Bob разгромил Alice на 200 pts. Дальше 10 матчей
+    подряд Alice выигрывает по 5 pts. Без ограничения окна суммарная дельта
+    Alice за ВСЮ историю отрицательна (-200+50=-150), и по общей сумме
+    впереди оказался бы Bob. С окном в последние FORM_WINDOW=10 матчей
+    древний разгром не учитывается — Alice впереди (+50 против -50 у Bob)."""
+    from bot.handlers.leaderboard import FORM_WINDOW, show_form_index
+
+    assert FORM_WINDOW == 10
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p2.id, 200.0, datetime(2026, 6, 1, 12, 0, 0)))
+    for i in range(10):
+        db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 6, 2 + i, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "form_index")
+    await show_form_index(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert f"последние {FORM_WINDOW} матчей" in text
+    assert text.index("Alice") < text.index("Bob")  # в окне Alice впереди, за всю карьеру был бы Bob
+
+
+async def test_form_index_empty_when_no_matches(db):
+    from bot.handlers.leaderboard import show_form_index
+
+    db.add(_player(1, "Alice"))
+    await db.commit()
+
+    cb = _callback(1, "form_index")
+    await show_form_index(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Матчей ещё не было" in text
+
+
 async def test_dbstats_escapes_player_name(db, monkeypatch):
     """РЕГРЕССИЯ: имя игрока со спецсимволами в /dbstats шло в HTML без
     экранирования (топ рейтингов и топ/боттом начислений)."""
@@ -2137,6 +2202,75 @@ async def test_quarterly_summary_skipped_when_no_matches(monkeypatch):
 
     bot = AsyncMock()
     await sched.send_quarterly_summary(bot)
+    await engine.dispose()
+
+    bot.send_message.assert_not_called()
+
+
+def test_year_bounds_dec_31_covers_whole_year_so_far():
+    import bot.scheduler as sched
+
+    now = datetime(2026, 12, 31, 14, 0, 0)
+    start, end = sched._year_bounds_msk(now)
+    assert start == datetime(2026, 1, 1, 0, 0, 0)
+    assert end == now
+
+
+async def test_yearly_summary_content_and_labels(monkeypatch):
+    """Итоги года: заголовок с годом, полный табель, взлёт/падение с
+    зафиксированными фразами-отсылками, «Главный теннисист года»."""
+    import bot.scheduler as sched
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    msk_now = datetime.now(timezone.utc).replace(tzinfo=None) + sched.MSK_OFFSET
+    year_start, _ = sched._year_bounds_msk(msk_now)
+    inside = (year_start + timedelta(days=5)) - sched.MSK_OFFSET
+
+    async with factory() as s:
+        p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+        s.add_all([p1, p2])
+        await s.flush()
+        for i in range(3):  # Alice 3-0 над Bob внутри года
+            s.add(_completed(p1, p2, p1.id, 10.0, inside + timedelta(hours=i)))
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.send_yearly_summary(bot)
+    await engine.dispose()
+
+    assert bot.send_message.await_count == 2  # обоим игрокам
+    text = bot.send_message.call_args_list[0][0][1]
+    assert f"Итоги года — {year_start.year}" in text
+    assert "Netflix отдыхает" in text
+    assert "Табель года" in text
+    assert "Alice" in text and "Bob" in text
+    assert "<b>Взлёт года</b> — <b>Alice</b>" in text
+    assert "Взлетел, как акции Tesla" in text
+    assert "<b>Падение года</b> — <b>Bob</b>" in text
+    assert "Игры престолов" in text
+    assert "Главный теннисист года" in text
+
+
+async def test_yearly_summary_skipped_when_no_matches(monkeypatch):
+    import bot.scheduler as sched
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    async with factory() as s:
+        s.add(_player(1, "Alice"))
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.send_yearly_summary(bot)
     await engine.dispose()
 
     bot.send_message.assert_not_called()

@@ -618,6 +618,51 @@ def match_drama_reason(m: Match) -> str:
     return text[0].upper() + text[1:]
 
 
+def match_report(m: Match, winner_name: str) -> str:
+    """Расширенный «репортаж» для топ-матча периода (день/неделя/месяц/квартал/
+    год) — абзац из фраз-кусочков по факторам драмы (камбэк с 0:2, марафон,
+    дьюс на решающей, апсет), вместо короткой причины match_drama_reason().
+
+    Если ни один из четырёх факторов не сработал — откатывается на
+    match_drama_reason (например, «уверенный разгром» или «решилось в
+    последней партии» — под них фраз-кусочков нет).
+
+    winner_name передаётся явно, а не через relationship m.winner — та
+    прогружена не во всех запросах дайджестов; вызывающий уже знает имя
+    через свой собственный name_map.
+    """
+    sets = m.sets_data or []
+    if not sets or m.winner_id is None:
+        return match_drama_reason(m)
+
+    comeback = len(sets) >= 2 and sets[0]["w"] < sets[0]["l"] and sets[1]["w"] < sets[1]["l"]
+    marathon = len(sets) >= 5
+    deuce_decider = min(sets[-1]["w"], sets[-1]["l"]) >= 10
+    upset = (m.rating_change or 0) >= 20
+
+    if not any((comeback, marathon, deuce_decider, upset)):
+        return match_drama_reason(m)
+
+    opener = ""
+    if comeback:
+        opener = f"{h(winner_name)} влетел в яму 0:2 по партиям — казалось, разговор окончен. "
+
+    tail_fragments = []
+    if marathon:
+        tail_fragments.append("дошло до пятой — тут все успели заскучать и снова заинтересоваться")
+    if deuce_decider:
+        tail_fragments.append("а решающая партия ушла на дьюс")
+    if upset:
+        tail_fragments.append(f"и +{round(m.rating_change, 1)} pts апсета под занавес")
+
+    tail = ""
+    if tail_fragments:
+        joined = ", ".join(tail_fragments)
+        tail = joined[0].upper() + joined[1:] + "."
+
+    return (opener + tail).strip()
+
+
 def pick_match_of_day(matches: list[Match]) -> Match | None:
     """Выбирает самый драматичный матч из списка. None — если все слишком тривиальны."""
     scored = [(match_drama_score(m), m) for m in matches]

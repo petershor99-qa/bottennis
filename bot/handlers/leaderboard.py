@@ -645,3 +645,79 @@ async def show_dominance_matrix(callback: CallbackQuery, session: AsyncSession):
         text,
         reply_markup=back_to_leaderboard_kb(),
     )
+
+
+# ── Индекс формы ──────────────────────────────────────────────────────────────
+# Отдельный ранжированный список от общего лидерборда: не вся карьера, а
+# последние FORM_WINDOW матчей каждого игрока — «кто горячий прямо сейчас»,
+# а не «кто вообще сильнее». Слабый по общему рейтингу игрок на удачной
+# полосе здесь виден в топе, хотя на основном лидерборде так не увидеть —
+# тот считает по всей карьере. Место в UI — рядом с «Рекордами клуба»/
+# «Матрицей доминирования»: та же кнопка-полка на экране рейтинга, тот же
+# паттерн (кнопка → отдельный экран).
+
+FORM_WINDOW = 10  # сколько последних матчей на игрока учитывает индекс формы
+
+
+@router.callback_query(F.data == "form_index")
+async def show_form_index(callback: CallbackQuery, session: AsyncSession):
+    await callback.answer()
+
+    players_r = await session.execute(select(Player))
+    players = players_r.scalars().all()
+
+    matches_r = await session.execute(
+        select(Match)
+        .where(Match.status == MatchStatus.completed)
+        .order_by(desc(Match.completed_at))
+    )
+    all_matches = matches_r.scalars().all()
+
+    player_matches: dict[int, list] = {}
+    for m in all_matches:
+        for pid in (m.challenger_id, m.challenged_id):
+            player_matches.setdefault(pid, []).append(m)
+
+    rows = []
+    for p in players:
+        # all_matches уже отсортирован desc(completed_at) — срез с начала это
+        # и есть последние FORM_WINDOW матчей игрока.
+        recent = player_matches.get(p.id, [])[:FORM_WINDOW]
+        if not recent:
+            continue
+        wins = sum(1 for m in recent if m.winner_id == p.id)
+        draws = sum(1 for m in recent if m.winner_id is None)
+        losses = len(recent) - wins - draws
+        delta = round(sum(match_rating_delta(m, p.id) for m in recent), 1)
+        rows.append((p, wins, losses, draws, delta, len(recent)))
+
+    if not rows:
+        await callback.message.edit_text(
+            "🌡 <b>Индекс формы</b>\n\nМатчей ещё не было.",
+            reply_markup=back_to_leaderboard_kb(),
+        )
+        return
+
+    rows.sort(key=lambda r: -r[4])
+
+    lines = [f"🌡 <b>Индекс формы</b>  <i>(последние {FORM_WINDOW} матчей)</i>\n"]
+    medals = ["🥇", "🥈", "🥉"]
+    for i, (p, wins, losses, draws, delta, total) in enumerate(rows):
+        prefix = medals[i] if i < 3 else f"{i + 1}."
+        if delta > 15:
+            icon = "🔥"
+        elif delta < -15:
+            icon = "🥶"
+        else:
+            icon = "⚡"
+        draws_str = f"–{draws}🤝" if draws else ""
+        sign = "+" if delta >= 0 else ""
+        lines.append(
+            f"{prefix} {icon} <b>{h(p.display_name)}</b> — "
+            f"{wins}–{losses}{draws_str}  <i>({sign}{delta} pts за {total})</i>"
+        )
+
+    await callback.message.edit_text(
+        "\n".join(lines),
+        reply_markup=back_to_leaderboard_kb(),
+    )
