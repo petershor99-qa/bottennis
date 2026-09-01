@@ -25,8 +25,8 @@ from bot.utils import (
     get_career_matches,
     get_champion,
     get_match_counts,
-    match_drama_reason,
     match_rating_delta,
+    match_report,
     match_score_challenger_first,
     msk_day_start,
     notify_all_players,
@@ -418,10 +418,11 @@ async def send_weekly_digest(bot: Bot) -> None:
         if mod:
             mch = player_name_map.get(mod.challenger_id, "?")
             mcd = player_name_map.get(mod.challenged_id, "?")
+            winner_name = player_name_map.get(mod.winner_id, "?") if mod.winner_id else ""
             match_week = (
                 f"\n\n🌟 <b>Матч недели</b>\n"
                 f"<b>{h(mch)}</b> vs <b>{h(mcd)}</b> — {match_score_challenger_first(mod)}\n"
-                f"<i>{match_drama_reason(mod)}</i>"
+                f"<i>{match_report(mod, winner_name)}</i>"
             )
 
         club_block = "\n".join(standings) + "\n\n" + "\n".join(hero_lines) + match_week
@@ -626,8 +627,9 @@ async def send_daily_summary(bot: Bot) -> None:
         if mod:
             ch = name_map.get(mod.challenger_id, "?")
             cd = name_map.get(mod.challenged_id, "?")
+            winner_name = name_map.get(mod.winner_id, "?") if mod.winner_id else ""
             score_str = match_score_challenger_first(mod)
-            reason = match_drama_reason(mod)
+            reason = match_report(mod, winner_name)
             lines.append(
                 f"\n🌟 <b>Топ-матч дня</b>\n"
                 f"<b>{h(ch)}</b> vs <b>{h(cd)}</b> — {score_str}\n"
@@ -825,8 +827,9 @@ async def send_monthly_summary(bot: Bot) -> None:
         if mod:
             ch = name_map.get(mod.challenger_id, "?")
             cd = name_map.get(mod.challenged_id, "?")
+            winner_name = name_map.get(mod.winner_id, "?") if mod.winner_id else ""
             score_str = match_score_challenger_first(mod)
-            reason = match_drama_reason(mod)
+            reason = match_report(mod, winner_name)
             lines.append(
                 f"\n🌟 <b>Матч месяца</b>\n"
                 f"<b>{h(ch)}</b> vs <b>{h(cd)}</b> — {score_str}\n"
@@ -976,8 +979,9 @@ async def send_quarterly_summary(bot: Bot) -> None:
         if mod:
             ch = name_map.get(mod.challenger_id, "?")
             cd = name_map.get(mod.challenged_id, "?")
+            winner_name = name_map.get(mod.winner_id, "?") if mod.winner_id else ""
             score_str = match_score_challenger_first(mod)
-            reason = match_drama_reason(mod)
+            reason = match_report(mod, winner_name)
             lines.append(
                 f"\n🌟 <b>Топ-матч квартала</b>\n"
                 f"<b>{h(ch)}</b> vs <b>{h(cd)}</b> — {score_str}\n"
@@ -992,6 +996,169 @@ async def send_quarterly_summary(bot: Bot) -> None:
                 pass
 
     logger.info("Итоги квартала за %s отправлены", quarter_label)
+
+
+# ── Итоги года (31 декабря, 14:00 МСК) ────────────────────────────────────────
+# Самая насыщенная сводка из всех — сознательное исключение из правила «не
+# простыня, режь на группы» (см. остальные экраны проекта): это письмо раз в
+# год, а не экран, который открывают на бегу 5 раз в день, поэтому уместен
+# максимально подробный текст. Едкие фразы-отсылки — по одной на раздел,
+# согласованы отдельно (не пул, как у пасхалок, а конкретный зафиксированный
+# выбор). Джоба стартует ЗА ~10 часов до конца года (31 декабря, не 1 января)
+# — специально, чтобы застать игроков ДО Нового года, а не после; оставшиеся
+# несколько часов года сознательно не ждём.
+
+def _year_bounds_msk(now_msk: datetime) -> tuple[datetime, datetime]:
+    """(начало года, сейчас) по МСК, naive — «итоги года» это срез на момент
+    отправки (31 декабря, 14:00), а не строго закрытый календарный год."""
+    start = now_msk.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    return start, now_msk
+
+
+async def send_yearly_summary(bot: Bot) -> None:
+    """31 декабря в 14:00 МСК — итоги почти закрывшегося года."""
+    async with async_session() as session:
+        msk_now = datetime.now(timezone.utc).replace(tzinfo=None) + MSK_OFFSET
+        year_start_msk, year_end_msk = _year_bounds_msk(msk_now)
+        year_start_utc = year_start_msk - MSK_OFFSET
+        year_end_utc = year_end_msk - MSK_OFFSET
+
+        matches_r = await session.execute(
+            select(Match)
+            .where(
+                Match.status == MatchStatus.completed,
+                Match.completed_at >= year_start_utc,
+                Match.completed_at < year_end_utc,
+            )
+            .options(selectinload(Match.challenger), selectinload(Match.challenged))
+        )
+        matches = matches_r.scalars().all()
+
+        if not matches:
+            logger.info("Итоги года %d: матчей не было, пропускаем", year_start_msk.year)
+            return
+
+        players_r = await session.execute(select(Player))
+        players = players_r.scalars().all()
+        name_map = {p.id: p.display_name for p in players}
+
+        wins: dict[int, int] = {}
+        losses: dict[int, int] = {}
+        draws: dict[int, int] = {}
+        match_count: dict[int, int] = {}
+        delta_sum: dict[int, float] = {}
+
+        for m in matches:
+            for pid in (m.challenger_id, m.challenged_id):
+                match_count[pid] = match_count.get(pid, 0) + 1
+                delta_sum[pid] = delta_sum.get(pid, 0.0) + match_rating_delta(m, pid)
+            if m.winner_id is None:
+                draws[m.challenger_id] = draws.get(m.challenger_id, 0) + 1
+                draws[m.challenged_id] = draws.get(m.challenged_id, 0) + 1
+            else:
+                wins[m.winner_id] = wins.get(m.winner_id, 0) + 1
+                lid = m.challenged_id if m.winner_id == m.challenger_id else m.challenger_id
+                losses[lid] = losses.get(lid, 0) + 1
+
+        total_sets = sum(len(m.sets_data) if m.sets_data else 0 for m in matches)
+        total_points = _total_points(matches)
+
+        lines = [
+            f"🎉 <b>Итоги года — {year_start_msk.year}</b>\n",
+            "<i>Год закрыт. Netflix отдыхает — у нас было эпичнее.</i>\n",
+            f"⚡ Сыграно за год: <b>{pluralize_matches(len(matches))}</b>, "
+            f"<b>{pluralize_sets(total_sets)}</b>, <b>{pluralize_points(total_points)}</b>\n",
+            "🥇 <b>Табель года:</b>",
+        ]
+
+        # Полный табель — все, кто играл, а не только топ-3 (это единственный
+        # раз в году, когда уместно перечислить каждого).
+        sorted_ids = sorted(
+            match_count,
+            key=lambda pid: (wins.get(pid, 0), match_count.get(pid, 0)),
+            reverse=True,
+        )
+        medals = ["🥇", "🥈", "🥉"]
+        for i, pid in enumerate(sorted_ids):
+            prefix = medals[i] if i < 3 else f"{i + 1}."
+            w = wins.get(pid, 0)
+            lo = losses.get(pid, 0)
+            d = draws.get(pid, 0)
+            total = match_count[pid]
+            wr = int(w / total * 100) if total else 0
+            draws_str = f"–{d}🤝" if d else ""
+            lines.append(
+                f"{prefix} <b>{h(name_map.get(pid, '?'))}</b> — "
+                f"{w}–{lo}{draws_str}  <i>({wr}%)</i>"
+            )
+
+        # Чемпион года — только если фича боссфайта вообще активирована
+        champion = next((p for p in players if p.is_champion), None)
+        if champion is not None:
+            lines.append(
+                f"\n👑 <b>Чемпион года</b> — <b>{h(champion.display_name)}</b>\n"
+                f"<i>«Останется только один» — и им снова оказался он.</i>"
+            )
+
+        if delta_sum:
+            best_id = max(delta_sum, key=delta_sum.get)
+            if delta_sum[best_id] > 0:
+                lines.append(
+                    f"\n🚀 <b>Взлёт года</b> — <b>{h(name_map.get(best_id, '?'))}</b>: "
+                    f"+{round(delta_sum[best_id], 1)} pts\n"
+                    f"<i>Взлетел, как акции Tesla в лучшие времена.</i>"
+                )
+            worst_id = min(delta_sum, key=delta_sum.get)
+            if delta_sum[worst_id] < 0:
+                lines.append(
+                    f"\n📉 <b>Падение года</b> — <b>{h(name_map.get(worst_id, '?'))}</b>: "
+                    f"{round(delta_sum[worst_id], 1)} pts\n"
+                    f"<i>Год прошёл как 8-й сезон «Игры престолов» — обидно и без объяснений.</i>"
+                )
+
+        streak = _longest_streak(matches, name_map, "года")
+        if streak:
+            lines.append(f"\n{streak}\n<i>Killing Spree длиной в год.</i>")
+
+        derby = _most_played_pair(matches, name_map)
+        if derby:
+            lines.append(f"\n{derby}\n<i>Эти двое встречались чаще, чем герои «Санта-Барбары».</i>")
+
+        no_loss = _longest_no_loss_streak(matches, name_map)
+        if no_loss:
+            lines.append(f"\n{no_loss}")
+        swing = _biggest_swing(matches, name_map)
+        if swing:
+            lines.append(f"\n{swing}")
+
+        most_active_id = max(match_count, key=match_count.get)
+        lines.append(
+            f"\n🏓 Главный теннисист года — <b>{h(name_map.get(most_active_id, '?'))}</b>: "
+            f"{pluralize_matches(match_count[most_active_id])}"
+        )
+
+        mod = pick_match_of_day(matches)
+        if mod:
+            ch = name_map.get(mod.challenger_id, "?")
+            cd = name_map.get(mod.challenged_id, "?")
+            winner_name = name_map.get(mod.winner_id, "?") if mod.winner_id else ""
+            score_str = match_score_challenger_first(mod)
+            reason = match_report(mod, winner_name)
+            lines.append(
+                f"\n🌟 <b>Топ-матч года</b>\n"
+                f"<b>{h(ch)}</b> vs <b>{h(cd)}</b> — {score_str}\n"
+                f"<i>{reason}</i>\n"
+                f"<i>Если бы это сняли — билеты бы раскупили за час.</i>"
+            )
+
+        text = "\n".join(lines)
+        for p in players:
+            try:
+                await bot.send_message(p.telegram_id, text)
+            except Exception:
+                pass
+
+    logger.info("Итоги года за %d отправлены", year_start_msk.year)
 
 
 # ── Инициализация планировщика ────────────────────────────────────────────────
@@ -1066,6 +1233,14 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         CronTrigger(month="1,4,7,10", day=1, hour=10, minute=30, timezone=msk),
         args=[bot],
         id="quarterly_summary",
+    )
+
+    # Итоги года — 31 декабря в 14:00 МСК, до Нового года, а не после
+    scheduler.add_job(
+        send_yearly_summary,
+        CronTrigger(month=12, day=31, hour=14, minute=0, timezone=msk),
+        args=[bot],
+        id="yearly_summary",
     )
 
     return scheduler
