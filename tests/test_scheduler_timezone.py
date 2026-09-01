@@ -71,3 +71,11 @@ def test_quarterly_summary_jan_apr_jul_oct_1st_1030_msk():
     assert nxt.day == 1
     assert nxt.month in (1, 4, 7, 10)
     assert nxt.date() == datetime(2026, 7, 1).date()
+
+
+def test_yearly_summary_dec_31_1400_msk():
+    """Итоги года: 31 декабря 14:00 МСК = 11:00 UTC. От 2026-06-19 ближайшее
+    31 декабря — 2026-12-31 (до Нового года, не после)."""
+    nxt = _next_utc("yearly_summary", REF)
+    assert (nxt.hour, nxt.minute) == (11, 0)
+    assert nxt.date() == datetime(2026, 12, 31).date()
