@@ -138,6 +138,23 @@ def _total_points(matches: list) -> int:
     return sum((s["w"] + s["l"]) for m in matches if m.sets_data for s in m.sets_data)
 
 
+def _compute_player_form(matches: list) -> dict[int, list[str]]:
+    """Полоска формы за период: исход каждого матча в хронологии (по возрастанию
+    даты), на игрока — список иконок 🟩 (победа) / 🟥 (поражение) / 🟨 (ничья).
+    Общая для итогов дня/недели/месяца — раньше считалась только в итогах дня."""
+    form: dict[int, list[str]] = {}
+    for m in sorted(matches, key=lambda m: m.completed_at or datetime.min):
+        for pid in (m.challenger_id, m.challenged_id):
+            if m.winner_id is None:
+                icon = "🟨"
+            elif m.winner_id == pid:
+                icon = "🟩"
+            else:
+                icon = "🟥"
+            form.setdefault(pid, []).append(icon)
+    return form
+
+
 # ── Напоминание о незавершённом матче ─────────────────────────────────────────
 # Возвращено в v2.80.0: с v2.79.0 у игрока может быть только ОДИН активный матч
 # одновременно — забытый неотрапортованный матч теперь блокирует ОБОИХ
@@ -328,6 +345,8 @@ async def send_weekly_digest(bot: Bot) -> None:
         total_points = _total_points(all_week_matches)
         cur_count = len(all_week_matches)
 
+        player_form = _compute_player_form(all_week_matches)
+
         # ── Топ недели (клубный стендинг — компактно, вместо длинного списка матчей) ─
         medals = ["🥇", "🥈", "🥉"]
         standings = ["🏆 <b>Топ недели:</b>"]
@@ -343,9 +362,10 @@ async def send_weekly_digest(bot: Bot) -> None:
             d = draws_count.get(pid, 0)
             wr = int(w / match_count[pid] * 100) if match_count[pid] else 0
             draws_str = f"–{d}🤝" if d else ""
+            form = "".join(player_form.get(pid, [])[-7:])
             standings.append(
                 f"{prefix} <b>{h(player_name_map.get(pid, '?'))}</b> — "
-                f"{w}–{lo}{draws_str}  <i>({wr}%)</i>"
+                f"{w}–{lo}{draws_str}  <i>({wr}%)</i>  {form}"
             )
 
         # ── Герои недели ───────────────────────────────────────────────────────
@@ -525,17 +545,7 @@ async def send_daily_summary(bot: Bot) -> None:
                 lid = m.challenged_id if m.winner_id == m.challenger_id else m.challenger_id
                 stats[lid]["l"] += 1
 
-        # Полоска формы за день: исход каждого матча игрока в хронологии (matches asc)
-        player_form: dict[int, list[str]] = {}
-        for m in matches:
-            for pid in (m.challenger_id, m.challenged_id):
-                if m.winner_id is None:
-                    icon = "🟨"
-                elif m.winner_id == pid:
-                    icon = "🟩"
-                else:
-                    icon = "🟥"
-                player_form.setdefault(pid, []).append(icon)
+        player_form = _compute_player_form(matches)
 
         total_sets = sum(len(m.sets_data) if m.sets_data else 0 for m in matches)
         total_points = _total_points(matches)
@@ -720,7 +730,10 @@ MONTH_NAMES_NOM = {
 # ── Итоги месяца (1-е число, 10:00 МСК) ──────────────────────────────────────
 
 async def send_monthly_summary(bot: Bot) -> None:
-    """1-го числа в 10:00 МСК отправляет всем игрокам итоги прошлого месяца."""
+    """1-го числа в 10:00 МСК отправляет итоги прошлого месяца — персонально
+    каждому (личная шапка + общий клубный блок), тем же паттерном, что и
+    еженедельный дайджест (v2.104.0 — раньше рассылался один и тот же текст
+    всем без персонализации и без «человеческих» метрик недели/дня)."""
     async with async_session() as session:
         msk_now = datetime.now(timezone.utc).replace(tzinfo=None) + MSK_OFFSET
         # Граница: начало текущего месяца по МСК = конец прошлого
@@ -752,6 +765,13 @@ async def send_monthly_summary(bot: Bot) -> None:
         players = players_r.scalars().all()
         name_map = {p.id: p.display_name for p in players}
 
+        champion = next((p for p in players if p.is_champion), None)
+        all_time_counts = await get_match_counts(session)
+        rank_map = compute_ranks(
+            players, all_time_counts,
+            champion_id=champion.id if champion else None,
+        )
+
         wins: dict[int, int] = {}
         losses: dict[int, int] = {}
         draws: dict[int, int] = {}
@@ -771,19 +791,17 @@ async def send_monthly_summary(bot: Bot) -> None:
                 losses[lid] = losses.get(lid, 0) + 1
 
         total_sets = sum(len(m.sets_data) if m.sets_data else 0 for m in matches)
+        total_points = _total_points(matches)
+        player_form = _compute_player_form(matches)
 
-        lines = [
-            f"📆 <b>Итоги месяца — {month_label}</b>\n",
-            f"⚡ Сыграно: <b>{pluralize_matches(len(matches))}</b>, <b>{pluralize_sets(total_sets)}</b>\n",
-            "🏆 <b>Топ месяца:</b>",
-        ]
-
+        # ── Топ месяца ────────────────────────────────────────────────────────
+        medals = ["🥇", "🥈", "🥉"]
+        standings = ["🏆 <b>Топ месяца:</b>"]
         sorted_ids = sorted(
             match_count,
             key=lambda pid: (wins.get(pid, 0), match_count.get(pid, 0)),
             reverse=True,
         )
-        medals = ["🥇", "🥈", "🥉"]
         for i, pid in enumerate(sorted_ids):
             prefix = medals[i] if i < 3 else f"{i + 1}."
             w = wins.get(pid, 0)
@@ -792,54 +810,115 @@ async def send_monthly_summary(bot: Bot) -> None:
             total = match_count[pid]
             wr = int(w / total * 100) if total else 0
             draws_str = f"–{d}🤝" if d else ""
-            lines.append(
+            form = "".join(player_form.get(pid, [])[-7:])
+            standings.append(
                 f"{prefix} <b>{h(name_map.get(pid, '?'))}</b> — "
-                f"{w}–{lo}{draws_str}  <i>({wr}%)</i>"
+                f"{w}–{lo}{draws_str}  <i>({wr}%)</i>  {form}"
             )
 
+        # ── Герои месяца ──────────────────────────────────────────────────────
+        hero_lines = [
+            "🦸 <b>Герои месяца:</b>",
+            f"⚡ Сыграно за месяц: <b>{pluralize_matches(len(matches))}</b>, "
+            f"<b>{pluralize_sets(total_sets)}</b>, <b>{pluralize_points(total_points)}</b>",
+        ]
+        most_active_id = max(match_count, key=match_count.get)
+        hero_lines.append(
+            f"🏓 Главный теннисист — <b>{h(name_map.get(most_active_id, '?'))}</b>: "
+            f"{pluralize_matches(match_count[most_active_id])}"
+        )
         if delta_sum:
             best_id = max(delta_sum, key=delta_sum.get)
             if delta_sum[best_id] > 0:
-                lines.append(
-                    f"\n📈 Лучший рост — <b>{h(name_map.get(best_id, '?'))}</b>: "
+                hero_lines.append(
+                    f"📈 Лучший рост — <b>{h(name_map.get(best_id, '?'))}</b>: "
                     f"+{round(delta_sum[best_id], 1)} pts"
                 )
             worst_id = min(delta_sum, key=delta_sum.get)
             if delta_sum[worst_id] < 0:
-                lines.append(
+                hero_lines.append(
                     f"📉 Отрицательный рост — <b>{h(name_map.get(worst_id, '?'))}</b>: "
                     f"{round(delta_sum[worst_id], 1)} pts"
                 )
-
-        most_active_id = max(match_count, key=match_count.get)
-        lines.append(
-            f"🏓 Главный теннисист — <b>{h(name_map.get(most_active_id, '?'))}</b>: "
-            f"{pluralize_matches(match_count[most_active_id])}"
-        )
         derby = _most_played_pair(matches, name_map)
         if derby:
-            lines.append(derby)
+            hero_lines.append(derby)
         streak = _longest_streak(matches, name_map, "месяца")
         if streak:
-            lines.append(streak)
+            hero_lines.append(streak)
+        no_loss = _longest_no_loss_streak(matches, name_map)
+        if no_loss:
+            hero_lines.append(no_loss)
+        swing = _biggest_swing(matches, name_map)
+        if swing:
+            hero_lines.append(swing)
 
+        # «Халявщик месяца» — та же логика, что и в еженедельном дайджесте:
+        # зарегистрированный и уже игравший когда-то игрок, не сыгравший в этом
+        # месяце ни матча (пустые новички не в счёт).
+        slacker_names = [
+            h(p.display_name) for p in players
+            if all_time_counts.get(p.id, 0) > 0 and p.id not in match_count
+        ]
+        if slacker_names:
+            word = "Халявщики" if len(slacker_names) > 1 else "Халявщик"
+            hero_lines.append(f"😴 {word} месяца — <b>{', '.join(slacker_names)}</b>")
+
+        # ── Матч месяца ───────────────────────────────────────────────────────
+        match_month = ""
         mod = pick_match_of_day(matches)
         if mod:
             ch = name_map.get(mod.challenger_id, "?")
             cd = name_map.get(mod.challenged_id, "?")
             winner_name = name_map.get(mod.winner_id, "?") if mod.winner_id else ""
-            score_str = match_score_challenger_first(mod)
-            reason = match_report(mod, winner_name)
-            lines.append(
-                f"\n🌟 <b>Матч месяца</b>\n"
-                f"<b>{h(ch)}</b> vs <b>{h(cd)}</b> — {score_str}\n"
-                f"<i>{reason}</i>"
+            match_month = (
+                f"\n\n🌟 <b>Матч месяца</b>\n"
+                f"<b>{h(ch)}</b> vs <b>{h(cd)}</b> — {match_score_challenger_first(mod)}\n"
+                f"<i>{match_report(mod, winner_name)}</i>"
             )
 
-        text = "\n".join(lines)
-        for p in players:
+        club_block = "\n".join(standings) + "\n\n" + "\n".join(hero_lines) + match_month
+
+        # ── Персональные сообщения: личная шапка + общий клубный блок ───────────
+        for player in players:
+            p_matches = [
+                m for m in matches
+                if player.id in (m.challenger_id, m.challenged_id)
+            ]
+            rank = rank_map.get(player.id)
+            rank_suffix = f" — #{rank}" if rank else ""
+
+            if not p_matches:
+                header = (
+                    f"📆 <b>Итоги месяца — {month_label}</b>\n\n"
+                    f"В этом месяце матчей не было.\n"
+                    f"Твой рейтинг: <b>{round(player.rating, 1)}</b> pts{rank_suffix}\n"
+                    f"<i>«Ты либо занят жизнью, либо занят умиранием.»</i>\n"
+                )
+            else:
+                p_wins = wins.get(player.id, 0)
+                p_losses = losses.get(player.id, 0)
+                p_draws = draws.get(player.id, 0)
+                p_delta = delta_sum.get(player.id, 0.0)
+                sign = "+" if p_delta >= 0 else ""
+                draws_str = f"  |  🤝 Ничьих: <b>{p_draws}</b>" if p_draws > 0 else ""
+                header = (
+                    f"📆 <b>Итоги месяца — {month_label}</b>\n\n"
+                    f"🏆 Побед: <b>{p_wins}</b>{draws_str}  |  💔 Поражений: <b>{p_losses}</b>\n"
+                    f"📈 Рейтинг: <b>{round(player.rating, 1)}</b> pts "
+                    f"({sign}{round(p_delta, 1)}){rank_suffix}\n"
+                )
+
+            career_matches = await get_career_matches(session, player.id)
+            progress = _nearest_achievement_progress(
+                player, _compute_player_stats(player, career_matches), len(players)
+            )
+            if progress:
+                header += f"{progress}\n"
+
+            text = header + "\n" + club_block
             try:
-                await bot.send_message(p.telegram_id, text)
+                await bot.send_message(player.telegram_id, text)
             except Exception:
                 pass
 
