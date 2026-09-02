@@ -593,10 +593,11 @@ def _p_ach(achievements: list[str], rating: float = 1000.0):
     return SimpleNamespace(achievements=str(achievements).replace("'", '"'), rating=rating)
 
 
-def _stats(wins=0, draws=0, losses=0, streak=0, beaten=0):
+def _stats(wins=0, draws=0, losses=0, streak=0, beaten=0, sets_won=0, career_points=0):
     return {
         "wins": wins, "draws": draws, "losses": losses,
         "streak": streak, "beaten_opponents_count": beaten,
+        "sets_won": sets_won, "career_points": career_points,
     }
 
 
@@ -629,11 +630,16 @@ def test_ach_progress_all_earned_returns_none():
     """Все счётные ачивки заработаны → None."""
     all_ids = [
         "hat_trick", "im_on_fire", "god_mode",
-        "fifty", "veteran", "legend",
+        "fifty", "veteran", "legend", "workhorse", "monument", "superstar",
+        "point_saver", "sturdy_grinder", "point_farmer",
+        "set_sniper", "set_veteran", "set_legend",
         "diplomat", "collector", "rating_1200",
     ]
     p = _p_ach(all_ids, rating=1300.0)
-    s = _stats(wins=200, draws=5, losses=10, streak=10, beaten=4)
+    s = _stats(
+        wins=1200, draws=5, losses=10, streak=10, beaten=4,
+        sets_won=1500, career_points=15000,
+    )
     result = _nearest_achievement_progress(p, s, total_players=5)
     assert result is None
 
@@ -1024,14 +1030,15 @@ def test_rating_tenths_handles_float_noise():
 
 def test_rank_title_bands():
     assert rank_title(900.0) == "Джун"
-    assert rank_title(949.9) == "Джун"
-    assert rank_title(950.0) == "Миддл"
-    assert rank_title(1049.9) == "Миддл"
-    assert rank_title(1050.0) == "Сеньор"
-    assert rank_title(1149.9) == "Сеньор"
-    assert rank_title(1150.0) == "Тим лид"
-    assert rank_title(1249.9) == "Тим лид"
-    assert rank_title(1250.0) == "Ген дир"
+    assert rank_title(1000.0) == "Джун"  # стартовый рейтинг новичка
+    assert rank_title(1049.9) == "Джун"
+    assert rank_title(1050.0) == "Миддл"
+    assert rank_title(1149.9) == "Миддл"
+    assert rank_title(1150.0) == "Сеньор"
+    assert rank_title(1249.9) == "Сеньор"
+    assert rank_title(1250.0) == "Тим лид"
+    assert rank_title(1349.9) == "Тим лид"
+    assert rank_title(1350.0) == "Ген дир"
     assert rank_title(2000.0) == "Ген дир"
 
 
@@ -1384,6 +1391,43 @@ async def test_today_personal_not_played(db):
     assert "ещё не играл" in text
 
 
+def test_today_button_moved_from_leaderboard_to_stats_kb():
+    """«Сегодня» перенесена с «Рейтинга» на «Статистику» (v2.103.0) — на
+    «Рейтинге» и так уже 5 доп.кнопок, на «Статистике» было всего 3."""
+    from bot.keyboards.inline import leaderboard_kb, stats_kb
+
+    board_kb = leaderboard_kb([])
+    board_callbacks = [
+        btn.callback_data for row in board_kb.inline_keyboard for btn in row
+    ]
+    assert "menu_today" not in board_callbacks
+
+    stats_callbacks = [
+        btn.callback_data for row in stats_kb().inline_keyboard for btn in row
+    ]
+    assert "menu_today" in stats_callbacks
+
+
+async def test_today_screen_back_button_returns_to_stats(db):
+    """После переноса кнопки «« К рейтингу» на этом экране вела бы не туда,
+    откуда пришёл пользователь — теперь ведёт обратно на «Статистику»."""
+    from bot.handlers.leaderboard import show_today_stats
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime.now(timezone.utc).replace(tzinfo=None)))
+    await db.commit()
+
+    cb = _callback(1, "menu_today")
+    await show_today_stats(cb, db)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    callbacks = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    assert "menu_stats" in callbacks
+    assert "menu_leaderboard" not in callbacks
+
+
 # ── Рекорды клуба: новые рекорды ────────────────────────────────────────────────
 
 async def test_club_records_shows_peak_rating(db):
@@ -1619,7 +1663,7 @@ def test_render_achievements_category_header_stands_out_from_entries():
 
 
 def test_render_achievements_stays_under_telegram_limit():
-    """Худший случай (все 43 ачивки заработаны — каждая строка развёрнута с
+    """Худший случай (все ачивки заработаны — каждая строка развёрнута с
     именем и условием) укладывается в лимит Telegram на одно сообщение (4096
     символов) с запасом — иначе edit_text здесь упадёт с ошибкой Telegram API,
     а этот хендлер (в отличие от admin._send) не режет текст на части."""
