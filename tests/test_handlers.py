@@ -1160,6 +1160,31 @@ def test_match_phrase_deterministic():
     assert match_phrase(50, n + 1) == EVEN_PHRASES[1]
 
 
+def test_previous_h2h_line_buckets():
+    from types import SimpleNamespace
+
+    from bot.utils import H2H_DRAW_PHRASES, H2H_REVENGE_PHRASES, H2H_STREAK_PHRASES, previous_h2h_line
+
+    win_prev = SimpleNamespace(winner_id=1)
+    lose_prev = SimpleNamespace(winner_id=2)
+    draw_prev = SimpleNamespace(winner_id=None)
+
+    assert previous_h2h_line(win_prev, winner_id=1, match_id=0) in H2H_STREAK_PHRASES
+    assert previous_h2h_line(lose_prev, winner_id=1, match_id=0) in H2H_REVENGE_PHRASES
+    assert previous_h2h_line(draw_prev, winner_id=1, match_id=0) in H2H_DRAW_PHRASES
+
+
+def test_previous_h2h_line_deterministic_by_match_id():
+    from types import SimpleNamespace
+
+    from bot.utils import H2H_STREAK_PHRASES, previous_h2h_line
+
+    prev = SimpleNamespace(winner_id=1)
+    n = len(H2H_STREAK_PHRASES)
+    assert previous_h2h_line(prev, winner_id=1, match_id=0) == H2H_STREAK_PHRASES[0]
+    assert previous_h2h_line(prev, winner_id=1, match_id=n + 1) == H2H_STREAK_PHRASES[1]
+
+
 # ── Дерби клуба ─────────────────────────────────────────────────────────────────
 
 async def test_club_records_shows_derby(db):
@@ -3009,6 +3034,111 @@ async def test_send_share_card_content(db):
     assert "Alice" in text and "Bob" in text
     assert "11:7, 11:9" in text
     assert "+10.0 pts" in text
+
+
+async def test_share_card_no_h2h_line_on_first_ever_match(db):
+    """Нет предыдущих очных матчей между этой парой — строки контекста нет
+    вообще (не пытаемся выдумать реванш/серию из ничего)."""
+    from bot.utils import H2H_DRAW_PHRASES, H2H_REVENGE_PHRASES, H2H_STREAK_PHRASES
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m = Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=[{"w": 11, "l": 7}],
+        rating_change=10.0, completed_at=datetime(2026, 6, 1, 12, 0, 0),
+    )
+    db.add(m)
+    await db.commit()
+
+    cb = _callback(1, f"share_card_{m.id}")
+    await send_share_card(cb, db)
+
+    text = cb.message.answer.call_args.args[0]
+    all_h2h_phrases = H2H_REVENGE_PHRASES + H2H_STREAK_PHRASES + H2H_DRAW_PHRASES
+    assert not any(p in text for p in all_h2h_phrases)
+
+
+async def test_share_card_h2h_revenge_line(db):
+    """Победитель проиграл этому же сопернику в прошлый раз — строка реванша."""
+    from bot.utils import H2H_REVENGE_PHRASES
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    prev = Match(
+        challenger_id=p2.id, challenged_id=p1.id, status=MatchStatus.completed,
+        winner_id=p2.id, sets_data=[{"w": 11, "l": 7}],
+        rating_change=10.0, completed_at=datetime(2026, 5, 30, 12, 0, 0),
+    )
+    m = Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=[{"w": 11, "l": 7}],
+        rating_change=10.0, completed_at=datetime(2026, 6, 1, 12, 0, 0),
+    )
+    db.add_all([prev, m])
+    await db.commit()
+
+    cb = _callback(1, f"share_card_{m.id}")
+    await send_share_card(cb, db)
+
+    text = cb.message.answer.call_args.args[0]
+    assert H2H_REVENGE_PHRASES[m.id % len(H2H_REVENGE_PHRASES)] in text
+
+
+async def test_share_card_h2h_streak_line(db):
+    """Победитель выиграл у этого же соперника и в прошлый раз — строка серии."""
+    from bot.utils import H2H_STREAK_PHRASES
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    prev = Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=[{"w": 11, "l": 7}],
+        rating_change=10.0, completed_at=datetime(2026, 5, 30, 12, 0, 0),
+    )
+    m = Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=[{"w": 11, "l": 7}],
+        rating_change=10.0, completed_at=datetime(2026, 6, 1, 12, 0, 0),
+    )
+    db.add_all([prev, m])
+    await db.commit()
+
+    cb = _callback(1, f"share_card_{m.id}")
+    await send_share_card(cb, db)
+
+    text = cb.message.answer.call_args.args[0]
+    assert H2H_STREAK_PHRASES[m.id % len(H2H_STREAK_PHRASES)] in text
+
+
+async def test_share_card_h2h_draw_line(db):
+    """Прошлый матч с этим соперником закончился вничью — отдельная строка."""
+    from bot.utils import H2H_DRAW_PHRASES
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    prev = Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=None, sets_data=[{"w": 11, "l": 9}, {"w": 9, "l": 11}],
+        rating_change=5.0, completed_at=datetime(2026, 5, 30, 12, 0, 0),
+    )
+    m = Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=[{"w": 11, "l": 7}],
+        rating_change=10.0, completed_at=datetime(2026, 6, 1, 12, 0, 0),
+    )
+    db.add_all([prev, m])
+    await db.commit()
+
+    cb = _callback(1, f"share_card_{m.id}")
+    await send_share_card(cb, db)
+
+    text = cb.message.answer.call_args.args[0]
+    assert H2H_DRAW_PHRASES[m.id % len(H2H_DRAW_PHRASES)] in text
 
 
 async def test_send_share_card_rejects_non_winner(db):
