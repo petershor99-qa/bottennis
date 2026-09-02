@@ -38,6 +38,7 @@ from bot.utils import (
     msk_day_start,
     msk_hour_and_weekday,
     notify_all_players,
+    previous_h2h_line,
     rating_tenths,
     try_transfer_champion,
 )
@@ -1380,11 +1381,17 @@ async def send_share_card(callback: CallbackQuery, session: AsyncSession):
     delta = match.rating_change or 0.0
     report = match_report(match, winner.display_name)
 
+    h2h_line = ""
+    h2h_matches = await get_h2h_matches(session, winner.id, loser.id, exclude_match_id=match.id)
+    if h2h_matches:
+        h2h_line = f"\n<i>{previous_h2h_line(h2h_matches[0], winner.id, match.id)}</i>\n"
+
     card_text = (
         f"🏆 <b>ПОБЕДА</b>\n\n"
         f"<b>{h(winner.display_name)}</b> обыграл <b>{h(loser.display_name)}</b>\n"
         f"{sets_str}\n\n"
-        f"📈 +{delta} pts → <b>{round(winner.rating, 1)}</b> pts\n\n"
+        f"📈 +{delta} pts → <b>{round(winner.rating, 1)}</b> pts\n"
+        f"{h2h_line}\n"
         f"<i>{report}</i>"
     )
     try:
