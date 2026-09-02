@@ -1132,3 +1132,88 @@ def rating_chart_url(name: str, labels: list[str], values: list[float]) -> str:
     }
     encoded = urllib.parse.quote(json.dumps(config, separators=(",", ":"), ensure_ascii=False))
     return f"https://quickchart.io/chart?w=700&h=420&bkg=white&c={encoded}"
+
+
+# ── Тепловая карта активности (quickchart.io) ─────────────────────────────────
+# v2.107.0. Окно 90 дней, не год — у клуба несколько месяцев реальной истории
+# (на сентябрь 2026), full-year сетка была бы наполовину пустой.
+#
+# quickchart.io НЕ поддерживает тип графика "matrix"/"heatmap" на публичном
+# инстансе (проверено вручную: "Chart error: 'matrix' is not a registered
+# controller") — сетка эмулируется через стандартный bubble-chart: x = номер
+# недели, y = день недели (0=Вс снизу..6=Пн сверху), цвет точки = интенсивность.
+# Радиус фиксирован (задаётся один раз на датасет, не на каждую точку) — тот же
+# принцип, что у GitHub-графика контрибуций (цвет — сигнал, не размер).
+#
+# 4 датасета по тиру интенсивности (не backgroundColor на каждую точку) —
+# ощутимо короче итоговый URL при идентичном визуальном результате: цвет
+# повторяется 4 раза вместо N (N = число дней в окне).
+
+HEATMAP_DAYS = 90
+
+_HEATMAP_TIER_COLORS = [
+    "rgba(230,230,230,1)",  # 0 матчей
+    "rgba(155,213,150,1)",  # 1
+    "rgba(64,160,89,1)",    # 2–3
+    "rgba(20,100,50,1)",    # 4+
+]
+
+
+def _heatmap_tier(count: int) -> int:
+    if count == 0:
+        return 0
+    if count == 1:
+        return 1
+    if count <= 3:
+        return 2
+    return 3
+
+
+def activity_counts_by_day(matches: list[Match]) -> dict:
+    """Число матчей по дням (МСК) — общий хелпер для личной и клубной карты
+    активности. Ключи — datetime.date."""
+    counts: dict = {}
+    for m in matches:
+        if not m.completed_at:
+            continue
+        day = (as_naive(m.completed_at) + MSK_OFFSET).date()
+        counts[day] = counts.get(day, 0) + 1
+    return counts
+
+
+def activity_heatmap_url(title: str, counts: dict, days: int = HEATMAP_DAYS) -> str:
+    """Тепловая карта активности за последние `days` дней (см. общий комментарий
+    к разделу выше про технику отрисовки через bubble-chart)."""
+    today = (datetime.now(timezone.utc).replace(tzinfo=None) + MSK_OFFSET).date()
+    start = today - timedelta(days=days - 1)
+    start_monday = start - timedelta(days=start.weekday())  # выравниваем колонки недель
+
+    tiers: list[list[dict]] = [[], [], [], []]
+    d = start_monday
+    week = 0
+    while d <= today:
+        dow = d.weekday()  # 0=Пн..6=Вс
+        if d >= start:
+            tiers[_heatmap_tier(counts.get(d, 0))].append({"x": week, "y": 6 - dow})
+        if dow == 6:
+            week += 1
+        d += timedelta(days=1)
+
+    datasets = [
+        {"data": tiers[i], "backgroundColor": _HEATMAP_TIER_COLORS[i], "radius": 9}
+        for i in range(4) if tiers[i]
+    ]
+    config = {
+        "type": "bubble",
+        "data": {"datasets": datasets},
+        "options": {
+            "title": {"display": True, "text": title},
+            "legend": {"display": False},
+            "scales": {
+                "xAxes": [{"ticks": {"display": False}, "gridLines": {"display": False}}],
+                "yAxes": [{"ticks": {"display": False, "min": -0.5, "max": 6.5}, "gridLines": {"display": False}}],
+            },
+        },
+    }
+    encoded = urllib.parse.quote(json.dumps(config, separators=(",", ":"), ensure_ascii=False))
+    return f"https://quickchart.io/chart?w=700&h=220&bkg=white&c={encoded}"
