@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import escape as h
 
 from aiogram import Bot, F, Router
@@ -17,7 +17,10 @@ from bot.keyboards.inline import (
     player_profile_kb,
 )
 from bot.utils import (
+    HEATMAP_DAYS,
     _match_line,
+    activity_counts_by_day,
+    activity_heatmap_url,
     boss_fight_rematch_blocked,
     build_rating_series,
     compute_h2h,
@@ -112,6 +115,89 @@ async def show_player_rating_chart(callback: CallbackQuery, session: AsyncSessio
         await callback.answer("Игрок не найден.", show_alert=True)
         return
     await _send_rating_chart(target, session, callback, bot)
+
+
+# ── Тепловая карта активности ────────────────────────────────────────────────
+# v2.107.0. Одна точка входа («📅 Активность» на «Статистике») + переключатель
+# личная/клубная кнопкой под самой картинкой — вместо двух отдельных пунктов
+# меню. Тот же паттерн «шлём новое фото, удаляем предыдущее», что и у графика
+# рейтинга (см. _last_chart_msg выше) — отдельный dict, чтобы переключение
+# графика рейтинга и активности в одном чате не затирали message_id друг друга.
+
+_last_activity_msg: dict[int, int] = {}
+
+
+async def _send_activity_heatmap(
+    session: AsyncSession, callback: CallbackQuery, bot: Bot, viewer: Player, club: bool,
+) -> None:
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=HEATMAP_DAYS)
+    if club:
+        r = await session.execute(
+            select(Match).where(
+                Match.status == MatchStatus.completed,
+                Match.completed_at >= since,
+            )
+        )
+        title = f"Активность клуба — {HEATMAP_DAYS} дней"
+    else:
+        r = await session.execute(
+            select(Match).where(
+                or_(Match.challenger_id == viewer.id, Match.challenged_id == viewer.id),
+                Match.status == MatchStatus.completed,
+                Match.completed_at >= since,
+            )
+        )
+        title = f"Моя активность — {HEATMAP_DAYS} дней"
+    matches = r.scalars().all()
+    counts = activity_counts_by_day(matches)
+    url = activity_heatmap_url(title, counts)
+    chat_id = callback.message.chat.id
+
+    prev_id = _last_activity_msg.get(chat_id)
+    if prev_id is not None:
+        try:
+            await bot.delete_message(chat_id, prev_id)
+        except Exception:
+            pass
+
+    kb = InlineKeyboardBuilder()
+    if club:
+        kb.row(InlineKeyboardButton(text="👤 Моя активность", callback_data="activity_heatmap_me"))
+    else:
+        kb.row(InlineKeyboardButton(text="🏛 Клубная активность", callback_data="activity_heatmap_club"))
+
+    try:
+        sent = await bot.send_photo(
+            chat_id, url,
+            caption=(
+                f"📅 <b>{'Активность клуба' if club else 'Моя активность'}</b> — "
+                f"последние {HEATMAP_DAYS} дней\n"
+                f"⬜ 0 · 🟩 1 · 🟩🟩 2–3 · 🟩🟩🟩 4+"
+            ),
+            reply_markup=kb.as_markup(),
+        )
+        _last_activity_msg[chat_id] = sent.message_id
+        await callback.answer()
+    except Exception:
+        await callback.answer("Не удалось построить карту активности, попробуй позже 🙁", show_alert=True)
+
+
+@router.callback_query(F.data == "activity_heatmap_me")
+async def show_activity_heatmap_me(callback: CallbackQuery, session: AsyncSession, bot: Bot):
+    player = await get_player(session, callback.from_user.id)
+    if not player:
+        await callback.answer("Сначала напиши /start", show_alert=True)
+        return
+    await _send_activity_heatmap(session, callback, bot, player, club=False)
+
+
+@router.callback_query(F.data == "activity_heatmap_club")
+async def show_activity_heatmap_club(callback: CallbackQuery, session: AsyncSession, bot: Bot):
+    player = await get_player(session, callback.from_user.id)
+    if not player:
+        await callback.answer("Сначала напиши /start", show_alert=True)
+        return
+    await _send_activity_heatmap(session, callback, bot, player, club=True)
 
 
 # ── Полная история матчей (своя) ──────────────────────────────────────────────
