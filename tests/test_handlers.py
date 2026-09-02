@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import selectinload, sessionmaker
 
-from bot.db.models import Base, Match, MatchStatus, Player
+from bot.db.models import Base, ChampionReign, Match, MatchStatus, Player
 from bot.handlers.challenge import do_cancel_match, send_challenge, show_players_for_challenge
 from bot.handlers.match_result import (
     _send_h2h_milestone_egg,
@@ -29,6 +29,7 @@ from bot.handlers.match_result import (
     fsm_reset_notice,
     handle_direct_score,
     process_set_score,
+    send_share_card,
     start_report,
 )
 from bot.handlers.profile import (
@@ -53,6 +54,7 @@ from bot.utils import (
     msk_day_start,
     msk_hour_and_weekday,
     pluralize_sets,
+    rank_title,
     rating_tenths,
 )
 
@@ -1020,6 +1022,19 @@ def test_rating_tenths_handles_float_noise():
     assert rating_tenths(1113.7) == 11137
 
 
+def test_rank_title_bands():
+    assert rank_title(900.0) == "Джун"
+    assert rank_title(949.9) == "Джун"
+    assert rank_title(950.0) == "Миддл"
+    assert rank_title(1049.9) == "Миддл"
+    assert rank_title(1050.0) == "Сеньор"
+    assert rank_title(1149.9) == "Сеньор"
+    assert rank_title(1150.0) == "Тим лид"
+    assert rank_title(1249.9) == "Тим лид"
+    assert rank_title(1250.0) == "Ген дир"
+    assert rank_title(2000.0) == "Ген дир"
+
+
 # ── Скрытие игроков с 0 матчей / график по игроку ───────────────────────────────
 
 def _completed(challenger, challenged, winner_id, rc, when):
@@ -1266,6 +1281,40 @@ async def test_form_index_empty_when_no_matches(db):
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Матчей ещё не было" in text
+
+
+# ── Зал славы ─────────────────────────────────────────────────────────────────
+
+async def test_hall_of_fame_lists_reigns_newest_first(db):
+    from bot.handlers.leaderboard import show_hall_of_fame
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=datetime(2026, 2, 1)))
+    db.add(ChampionReign(player_id=p2.id, started_at=datetime(2026, 2, 1), ended_at=None))
+    await db.commit()
+
+    cb = _callback(1, "hall_of_fame")
+    await show_hall_of_fame(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Зал славы" in text
+    assert text.index("Bob") < text.index("Alice")  # свежее правление первым
+    assert "сейчас" in text  # незакрытое правление Bob
+
+
+async def test_hall_of_fame_empty_when_boss_fight_never_activated(db):
+    from bot.handlers.leaderboard import show_hall_of_fame
+
+    db.add(_player(1, "Alice"))
+    await db.commit()
+
+    cb = _callback(1, "hall_of_fame")
+    await show_hall_of_fame(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "ещё ни разу не активировался" in text
 
 
 async def test_dbstats_escapes_player_name(db, monkeypatch):
@@ -2764,3 +2813,221 @@ async def test_personal_record_fires_end_to_end(db):
     await confirm_result(cb, db, st, bot)
 
     assert any("RAMPAGE" in t and "2 побед подряд" in t for t in _texts(bot))
+
+
+# ── Карточка «поделиться победой» ────────────────────────────────────────────
+
+def _share_buttons(kb):
+    return [(b.text, b.callback_data) for row in kb.inline_keyboard for b in row]
+
+
+async def test_share_card_button_shown_to_reporter_when_winner(db):
+    """Репортёр — победитель: кнопка карточки на его же интерактивном экране."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 5}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    buttons = _share_buttons(kb)
+    assert ("📤 Карточка победы", f"share_card_{m.id}") in buttons
+
+
+async def test_share_card_button_shown_to_notified_winner_not_reporter(db):
+    """Репортёр — проигравший (инверсия): интерактивный экран репортёра БЕЗ
+    кнопки карточки, а уведомление победителю — С кнопкой."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    # p1 репортит счёт, где сам проиграл — победитель p2
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 5, "opponent": 11}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    reporter_kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    assert not any(
+        "share_card_" in (b.callback_data or "")
+        for row in reporter_kb.inline_keyboard for b in row
+    )
+
+    # Среди всех send_message (ачивки/пасхалки тоже шлют сообщения) находим
+    # именно уведомление победителю о внесённом результате.
+    notify_call = next(
+        c for c in bot.send_message.call_args_list
+        if "Результат матча внесён" in c.args[1]
+    )
+    winner_kb = notify_call.kwargs["reply_markup"]
+    buttons = _share_buttons(winner_kb)
+    assert ("📤 Карточка победы", f"share_card_{m.id}") in buttons
+
+
+async def test_share_card_button_absent_on_draw(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = _state(1)
+    await st.set_state(MatchResultStates.confirming)
+    await st.update_data(
+        match_id=m.id, reporter_player_id=p1.id,
+        sets_data=[{"reporter": 11, "opponent": 5}, {"reporter": 5, "opponent": 11}],
+        is_draw=True,
+    )
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    assert not any("share_card_" in (b.callback_data or "") for row in kb.inline_keyboard for b in row)
+
+
+async def test_send_share_card_content(db):
+    p1, p2 = _player(1, "Alice", rating=1010.0), _player(2, "Bob", rating=1000.0)
+    db.add_all([p1, p2])
+    await db.flush()
+    m = Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=[{"w": 11, "l": 7}, {"w": 11, "l": 9}],
+        rating_change=10.0, completed_at=datetime(2026, 6, 1, 12, 0, 0),
+    )
+    db.add(m)
+    await db.commit()
+
+    cb = _callback(1, f"share_card_{m.id}")
+    await send_share_card(cb, db)
+
+    text = cb.message.answer.call_args.args[0]
+    assert "ПОБЕДА" in text
+    assert "Alice" in text and "Bob" in text
+    assert "11:7, 11:9" in text
+    assert "+10.0 pts" in text
+
+
+async def test_send_share_card_rejects_non_winner(db):
+    """Проигравший (или кто угодно ещё) не может открыть чужую карточку победы."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m = Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=[{"w": 11, "l": 7}],
+        rating_change=10.0, completed_at=datetime(2026, 6, 1, 12, 0, 0),
+    )
+    db.add(m)
+    await db.commit()
+
+    cb = _callback(2, f"share_card_{m.id}")  # Bob (проигравший) пытается открыть
+    await send_share_card(cb, db)
+
+    cb.message.answer.assert_not_called()
+    assert cb.answer.call_args_list[-1].kwargs.get("show_alert") is True
+
+
+# ── Постоянная клавиатура снизу (3 кнопки) ──────────────────────────────────────
+
+async def test_reply_kb_sent_on_start_for_new_player(db):
+    from bot.handlers.start import cmd_start
+
+    msg = _message(1, "/start")
+    state = _state(1)
+    bot = AsyncMock()
+    await cmd_start(msg, SimpleNamespace(args=None), db, state, bot)
+
+    reply_kb_calls = [
+        c for c in msg.answer.call_args_list
+        if c.kwargs.get("reply_markup") is not None
+        and hasattr(c.kwargs["reply_markup"], "keyboard")
+    ]
+    assert len(reply_kb_calls) == 1
+    buttons = [b.text for row in reply_kb_calls[0].kwargs["reply_markup"].keyboard for b in row]
+    assert buttons == ["🏓 Вызвать на матч", "📊 Рейтинг", "📈 Статистика"]
+
+
+async def test_reply_kb_sent_on_start_for_returning_player(db):
+    from bot.handlers.start import cmd_start
+
+    db.add(_player(1, "Alice"))
+    await db.commit()
+
+    msg = _message(1, "/start")
+    state = _state(1)
+    bot = AsyncMock()
+    await cmd_start(msg, SimpleNamespace(args=None), db, state, bot)
+
+    reply_kb_calls = [
+        c for c in msg.answer.call_args_list
+        if c.kwargs.get("reply_markup") is not None
+        and hasattr(c.kwargs["reply_markup"], "keyboard")
+    ]
+    assert len(reply_kb_calls) == 1
+
+
+async def test_reply_kb_challenge_button_shows_same_screen_as_menu(db):
+    from bot.handlers.challenge import show_players_for_challenge_from_reply_kb
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    await db.commit()
+
+    msg = _message(1, "🏓 Вызвать на матч")
+    await show_players_for_challenge_from_reply_kb(msg, db)
+
+    text = msg.answer.call_args.args[0]
+    assert "Кого хочешь вызвать" in text
+    kb = msg.answer.call_args.kwargs["reply_markup"]
+    buttons = [b.text for row in kb.inline_keyboard for b in row]
+    assert any("Bob" in b for b in buttons)
+
+
+async def test_reply_kb_leaderboard_button_shows_same_screen_as_menu(db):
+    from bot.handlers.leaderboard import show_leaderboard_from_reply_kb
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+
+    msg = _message(1, "📊 Рейтинг")
+    await show_leaderboard_from_reply_kb(msg, db)
+
+    text = msg.answer.call_args.args[0]
+    assert "Рейтинг игроков" in text
+    assert "Alice" in text and "Bob" in text
+
+
+async def test_reply_kb_stats_button_shows_same_screen_as_menu(db):
+    from bot.handlers.profile import show_my_stats_from_reply_kb
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+
+    msg = _message(1, "📈 Статистика")
+    await show_my_stats_from_reply_kb(msg, db)
+
+    text = msg.answer.call_args.args[0]
+    assert "Статистика — Alice" in text
+    assert "🎖" in text  # звание тоже на месте
+
+
+async def test_reply_kb_stats_button_without_registration(db):
+    from bot.handlers.profile import show_my_stats_from_reply_kb
+
+    msg = _message(1, "📈 Статистика")
+    await show_my_stats_from_reply_kb(msg, db)
+
+    text = msg.answer.call_args.args[0]
+    assert "/start" in text

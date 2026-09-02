@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from html import escape as h
 
 from aiogram import Bot, F, Router
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,11 +33,11 @@ router = Router()
 
 # ── Show player list ──────────────────────────────────────────────────────────
 
-@router.callback_query(F.data == "menu_play")
-async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSession):
-    await callback.answer()
-
-    current_player = await get_player(session, callback.from_user.id)
+async def _build_challenge_screen(session: AsyncSession, telegram_id: int):
+    """Строит (текст, клавиатуру) экрана «Кого вызвать?» — общая часть для
+    инлайн-кнопки меню (edit_text) и постоянной клавиатуры снизу (answer),
+    у которой нет «своего» сообщения для редактирования."""
+    current_player = await get_player(session, telegram_id)
 
     # У игрока может быть только ОДИН активный матч одновременно (стол один,
     # матчи строго последовательные) — если он уже занят, вместо списка
@@ -51,12 +51,11 @@ async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSess
             )
             opp_r = await session.execute(select(Player).where(Player.id == opp_id))
             opp = opp_r.scalar_one()
-            await callback.message.edit_text(
+            return (
                 f"⚔️ У тебя уже есть активный матч с <b>{h(opp.display_name)}</b>.\n"
                 f"Заверши его, чтобы вызвать нового соперника.",
-                reply_markup=busy_with_match_kb(my_active.id),
+                busy_with_match_kb(my_active.id),
             )
-            return
 
     r = await session.execute(select(Player).order_by(Player.rating.desc()))
     players = r.scalars().all()
@@ -72,16 +71,15 @@ async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSess
 
     others = [
         p for p in players
-        if p.telegram_id != callback.from_user.id and p.id not in busy_ids
+        if p.telegram_id != telegram_id and p.id not in busy_ids
     ]
     if not others:
-        any_others = any(p.telegram_id != callback.from_user.id for p in players)
+        any_others = any(p.telegram_id != telegram_id for p in players)
         if any_others:
             msg = "Все игроки сейчас заняты активными матчами. Попробуй позже! 🏓"
         else:
             msg = "Пока нет других игроков. Позови друзей! 😅"
-        await callback.message.edit_text(msg, reply_markup=back_to_menu_kb())
-        return
+        return msg, back_to_menu_kb()
 
     my_rating = current_player.rating if current_player else None
 
@@ -164,16 +162,29 @@ async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSess
     # лидерборде (leaderboard.py).
     others = _pin_champion(others, champion_id)
 
-    await callback.message.edit_text(
-        header,
-        reply_markup=players_list_kb(
-            others, callback.from_user.id,
-            my_rating=my_rating, rank_map=rank_map,
-            streak_map=streak_map, inactive_ids=inactive_ids,
-            champion_id=champion_id, challenger_id=challenger_id,
-            boss_fight_target=boss_fight_target,
-        ),
+    return header, players_list_kb(
+        others, telegram_id,
+        my_rating=my_rating, rank_map=rank_map,
+        streak_map=streak_map, inactive_ids=inactive_ids,
+        champion_id=champion_id, challenger_id=challenger_id,
+        boss_fight_target=boss_fight_target,
     )
+
+
+@router.callback_query(F.data == "menu_play")
+async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSession):
+    await callback.answer()
+    text, kb = await _build_challenge_screen(session, callback.from_user.id)
+    await callback.message.edit_text(text, reply_markup=kb)
+
+
+@router.message(F.text == "🏓 Вызвать на матч")
+async def show_players_for_challenge_from_reply_kb(message: Message, session: AsyncSession):
+    """Тот же экран, что и menu_play, но с постоянной клавиатуры снизу —
+    у входящего текстового сообщения нет своего сообщения для редактирования,
+    поэтому шлём новое (см. _build_challenge_screen)."""
+    text, kb = await _build_challenge_screen(session, message.from_user.id)
+    await message.answer(text, reply_markup=kb)
 
 
 # ── Send challenge → match immediately active ─────────────────────────────────

@@ -1,13 +1,49 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.utils import favor_icon
 
 
-def main_menu_kb(active_matches: list | None = None) -> InlineKeyboardMarkup:
+def main_reply_kb() -> ReplyKeyboardMarkup:
+    """Постоянная клавиатура под строкой ввода — три самых частых действия
+    всегда под рукой, не нужно подниматься к инлайн-кнопкам главного меню.
+
+    Отдельный механизм от InlineKeyboardMarkup: нажатие шлёт текст кнопки как
+    обычное сообщение (см. хендлеры-двойники в challenge.py/leaderboard.py/
+    profile.py — F.message(F.text == "...")), поэтому у результата нет «своего»
+    сообщения для редактирования, каждый тап шлёт новое сообщение в чат — как
+    и любое другое уведомление бота (пасхалки, вызовы и т.д.), не хуже.
+    """
+    return ReplyKeyboardMarkup(
+        keyboard=[[
+            KeyboardButton(text="🏓 Вызвать на матч"),
+            KeyboardButton(text="📊 Рейтинг"),
+            KeyboardButton(text="📈 Статистика"),
+        ]],
+        resize_keyboard=True,
+    )
+
+
+def main_menu_kb(
+    active_matches: list | None = None, share_match_id: int | None = None,
+) -> InlineKeyboardMarkup:
     """Главное меню. Если переданы активные матчи [(match_id, opponent_name), ...],
-    сверху добавляются заметные кнопки «Внести результат» по каждому из них."""
+    сверху добавляются заметные кнопки «Внести результат» по каждому из них.
+
+    share_match_id — если задан, сверху добавляется кнопка «Карточка победы».
+    Нужно для уведомления победителю, когда счёт внёс проигравший — победитель
+    тогда видит не интерактивный экран результата (тот у репортёра), а просто
+    это уведомление, и кнопку карточки больше некуда прицепить."""
     b = InlineKeyboardBuilder()
+    if share_match_id is not None:
+        b.row(InlineKeyboardButton(
+            text="📤 Карточка победы", callback_data=f"share_card_{share_match_id}",
+        ))
     if active_matches:
         for match_id, opponent_name in active_matches:
             b.row(InlineKeyboardButton(
@@ -54,13 +90,21 @@ def player_achievements_kb(player_id: int) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def rematch_kb(opponent_id: int, can_rematch: bool = True) -> InlineKeyboardMarkup:
+def rematch_kb(
+    opponent_id: int, can_rematch: bool = True, share_match_id: int | None = None,
+) -> InlineKeyboardMarkup:
     """Клавиатура после матча — предлагает реванш.
 
     can_rematch=False — сразу после боссфайта: реванш заблокирован, пока
     нечемпион пары не сыграет с третьим (см. boss_fight_rematch_blocked).
+    share_match_id — если задан, сверху добавляется кнопка «Карточка победы»
+    (только когда этот экран смотрит именно победитель — ничьи её не получают).
     """
     b = InlineKeyboardBuilder()
+    if share_match_id is not None:
+        b.row(InlineKeyboardButton(
+            text="📤 Карточка победы", callback_data=f"share_card_{share_match_id}",
+        ))
     if can_rematch:
         b.row(InlineKeyboardButton(text="⚔️ Реванш", callback_data=f"rematch_{opponent_id}"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
@@ -174,6 +218,7 @@ def leaderboard_kb(players) -> InlineKeyboardMarkup:
     b.row(InlineKeyboardButton(text="🏆 Рекорды клуба", callback_data="club_records"))
     b.row(InlineKeyboardButton(text="⚔️ Матрица доминирования", callback_data="dominance_matrix"))
     b.row(InlineKeyboardButton(text="🌡 Индекс формы", callback_data="form_index"))
+    b.row(InlineKeyboardButton(text="🏛 Зал славы", callback_data="hall_of_fame"))
     b.row(InlineKeyboardButton(text="📅 Сегодня", callback_data="menu_today"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
