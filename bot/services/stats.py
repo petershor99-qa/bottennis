@@ -40,6 +40,7 @@ def _compute_player_stats(player, all_matches: list) -> dict:
 
     sets_won = sets_total = 0
     deuce_total = deuce_won = 0
+    career_points = 0
     for m in all_matches:
         if m.sets_data:
             i_am_ch = m.challenger_id == player.id
@@ -53,6 +54,10 @@ def _compute_player_stats(player, all_matches: list) -> dict:
                 )
                 if won_this_set:
                     sets_won += 1
+                # Очки, набранные в этой партии — с перспективы игрока (для
+                # вех «Копил по очку» и т.д., см. _career_points_and_sets в achievements.py)
+                i_am_favored = i_am_ch if m.winner_id is None else i_am_winner
+                career_points += s["w"] if i_am_favored else s["l"]
                 # Дьюс: партия дошла до 10:10+ и выиграна с отрывом ровно 2
                 if max(s["w"], s["l"]) >= 12 and abs(s["w"] - s["l"]) == 2:
                     deuce_total += 1
@@ -156,6 +161,7 @@ def _compute_player_stats(player, all_matches: list) -> dict:
         "boss_fights_played": len(boss_fights), "boss_fights_won": boss_fight_wins,
         "trend_30d": trend_30d, "trend_30d_matches": len(recent_30),
         "deuce_total": deuce_total, "deuce_won": deuce_won,
+        "sets_won": sets_won, "career_points": career_points,
     }
 
 
@@ -187,6 +193,15 @@ def _nearest_achievement_progress(player, s: dict, total_players: int) -> str | 
     _add("fifty", total_matches, 50, "матчей")
     _add("veteran", total_matches, 100, "матчей")
     _add("legend", total_matches, 200, "матчей")
+    _add("workhorse", total_matches, 500, "матчей")
+    _add("monument", total_matches, 750, "матчей")
+    _add("superstar", total_matches, 1000, "матчей")
+    _add("point_saver", s["career_points"], 4000, "очков")
+    _add("sturdy_grinder", s["career_points"], 8000, "очков")
+    _add("point_farmer", s["career_points"], 12000, "очков")
+    _add("set_sniper", s["sets_won"], 200, "партий")
+    _add("set_veteran", s["sets_won"], 500, "партий")
+    _add("set_legend", s["sets_won"], 1000, "партий")
     if s["draws"] > 0:
         _add("diplomat", s["draws"], 5, "ничьих")
     opp_count = max(total_players - 1, 1)

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from bot.db.models import ChampionReign, Match, MatchStatus, Player
-from bot.keyboards.inline import back_to_leaderboard_kb, back_to_menu_kb, leaderboard_kb
+from bot.keyboards.inline import back_to_leaderboard_kb, back_to_menu_kb, back_to_stats_kb, leaderboard_kb
 from bot.utils import (
     MSK_OFFSET,
     _pin_champion,
@@ -198,7 +198,7 @@ async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
     if not matches:
         await callback.message.edit_text(
             "📅 <b>Сегодня</b>\n\nМатчей пока не было. Первым сделай ход! 🏓",
-            reply_markup=back_to_leaderboard_kb(),
+            reply_markup=back_to_stats_kb(),
         )
         return
 
@@ -268,7 +268,7 @@ async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
 
     await callback.message.edit_text(
         "\n".join(lines),
-        reply_markup=back_to_leaderboard_kb(),
+        reply_markup=back_to_stats_kb(),
     )
 
 

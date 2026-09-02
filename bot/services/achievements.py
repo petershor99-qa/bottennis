@@ -65,6 +65,15 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("fifty",          "🎊", "Стукнул полтинник",          "Сыграть 50 матчей", category=CAT_MILESTONES),
     Achievement("veteran",        "🏆", "Прошаренный",               "Сыграть 100 матчей", category=CAT_MILESTONES),
     Achievement("legend",         "🎾", "Великий теннисит",          "Сыграть 200 матчей", category=CAT_MILESTONES),
+    Achievement("workhorse",      "⚙️", "Стахановец",                "Сыграть 500 матчей", category=CAT_MILESTONES),
+    Achievement("monument",       "🗿", "Монумент",                  "Сыграть 750 матчей", category=CAT_MILESTONES),
+    Achievement("superstar",      "🌟", "Суперстар",                 "Сыграть 1000 матчей", category=CAT_MILESTONES),
+    Achievement("point_saver",    "🪙", "Копил по очку",             "Набрать 4000 очков за карьеру", category=CAT_MILESTONES),
+    Achievement("sturdy_grinder", "💪", "Крепкий середняк",          "Набрать 8000 очков за карьеру", category=CAT_MILESTONES),
+    Achievement("point_farmer",   "🌾", "Нафармил очков",            "Набрать 12000 очков за карьеру", category=CAT_MILESTONES),
+    Achievement("set_sniper",     "🎯", "Сетовый снайпёр",           "Выиграть 200 партий за карьеру", category=CAT_MILESTONES),
+    Achievement("set_veteran",    "🎖", "Сетовый ветеран труда",     "Выиграть 500 партий за карьеру", category=CAT_MILESTONES),
+    Achievement("set_legend",     "👑", "Сетовая лехенда",           "Выиграть 1000 партий за карьеру", category=CAT_MILESTONES),
     Achievement("maniac",         "🤪", "Теннисный маньячелло",       "Сыграть 10 матчей за один день", category=CAT_MILESTONES),
     Achievement("collector",      "🗺", "Со всеми познакомился",     "Победить каждого игрока хотя бы раз", category=CAT_CLUB),
     Achievement("rating_1200",    "⭐", "Рейтинг 1200",              "Достичь рейтинга 1200 pts", category=CAT_MILESTONES),
@@ -96,7 +105,7 @@ ACHIEVEMENTS_MAP: dict[str, Achievement] = {a.id: a for a in ACHIEVEMENTS_LIST}
 
 # Увеличивай при добавлении новых ачивок, требующих бэкфилл.
 # Игроки с player.backfill_version < BACKFILL_VERSION будут обработаны один раз при старте.
-BACKFILL_VERSION = 9
+BACKFILL_VERSION = 10
 
 TERMINATOR_STREAK_LEN = 5  # активная серия соперника для «Вынес терминатора»
 
@@ -116,6 +125,27 @@ def _has_alternating_tail(matches_asc: list, player_id: int, length: int = ALTER
             return False
         outcomes.append(m.winner_id == player_id)
     return all(outcomes[i] != outcomes[i + 1] for i in range(length - 1))
+
+
+def _career_points_and_sets(matches: list, player_id: int) -> tuple[int, int]:
+    """Суммарные набранные очки и выигранные партии за карьеру — с перспективы
+    player_id, независимо от исхода матча (для вех «Копил по очку»/«Сетовый
+    снайпёр» и их старших ступеней). Та же перспектива, что и в _match_line
+    (utils.py) и _compute_player_stats (services/stats.py)."""
+    points = sets_won = 0
+    for m in matches:
+        if not m.sets_data:
+            continue
+        is_draw = m.winner_id is None
+        i_am_challenger = m.challenger_id == player_id
+        i_am_winner = m.winner_id == player_id
+        i_am_favored = i_am_challenger if is_draw else i_am_winner
+        for s in m.sets_data:
+            mine, theirs = (s["w"], s["l"]) if i_am_favored else (s["l"], s["w"])
+            points += mine
+            if mine > theirs:
+                sets_won += 1
+    return points, sets_won
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -296,6 +326,27 @@ async def check_win_achievements(
         maybe("veteran")
     if total >= 200:
         maybe("legend")
+    if total >= 500:
+        maybe("workhorse")
+    if total >= 750:
+        maybe("monument")
+    if total >= 1000:
+        maybe("superstar")
+
+    # ── Вехи по очкам и выигранным партиям ───────────────────────────────────
+    career_points, career_sets_won = _career_points_and_sets(all_matches, winner.id)
+    if career_points >= 4000:
+        maybe("point_saver")
+    if career_points >= 8000:
+        maybe("sturdy_grinder")
+    if career_points >= 12000:
+        maybe("point_farmer")
+    if career_sets_won >= 200:
+        maybe("set_sniper")
+    if career_sets_won >= 500:
+        maybe("set_veteran")
+    if career_sets_won >= 1000:
+        maybe("set_legend")
 
     # ── Теннисный маньячелло: 10+ матчей за сегодня ──────────────────────────
     # Граница «сегодня» — полночь по МСК (единое бизнес-правило, как в экранах и пасхалках)
@@ -465,6 +516,26 @@ async def check_loss_achievements(
         maybe("veteran")
     if total >= 200:
         maybe("legend")
+    if total >= 500:
+        maybe("workhorse")
+    if total >= 750:
+        maybe("monument")
+    if total >= 1000:
+        maybe("superstar")
+
+    career_points, career_sets_won = _career_points_and_sets(all_matches, loser.id)
+    if career_points >= 4000:
+        maybe("point_saver")
+    if career_points >= 8000:
+        maybe("sturdy_grinder")
+    if career_points >= 12000:
+        maybe("point_farmer")
+    if career_sets_won >= 200:
+        maybe("set_sniper")
+    if career_sets_won >= 500:
+        maybe("set_veteran")
+    if career_sets_won >= 1000:
+        maybe("set_legend")
 
     # Теннисный маньячелло: 10+ матчей за сегодня
     # Граница «сегодня» — полночь по МСК (единое бизнес-правило, как в экранах и пасхалках)
@@ -571,6 +642,26 @@ async def check_draw_achievements(
         maybe("veteran")
     if total >= 200:
         maybe("legend")
+    if total >= 500:
+        maybe("workhorse")
+    if total >= 750:
+        maybe("monument")
+    if total >= 1000:
+        maybe("superstar")
+
+    career_points, career_sets_won = _career_points_and_sets(all_matches, player.id)
+    if career_points >= 4000:
+        maybe("point_saver")
+    if career_points >= 8000:
+        maybe("sturdy_grinder")
+    if career_points >= 12000:
+        maybe("point_farmer")
+    if career_sets_won >= 200:
+        maybe("set_sniper")
+    if career_sets_won >= 500:
+        maybe("set_veteran")
+    if career_sets_won >= 1000:
+        maybe("set_legend")
 
     # Теннисный маньячелло: 10+ матчей за сегодня
     # Граница «сегодня» — полночь по МСК (единое бизнес-правило, как в экранах и пасхалках)
@@ -936,6 +1027,26 @@ async def backfill_achievements(session: AsyncSession) -> None:
             _add_new(earned, "veteran")
         if total >= 200:
             _add_new(earned, "legend")
+        if total >= 500:
+            _add_new(earned, "workhorse")
+        if total >= 750:
+            _add_new(earned, "monument")
+        if total >= 1000:
+            _add_new(earned, "superstar")
+
+        career_points, career_sets_won = _career_points_and_sets(matches, player.id)
+        if career_points >= 4000:
+            _add_new(earned, "point_saver")
+        if career_points >= 8000:
+            _add_new(earned, "sturdy_grinder")
+        if career_points >= 12000:
+            _add_new(earned, "point_farmer")
+        if career_sets_won >= 200:
+            _add_new(earned, "set_sniper")
+        if career_sets_won >= 500:
+            _add_new(earned, "set_veteran")
+        if career_sets_won >= 1000:
+            _add_new(earned, "set_legend")
 
         # Теннисный маньячелло: любой день (по МСК) с 10+ матчами
         day_counts = Counter(
