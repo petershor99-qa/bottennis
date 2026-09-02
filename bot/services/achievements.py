@@ -10,14 +10,14 @@
 Хранение: player.achievements — JSON-список заработанных id.
 """
 import json
-from collections import Counter, deque
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import Match, MatchStatus, Player
+from bot.db.models import AchievementEarned, Match, MatchStatus, Player
 from bot.utils import MSK_OFFSET, as_naive, msk_day_start, msk_hour_and_weekday, rating_tenths
 
 
@@ -105,7 +105,7 @@ ACHIEVEMENTS_MAP: dict[str, Achievement] = {a.id: a for a in ACHIEVEMENTS_LIST}
 
 # Увеличивай при добавлении новых ачивок, требующих бэкфилл.
 # Игроки с player.backfill_version < BACKFILL_VERSION будут обработаны один раз при старте.
-BACKFILL_VERSION = 10
+BACKFILL_VERSION = 11
 
 TERMINATOR_STREAK_LEN = 5  # активная серия соперника для «Вынес терминатора»
 
@@ -164,6 +164,19 @@ def _add_new(earned: list[str], ach_id: str) -> bool:
         earned.append(ach_id)
         return True
     return False
+
+
+def record_achievements_earned(
+    session: AsyncSession, player_id: int, new_ids: list[str], earned_at: datetime | None,
+) -> None:
+    """Записывает дату получения новых ачивок (v2.106.0) — вызывается ПОСЛЕ
+    check_win/loss/draw_achievements() / check_cancel_achievements() /
+    check_boss_fight_*() / check_chance_blown_achievement(). Эти функции
+    возвращают только список id, без контекста момента (один срабатывает от
+    конкретного матча, другой — от события без матча вроде отмены), поэтому
+    дата передаётся явно вызывающим — тот уже знает нужный timestamp."""
+    for ach_id in new_ids:
+        session.add(AchievementEarned(player_id=player_id, achievement_id=ach_id, earned_at=earned_at))
 
 
 # ── Check after win ────────────────────────────────────────────────────────────
@@ -774,8 +787,17 @@ async def backfill_achievements(session: AsyncSession) -> None:
     Вызывается при старте из init_db().
 
     Примечание: highlander, david_goliath, revenge, throne_denied,
-    chance_blown и rock_bottom не восстанавливаются (требуют снапшоты
-    рейтинга/роли на момент матча) — будут начислены в реальном времени.
+    chance_blown, rock_bottom и rating_1200 не восстанавливаются (требуют
+    снапшот рейтинга/роли на момент КОНКРЕТНОГО исторического матча, а не
+    текущее значение) — будут начислены в реальном времени.
+
+    С v2.106.0 попутно (BACKFILL_VERSION 10→11, форсирует повторный проход
+    ДАЖЕ для уже полностью забэкфилленных игроков) заполняет даты получения
+    в AchievementEarned для ачивок, у которых даты ещё нет — большинство
+    проверок теперь считается инкрементально ПРЯМО В цикле по матчам (а не
+    постфактум по агрегату, как раньше), поэтому дата берётся из конкретного
+    матча-триггера. Для по-настоящему непроверяемых по истории (снапшот
+    рейтинга) дата остаётся NULL — не выдумываем задним числом.
     """
     players_r = await session.execute(
         select(Player).where(Player.backfill_version < BACKFILL_VERSION)
@@ -797,20 +819,26 @@ async def backfill_achievements(session: AsyncSession) -> None:
     )
     club_matches = club_matches_r.scalars().all()
     club_streaks: dict[int, int] = {}
-    terminator_winner_ids: set[int] = set()
+    terminator_dates: dict[int, datetime] = {}  # winner_id -> дата матча-триггера (первого)
     for m in club_matches:
         if m.winner_id is None:
             club_streaks[m.challenger_id] = 0
             club_streaks[m.challenged_id] = 0
             continue
         loser_id = m.challenged_id if m.winner_id == m.challenger_id else m.challenger_id
-        if club_streaks.get(loser_id, 0) >= TERMINATOR_STREAK_LEN:
-            terminator_winner_ids.add(m.winner_id)
+        if club_streaks.get(loser_id, 0) >= TERMINATOR_STREAK_LEN and m.winner_id not in terminator_dates:
+            terminator_dates[m.winner_id] = m.completed_at
         club_streaks[m.winner_id] = club_streaks.get(m.winner_id, 0) + 1
         club_streaks[loser_id] = 0
 
     for player in players:
         earned = get_achievements(player)
+        dates: dict[str, datetime | None] = {}  # ach_id -> дата первого срабатывания в ЭТОМ проходе
+
+        def mark(ach_id: str, when: datetime | None = None) -> None:
+            _add_new(earned, ach_id)
+            if ach_id not in dates:
+                dates[ach_id] = when
 
         r = await session.execute(
             select(Match)
@@ -827,29 +855,32 @@ async def backfill_achievements(session: AsyncSession) -> None:
             continue
 
         # Первый матч
-        _add_new(earned, "press_start")
+        mark("press_start", matches[0].completed_at)
 
         # Вынес терминатора (из глобального прохода выше)
-        if player.id in terminator_winner_ids:
-            _add_new(earned, "terminator_slain")
+        if player.id in terminator_dates:
+            mark("terminator_slain", terminator_dates[player.id])
 
         # Replay — считаем статистику в хронологическом порядке
         win_streak = 0
-        max_win_streak = 0
         loss_streak = 0
-        max_loss_streak = 0
         total_wins = 0
         total_draws = 0
         beaten_opponents: set[int] = set()
-        had_phoenix = False
+        first_win_at: datetime | None = None
         alt_window: list[bool] = []  # для «Такова жись» — скользящее окно исходов
         last_completed_vs: dict[int, datetime] = {}  # для «Добивашка» — по опоненту
         prev_was_draw = False  # для «Дубль мира»
         had_boss_fight_before = False  # для «Первая корона»
-        other_ids_bf = all_player_ids - {player.id}  # для «Полный круг за неделю»
+        other_ids = all_player_ids - {player.id}  # «Полный круг за неделю» / «Со всеми познакомился»
         # Скользящее окно побед за трейлинг 7 дней для «Полный круг за неделю» —
         # деque вместо полного скана matches на КАЖДОЙ победе (был O(n²) на игрока).
         recent_wins: deque[tuple[datetime, int]] = deque()
+        # Инкрементальные очки/партии за карьеру (та же перспектива, что и
+        # _career_points_and_sets) — считаем по ходу, чтобы поймать ТОЧНЫЙ матч,
+        # на котором вехи по очкам/партиям пересечены, а не просто финальную сумму.
+        running_points = 0
+        running_sets_won = 0
 
         for m in matches:
             opp_id = m.challenged_id if m.challenger_id == player.id else m.challenger_id
@@ -858,7 +889,7 @@ async def backfill_achievements(session: AsyncSession) -> None:
 
             if m.is_boss_fight:
                 if is_win and not had_boss_fight_before:
-                    _add_new(earned, "first_crown")
+                    mark("first_crown", m.completed_at)
                 had_boss_fight_before = True
 
             if is_draw:
@@ -870,190 +901,177 @@ async def backfill_achievements(session: AsyncSession) -> None:
                 if len(alt_window) == ALTERNATING_STREAK_LEN and all(
                     alt_window[i] != alt_window[i + 1] for i in range(ALTERNATING_STREAK_LEN - 1)
                 ):
-                    _add_new(earned, "takova_zhis")
+                    mark("takova_zhis", m.completed_at)
+
+            # Очки/партии за карьеру (перспектива игрока — см. _career_points_and_sets)
+            if m.sets_data:
+                is_favored = (m.challenger_id == player.id) if is_draw else is_win
+                for s in m.sets_data:
+                    mine, theirs = (s["w"], s["l"]) if is_favored else (s["l"], s["w"])
+                    running_points += mine
+                    if mine > theirs:
+                        running_sets_won += 1
+            if running_points >= 4000:
+                mark("point_saver", m.completed_at)
+            if running_points >= 8000:
+                mark("sturdy_grinder", m.completed_at)
+            if running_points >= 12000:
+                mark("point_farmer", m.completed_at)
+            if running_sets_won >= 200:
+                mark("set_sniper", m.completed_at)
+            if running_sets_won >= 500:
+                mark("set_veteran", m.completed_at)
+            if running_sets_won >= 1000:
+                mark("set_legend", m.completed_at)
 
             if is_win:
                 total_wins += 1
+                if first_win_at is None:
+                    first_win_at = m.completed_at
                 if loss_streak >= 3:
-                    had_phoenix = True
+                    mark("phoenix", m.completed_at)
                 loss_streak = 0
                 win_streak += 1
-                max_win_streak = max(max_win_streak, win_streak)
+                if win_streak == 3:
+                    mark("hat_trick", m.completed_at)
+                if win_streak == 5:
+                    mark("im_on_fire", m.completed_at)
+                if win_streak == 10:
+                    mark("god_mode", m.completed_at)
                 beaten_opponents.add(opp_id)
+                if other_ids and other_ids.issubset(beaten_opponents):
+                    mark("collector", m.completed_at)
 
                 if m.sets_data:
                     if sum(1 for s in m.sets_data if s["l"] > s["w"]) == 0 and len(m.sets_data) >= 2:
-                        _add_new(earned, "fatality")
+                        mark("fatality", m.completed_at)
                     if any(s["w"] == 11 and s["l"] == 0 for s in m.sets_data):
-                        _add_new(earned, "no_sweat")
+                        mark("no_sweat", m.completed_at)
                     if len(m.sets_data) >= 5:
-                        _add_new(earned, "marathon")
+                        mark("marathon", m.completed_at)
                     # CumБэк: проиграл первые две партии и выиграл матч
                     if (
                         len(m.sets_data) >= 2
                         and m.sets_data[0]["l"] > m.sets_data[0]["w"]
                         and m.sets_data[1]["l"] > m.sets_data[1]["w"]
                     ):
-                        _add_new(earned, "comeback")
+                        mark("comeback", m.completed_at)
                     # Дьюсмейкер: выиграл партию на дьюсе (победитель = w)
                     if any(s["w"] >= 12 and s["w"] > s["l"] for s in m.sets_data):
-                        _add_new(earned, "deuce_maker")
+                        mark("deuce_maker", m.completed_at)
                     # Полуночник: матч завершился ночью (0:00–6:00 МСК)
                     if m.completed_at and 0 <= msk_hour_and_weekday(m.completed_at)[0] < 6:
-                        _add_new(earned, "night_owl")
+                        mark("night_owl", m.completed_at)
                     # Дьюсопад: КАЖДАЯ партия закончилась на дьюсе
                     if len(m.sets_data) >= 2 and all(
                         max(s["w"], s["l"]) >= 12 and abs(s["w"] - s["l"]) == 2
                         for s in m.sets_data
                     ):
-                        _add_new(earned, "deuce_storm")
+                        mark("deuce_storm", m.completed_at)
                     # Абсолютный ноль: КАЖДАЯ партия закончилась 11:0
                     if len(m.sets_data) >= 2 and all(
                         s["w"] == 11 and s["l"] == 0 for s in m.sets_data
                     ):
-                        _add_new(earned, "absolute_zero")
+                        mark("absolute_zero", m.completed_at)
                 # Выходного дня: матч завершился в субботу/воскресенье (по МСК)
                 if m.completed_at and msk_hour_and_weekday(m.completed_at)[1] >= 5:
-                    _add_new(earned, "weekend_warrior")
+                    mark("weekend_warrior", m.completed_at)
                 # Добивашка: начат в течение 10 минут после предыдущего с этим же соперником
                 prev_vs = last_completed_vs.get(opp_id)
                 if prev_vs and m.created_at and 0 <= (as_naive(m.created_at) - prev_vs).total_seconds() <= 600:
-                    _add_new(earned, "no_rest_win")
+                    mark("no_rest_win", m.completed_at)
                 # Полный круг за неделю: обыграл каждого игрока клуба за трейлинг 7 дней —
                 # скользящее окно (recent_wins), а не полный скан matches на каждой победе
-                if other_ids_bf and m.completed_at:
+                if other_ids and m.completed_at:
                     completed_naive = as_naive(m.completed_at)
                     recent_wins.append((completed_naive, opp_id))
                     week_ago = completed_naive - timedelta(days=7)
                     while recent_wins and recent_wins[0][0] < week_ago:
                         recent_wins.popleft()
                     beaten_week_ids = {oid for _, oid in recent_wins}
-                    if other_ids_bf.issubset(beaten_week_ids):
-                        _add_new(earned, "full_circle_week")
+                    if other_ids.issubset(beaten_week_ids):
+                        mark("full_circle_week", m.completed_at)
 
             elif is_draw:
                 total_draws += 1
                 win_streak = 0
                 loss_streak = 0
+                if total_draws == 5:
+                    mark("diplomat", m.completed_at)
 
                 if prev_was_draw:
-                    _add_new(earned, "draw_double")
+                    mark("draw_double", m.completed_at)
 
                 if m.sets_data:
                     is_ch = m.challenger_id == player.id
                     if is_ch:
                         if any(s["w"] == 11 and s["l"] == 0 for s in m.sets_data):
-                            _add_new(earned, "no_sweat")
+                            mark("no_sweat", m.completed_at)
                         if any(s["w"] >= 12 and s["w"] > s["l"] for s in m.sets_data):
-                            _add_new(earned, "deuce_maker")
+                            mark("deuce_maker", m.completed_at)
                     else:
                         if any(s["l"] == 11 and s["w"] == 0 for s in m.sets_data):
-                            _add_new(earned, "no_sweat")
+                            mark("no_sweat", m.completed_at)
                         if any(s["l"] >= 12 and s["l"] > s["w"] for s in m.sets_data):
-                            _add_new(earned, "deuce_maker")
+                            mark("deuce_maker", m.completed_at)
                     if len(m.sets_data) >= 5:
-                        _add_new(earned, "marathon")
+                        mark("marathon", m.completed_at)
 
             else:  # поражение
                 win_streak = 0
                 loss_streak += 1
-                max_loss_streak = max(max_loss_streak, loss_streak)
+                if loss_streak == 5:
+                    mark("fk_tyumen", m.completed_at)
 
                 # no_sweat: проигравший мог выиграть партию 11:0
                 if m.sets_data:
                     if any(s["l"] == 11 and s["w"] == 0 for s in m.sets_data):
-                        _add_new(earned, "no_sweat")
+                        mark("no_sweat", m.completed_at)
                     # Дьюсмейкер: проигравший выиграл партию на дьюсе (проигравший = l)
                     if any(s["l"] >= 12 and s["l"] > s["w"] for s in m.sets_data):
-                        _add_new(earned, "deuce_maker")
+                        mark("deuce_maker", m.completed_at)
                 # marathon: 5+ партий независимо от результата
                 if m.sets_data and len(m.sets_data) >= 5:
-                    _add_new(earned, "marathon")
+                    mark("marathon", m.completed_at)
 
             if m.completed_at:
                 last_completed_vs[opp_id] = as_naive(m.completed_at)
             prev_was_draw = is_draw
 
+        # Вехи по числу матчей — индекс N-го матча в хронологии даёт точную дату
+        for n, ach_id in ((50, "fifty"), (100, "veteran"), (200, "legend"),
+                          (500, "workhorse"), (750, "monument"), (1000, "superstar")):
+            if total >= n:
+                mark(ach_id, matches[n - 1].completed_at)
+
         # Первая победа / новичкам везёт
         if total_wins >= 1:
-            _add_new(earned, "first_blood")
+            mark("first_blood", first_win_at)
             if matches[0].winner_id == player.id:
-                _add_new(earned, "beginners_luck")
-
-        # Стрики
-        if max_win_streak >= 3:
-            _add_new(earned, "hat_trick")
-        if max_win_streak >= 5:
-            _add_new(earned, "im_on_fire")
-        if max_win_streak >= 10:
-            _add_new(earned, "god_mode")
-
-        # Феникс
-        if had_phoenix:
-            _add_new(earned, "phoenix")
-
-        # ФК Тюмень: 5 поражений подряд
-        if max_loss_streak >= 5:
-            _add_new(earned, "fk_tyumen")
+                mark("beginners_luck", matches[0].completed_at)
 
         # Неистого: любой день, где все матчи (от 3) — победы.
         # Король ночи: любой день, где обыграны все остальные игроки клуба.
+        # Теннисный маньячелло: любой день с 10+ матчами.
         # День считаем по МСК (даты в БД — naive-UTC), как и в realtime-проверках.
         day_groups: dict = {}
         for m in matches:
             if m.completed_at:
                 day_groups.setdefault((as_naive(m.completed_at) + MSK_OFFSET).date(), []).append(m)
 
-        other_ids_for_day = all_player_ids - {player.id}
         for day_matches in day_groups.values():
             if len(day_matches) >= 3 and all(mm.winner_id == player.id for mm in day_matches):
-                _add_new(earned, "relentless")
+                mark("relentless", day_matches[2].completed_at)
+            if len(day_matches) >= 10:
+                mark("maniac", day_matches[9].completed_at)
 
-            beaten_today_ids = {
-                (mm.challenged_id if mm.challenger_id == player.id else mm.challenger_id)
-                for mm in day_matches if mm.winner_id == player.id
-            }
-            if other_ids_for_day and other_ids_for_day.issubset(beaten_today_ids):
-                _add_new(earned, "night_king")
-
-        # Дипломат
-        if total_draws >= 5:
-            _add_new(earned, "diplomat")
-
-        # Вехи
-        if total >= 50:
-            _add_new(earned, "fifty")
-        if total >= 100:
-            _add_new(earned, "veteran")
-        if total >= 200:
-            _add_new(earned, "legend")
-        if total >= 500:
-            _add_new(earned, "workhorse")
-        if total >= 750:
-            _add_new(earned, "monument")
-        if total >= 1000:
-            _add_new(earned, "superstar")
-
-        career_points, career_sets_won = _career_points_and_sets(matches, player.id)
-        if career_points >= 4000:
-            _add_new(earned, "point_saver")
-        if career_points >= 8000:
-            _add_new(earned, "sturdy_grinder")
-        if career_points >= 12000:
-            _add_new(earned, "point_farmer")
-        if career_sets_won >= 200:
-            _add_new(earned, "set_sniper")
-        if career_sets_won >= 500:
-            _add_new(earned, "set_veteran")
-        if career_sets_won >= 1000:
-            _add_new(earned, "set_legend")
-
-        # Теннисный маньячелло: любой день (по МСК) с 10+ матчами
-        day_counts = Counter(
-            (as_naive(m.completed_at) + MSK_OFFSET).date() for m in matches if m.completed_at
-        )
-        if any(cnt >= 10 for cnt in day_counts.values()):
-            _add_new(earned, "maniac")
+            beaten_today: set[int] = set()
+            for mm in day_matches:
+                if mm.winner_id == player.id:
+                    beaten_today.add(mm.challenged_id if mm.challenger_id == player.id else mm.challenger_id)
+                    if other_ids and other_ids.issubset(beaten_today):
+                        mark("night_king", mm.completed_at)
+                        break
 
         # То что мертво: 10+ побед подряд над одним соперником
         opp_win_streaks: dict[int, int] = {}
@@ -1061,31 +1079,43 @@ async def backfill_achievements(session: AsyncSession) -> None:
             opp_id = m.challenged_id if m.challenger_id == player.id else m.challenger_id
             if m.winner_id == player.id:
                 opp_win_streaks[opp_id] = opp_win_streaks.get(opp_id, 0) + 1
-                if opp_win_streaks[opp_id] >= 10:
-                    _add_new(earned, "dominator")
+                if opp_win_streaks[opp_id] == 10:
+                    mark("dominator", m.completed_at)
             else:
                 opp_win_streaks[opp_id] = 0
 
-        # Со всеми познакомился
-        other_ids = all_player_ids - {player.id}
-        if other_ids and other_ids.issubset(beaten_opponents):
-            _add_new(earned, "collector")
-
-        # Рейтинг 1200 (по peak_rating)
+        # Рейтинг 1200 (по peak_rating — текущее значение, не снапшот на момент
+        # исторического матча, поэтому дата принципиально недоступна)
         if player.peak_rating and player.peak_rating >= 1200.0:
-            _add_new(earned, "rating_1200")
+            mark("rating_1200")
 
-        # Дух Анкориджа: были отменённые (declined) матчи
+        # Дух Анкориджа: были отменённые (declined) матчи — дата первого такого
         declined_r = await session.execute(
-            select(func.count()).select_from(Match).where(
+            select(Match.created_at).where(
                 or_(Match.challenger_id == player.id, Match.challenged_id == player.id),
                 Match.status == MatchStatus.declined,
-            )
+            ).order_by(Match.created_at).limit(1)
         )
-        if declined_r.scalar() > 0:
-            _add_new(earned, "anchorage_spirit")
+        declined_first = declined_r.scalar_one_or_none()
+        if declined_first is not None:
+            mark("anchorage_spirit", declined_first)
 
         player.achievements = json.dumps(earned)
         player.backfill_version = BACKFILL_VERSION
+
+        # Реконциляция дат: для каждой ачивки в итоговом earned (новой или уже
+        # имевшейся раньше) без строки в AchievementEarned — создать её. Дата —
+        # из dates, если поймали в ЭТОМ проходе, иначе NULL (не восстановима:
+        # либо нужен снапшот рейтинга, либо это одна из 6 полностью исключённых
+        # из бэкфилла ачивок, полученных раньше в реальном времени).
+        existing_r = await session.execute(
+            select(AchievementEarned.achievement_id).where(AchievementEarned.player_id == player.id)
+        )
+        existing_dated = {row[0] for row in existing_r.all()}
+        for ach_id in earned:
+            if ach_id not in existing_dated:
+                session.add(AchievementEarned(
+                    player_id=player.id, achievement_id=ach_id, earned_at=dates.get(ach_id),
+                ))
 
     await session.commit()

@@ -5,10 +5,11 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest_asyncio
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-from bot.db.models import Base, Match, MatchStatus, Player
+from bot.db.models import AchievementEarned, Base, Match, MatchStatus, Player
 from bot.services.achievements import (
     BACKFILL_VERSION,
     backfill_achievements,
@@ -17,6 +18,7 @@ from bot.services.achievements import (
     check_loss_achievements,
     check_win_achievements,
     get_achievements,
+    record_achievements_earned,
 )
 from bot.utils import get_h2h_matches, msk_day_start
 
@@ -787,6 +789,114 @@ async def test_backfill_assigns_workhorse_and_point_saver(db):
     assert "workhorse" in get_achievements(p1)
     assert "point_saver" in get_achievements(p1)
     assert "set_sniper" in get_achievements(p1)
+
+
+async def _earned_dates(session, player_id: int) -> dict[str, datetime | None]:
+    r = await session.execute(
+        select(AchievementEarned).where(AchievementEarned.player_id == player_id)
+    )
+    return {row.achievement_id: row.earned_at for row in r.scalars().all()}
+
+
+async def test_backfill_dates_match_count_milestone_to_exact_match(db):
+    """Веха «Стахановец» (500-й матч) — дата бэкфилла точно совпадает с датой
+    500-го матча в хронологии (v2.106.0), а не с моментом самого бэкфилла."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _bulk_wins(db, p1, p2, 500)
+    await backfill_achievements(db)
+
+    dates = await _earned_dates(db, p1.id)
+    assert dates["workhorse"] == _ts(499)  # 500-й матч — 0-indexed 499-й вызов _bulk_wins
+
+
+async def test_backfill_dates_hat_trick_to_third_win_not_backfill_time(db):
+    """Стрик-ачивка «Хет-трик» — дата ровно 3-й победы подряд, посчитана
+    инкрементально ВНУТРИ прохода по матчам (v2.106.0), не постфактум."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    for i in range(3):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.completed, winner_id=p1.id,
+            sets_data=_DEFAULT_SETS, completed_at=_ts(i),
+        ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "hat_trick" in get_achievements(p1)
+
+    dates = await _earned_dates(db, p1.id)
+    assert dates["hat_trick"] == _ts(2)  # третий (0-indexed) матч
+
+
+async def test_backfill_leaves_snapshot_dependent_achievements_undated(db):
+    """highlander требует снапшот рейтинга на момент исторического матча —
+    бэкфилл его не выдаёт вообще, поэтому даты для него тоже не бывает."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=p1.id,
+        sets_data=_DEFAULT_SETS, completed_at=_ts(),
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "highlander" not in get_achievements(p1)
+    dates = await _earned_dates(db, p1.id)
+    assert "highlander" not in dates  # бэкфилл его не проверяет вообще
+
+
+async def test_backfill_dates_are_idempotent_on_rerun(db):
+    """Повторный бэкфилл (после ручного сброса backfill_version) не плодит
+    дубли AchievementEarned и не переписывает уже проставленную дату."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(3):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.completed, winner_id=p1.id,
+            sets_data=_DEFAULT_SETS, completed_at=_ts(i),
+        ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    first_pass = await _earned_dates(db, p1.id)
+
+    p1.backfill_version = 0  # форсируем повторный проход
+    await db.commit()
+    await backfill_achievements(db)
+    second_pass = await _earned_dates(db, p1.id)
+
+    assert first_pass == second_pass
+    r = await db.execute(
+        select(AchievementEarned).where(
+            AchievementEarned.player_id == p1.id, AchievementEarned.achievement_id == "hat_trick",
+        )
+    )
+    assert len(r.scalars().all()) == 1  # ровно одна строка, не дубль
+
+
+async def test_record_achievements_earned_writes_dated_rows(db):
+    """record_achievements_earned() — хелпер для реал-тайм проверок — пишет
+    ровно одну строку на id с переданной датой."""
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.flush()
+
+    when = _ts(42)
+    record_achievements_earned(db, p1.id, ["press_start", "first_blood"], when)
+    await db.commit()
+
+    dates = await _earned_dates(db, p1.id)
+    assert dates == {"press_start": when, "first_blood": when}
 
 
 async def test_backfill_assigns_hat_trick(db):

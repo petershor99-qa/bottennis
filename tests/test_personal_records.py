@@ -5,11 +5,13 @@
 from datetime import datetime, timedelta
 
 import pytest_asyncio
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-from bot.db.models import Base, Match, MatchStatus, Player
+from bot.db.models import Base, Match, MatchStatus, PersonalRecordEarned, Player
 from bot.services.personal_records import (
+    backfill_personal_records,
     check_personal_records_on_draw,
     check_personal_records_on_loss,
     check_personal_records_on_win,
@@ -77,6 +79,48 @@ async def test_win_streak_record_fires_on_second_win_in_a_row(db):
 
     msgs = await check_personal_records_on_win(db, p1, m2)
     assert any("RAMPAGE" in t and "2 побед подряд" in t for t in msgs)
+
+
+async def test_win_streak_record_writes_dated_row(db):
+    """Срабатывание личного рекорда пишет строку в PersonalRecordEarned
+    (v2.106.0) с правильным metric/value/match_id/датой матча."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    _add_match(db, p1, p2, p1, [{"w": 11, "l": 5}], _ts(0))
+    m2 = _add_match(db, p1, p2, p1, [{"w": 11, "l": 5}], _ts(1))
+    await db.flush()
+
+    await check_personal_records_on_win(db, p1, m2)
+    await db.commit()
+
+    r = await db.execute(
+        select(PersonalRecordEarned).where(
+            PersonalRecordEarned.player_id == p1.id, PersonalRecordEarned.metric == "win_streak",
+        )
+    )
+    rows = r.scalars().all()
+    assert len(rows) == 1
+    assert rows[0].value == 2
+    assert rows[0].match_id == m2.id
+    assert rows[0].earned_at == m2.completed_at
+
+
+async def test_no_personal_record_row_written_when_nothing_broken(db):
+    """Первая победа в карьере не бьёт рекорд (не с чем сравнивать) —
+    PersonalRecordEarned остаётся пустым, а не пишет строку «в никуда»."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    _add_match(db, p2, p1, p2, [{"w": 11, "l": 5}], _ts(0))
+    m2 = _add_match(db, p1, p2, p1, [{"w": 11, "l": 5}], _ts(1))
+    await db.flush()
+
+    await check_personal_records_on_win(db, p1, m2)
+    await db.commit()
+
+    r = await db.execute(select(PersonalRecordEarned).where(PersonalRecordEarned.player_id == p1.id))
+    assert r.scalars().all() == []
 
 
 async def test_win_streak_record_not_fired_on_first_ever_win(db):
@@ -246,3 +290,93 @@ async def test_streak_vs_single_opponent_not_fired_on_first_win_ever(db):
 
     msgs = await check_personal_records_on_win(db, p1, m2)
     assert not any("личный кошмар" in t for t in msgs)
+
+
+# ── backfill_personal_records ───────────────────────────────────────────────
+
+async def test_backfill_dates_win_streak_to_exact_match(db):
+    """Бэкфилл (v2.106.0) восстанавливает историю рекордов задним числом —
+    win_streak бьётся на 2-й победе подряд, дата совпадает с ЭТИМ матчем."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    _add_match(db, p1, p2, p1, [{"w": 11, "l": 5}], _ts(0))
+    m2 = _add_match(db, p1, p2, p1, [{"w": 11, "l": 5}], _ts(1))
+    await db.flush()
+
+    await backfill_personal_records(db)
+
+    r = await db.execute(
+        select(PersonalRecordEarned).where(
+            PersonalRecordEarned.player_id == p1.id, PersonalRecordEarned.metric == "win_streak",
+        )
+    )
+    rows = r.scalars().all()
+    assert len(rows) == 1
+    assert rows[0].value == 2
+    assert rows[0].match_id == m2.id
+    assert rows[0].earned_at == m2.completed_at
+
+
+async def test_backfill_captures_multiple_breaks_of_same_metric(db):
+    """Один и тот же рекорд может быть побит несколько раз за карьеру —
+    бэкфилл фиксирует КАЖДОЕ улучшение отдельной строкой, не только последнее."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(4):  # 4 победы подряд: рекорд бьётся на 2-й, 3-й и 4-й
+        _add_match(db, p1, p2, p1, [{"w": 11, "l": 5}], _ts(i))
+    await db.flush()
+
+    await backfill_personal_records(db)
+
+    r = await db.execute(
+        select(PersonalRecordEarned).where(
+            PersonalRecordEarned.player_id == p1.id, PersonalRecordEarned.metric == "win_streak",
+        ).order_by(PersonalRecordEarned.value)
+    )
+    values = [row.value for row in r.scalars().all()]
+    assert values == [2, 3, 4]
+
+
+async def test_backfill_personal_records_idempotent(db):
+    """Повторный вызов backfill_personal_records не плодит дубли — игрок,
+    у которого уже есть хоть одна строка, полностью пропускается."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    _add_match(db, p1, p2, p1, [{"w": 11, "l": 5}], _ts(0))
+    _add_match(db, p1, p2, p1, [{"w": 11, "l": 5}], _ts(1))
+    await db.flush()
+
+    await backfill_personal_records(db)
+    r = await db.execute(select(PersonalRecordEarned).where(PersonalRecordEarned.player_id == p1.id))
+    first_count = len(r.scalars().all())
+    assert first_count > 0
+
+    await backfill_personal_records(db)
+    r = await db.execute(select(PersonalRecordEarned).where(PersonalRecordEarned.player_id == p1.id))
+    assert len(r.scalars().all()) == first_count  # второй проход ничего не добавил
+
+
+async def test_backfill_skips_player_with_existing_realtime_rows(db):
+    """Если у игрока уже есть строки (от реал-тайм записи), бэкфилл его не
+    трогает вообще — даже если фактическая история матчей длиннее."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m1 = _add_match(db, p1, p2, p1, [{"w": 11, "l": 5}], _ts(0))
+    _add_match(db, p1, p2, p1, [{"w": 11, "l": 5}], _ts(1))
+    await db.flush()
+
+    db.add(PersonalRecordEarned(
+        player_id=p1.id, metric="win_streak", value=99, match_id=m1.id, earned_at=_ts(0),
+    ))
+    await db.commit()
+
+    await backfill_personal_records(db)
+
+    r = await db.execute(select(PersonalRecordEarned).where(PersonalRecordEarned.player_id == p1.id))
+    rows = r.scalars().all()
+    assert len(rows) == 1
+    assert rows[0].value == 99  # не тронуто, не пересчитано
