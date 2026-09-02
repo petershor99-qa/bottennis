@@ -6,7 +6,9 @@ from datetime import datetime
 from types import SimpleNamespace
 
 from bot.utils import (
+    BLOWOUT_PHRASES,
     DRAMA_THRESHOLD,
+    PLAIN_WIN_PHRASES,
     match_drama_reason,
     match_drama_score,
     match_report,
@@ -16,9 +18,10 @@ from bot.utils import (
 
 
 def make_match(sets, winner_id=1, challenger_id=1, challenged_id=2,
-               rating_change=10.0, completed_at=None):
+               rating_change=10.0, completed_at=None, match_id=1):
     """Лёгкая заглушка матча (атрибуты, которых хватает функциям драмы)."""
     return SimpleNamespace(
+        id=match_id,
         sets_data=sets,
         winner_id=winner_id,
         challenger_id=challenger_id,
@@ -199,12 +202,50 @@ def test_report_all_factors_combined():
     )
 
 
-def test_report_no_factors_falls_back_to_drama_reason():
-    """Обычный уверенный разгром 3-0 — ни один из 4 факторов не сработал,
-    репортаж откатывается на короткую match_drama_reason."""
+def test_report_blowout_uses_phrase_pool():
+    """Уверенный разгром 3-0 (0 партий отдано) — ни один из 4 факторов драмы
+    не сработал, match_drama_reason падает на плоское «Уверенный разгром» —
+    репортаж (v2.105.0) заменяет её фразой из BLOWOUT_PHRASES, а не отдаёт
+    плоскую строку как раньше."""
     sets = [{"w": 11, "l": 3}, {"w": 11, "l": 4}, {"w": 11, "l": 2}]
-    m = make_match(sets, winner_id=1, rating_change=5.0)
-    assert match_report(m, "Игрок") == match_drama_reason(m)
+    m = make_match(sets, winner_id=1, rating_change=5.0, match_id=3)
+    assert match_drama_reason(m) == "Уверенный разгром"
+    result = match_report(m, "Игрок")
+    assert result in BLOWOUT_PHRASES
+    assert result == BLOWOUT_PHRASES[3 % len(BLOWOUT_PHRASES)]
+
+
+def test_report_plain_win_uses_phrase_pool():
+    """Победа без разгрома (хотя бы 1 партия отдана) и без драм-факторов —
+    match_drama_reason падает на «Напряжённый матч», репортаж берёт фразу
+    из PLAIN_WIN_PHRASES."""
+    sets = [{"w": 11, "l": 9}, {"w": 11, "l": 6}, {"w": 6, "l": 11}, {"w": 11, "l": 7}]
+    m = make_match(sets, winner_id=1, rating_change=5.0, match_id=5)
+    assert match_drama_reason(m) == "Напряжённый матч"
+    result = match_report(m, "Игрок")
+    assert result in PLAIN_WIN_PHRASES
+    assert result == PLAIN_WIN_PHRASES[5 % len(PLAIN_WIN_PHRASES)]
+
+
+def test_report_stable_index_by_match_id():
+    """Одинаковый match_id всегда даёт одну и ту же фразу — не «прыгает»
+    при повторном рендере той же карточки/дайджеста (тот же принцип, что у
+    match_phrase)."""
+    sets = [{"w": 11, "l": 3}, {"w": 11, "l": 4}, {"w": 11, "l": 2}]
+    m = make_match(sets, winner_id=1, rating_change=5.0, match_id=7)
+    assert match_report(m, "Игрок") == match_report(m, "Игрок")
+
+
+def test_report_preserves_specific_drama_reason():
+    """Если match_drama_reason находит что-то содержательное (не одну из двух
+    плоских строк) — репортаж (v2.105.0) её не подменяет пулом."""
+    # дьюс хотя бы в одной партии, но не в решающей (иначе сработал бы
+    # свой фактор deuce_decider внутри match_report) и без марафона/апсета/камбэка
+    sets = [{"w": 12, "l": 10}, {"w": 11, "l": 3}]
+    m = make_match(sets, winner_id=1, rating_change=5.0, match_id=1)
+    reason = match_drama_reason(m)
+    assert reason not in ("Уверенный разгром", "Напряжённый матч")
+    assert match_report(m, "Игрок") == reason
 
 
 def test_report_draw_falls_back_to_drama_reason():
