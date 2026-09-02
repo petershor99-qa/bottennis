@@ -15,7 +15,7 @@ from bot.keyboards.inline import (
     main_menu_kb,
     players_list_kb,
 )
-from bot.services.achievements import ACHIEVEMENTS_MAP, check_cancel_achievements
+from bot.services.achievements import ACHIEVEMENTS_MAP, check_cancel_achievements, record_achievements_earned
 from bot.services.rating import win_probability
 from bot.utils import (
     _pin_champion,
@@ -455,6 +455,9 @@ async def do_cancel_match(callback: CallbackQuery, session: AsyncSession, bot: B
     new_p = await check_cancel_achievements(session, player)
     new_o = await check_cancel_achievements(session, opponent)
     if new_p or new_o:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        record_achievements_earned(session, player.id, new_p, now)
+        record_achievements_earned(session, opponent.id, new_o, now)
         await session.commit()
     for pl, ach_ids in ((player, new_p), (opponent, new_o)):
         for aid in ach_ids:
