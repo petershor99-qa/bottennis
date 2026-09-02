@@ -2081,6 +2081,7 @@ async def test_weekly_digest_standings_and_heroes(monkeypatch):
     assert "Нагибатель недели" in text          # серия за неделю
     assert "Матч недели" in text
     assert "Отрицательный рост" in text
+    assert "🟩" in text                         # полоска формы в топе (v2.104.0)
 
 
 # ── send_match_reminders (напоминание про незавершённый матч, от 24ч) ──────────
@@ -2209,6 +2210,60 @@ async def test_monthly_summary_renamed_and_heroes(monkeypatch):
     assert "Тяжелее всех" not in text
     assert "Чаще всего самбовались" in text
     assert "Нагибатель месяца" in text
+
+
+async def test_monthly_summary_personalized_form_and_slacker(monkeypatch):
+    """Итоги месяца (v2.104.0): персональная шапка у каждого своя (не единый
+    для всех бродкаст, как раньше), полоска формы в топе, «Халявщик месяца»
+    для игрока с историей, не сыгравшего в этом месяце, идущего игроку без
+    матчей — фирменная цитата про «занят жизнью или умиранием»."""
+    import bot.scheduler as sched
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    msk_now = datetime.now(timezone.utc).replace(tzinfo=None) + sched.MSK_OFFSET
+    month_end = msk_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    prev_last = month_end - timedelta(days=1)
+    month_start = prev_last.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    inside = (month_start + timedelta(days=5)) - sched.MSK_OFFSET
+    two_months_ago = (month_start - timedelta(days=40)) - sched.MSK_OFFSET
+
+    async with factory() as s:
+        p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+        s.add_all([p1, p2, p3])
+        await s.flush()
+        for i in range(3):  # Alice 3-0 над Bob в этом месяце
+            s.add(_completed(p1, p2, p1.id, 10.0, inside + timedelta(hours=i)))
+        # Cara играла, но только в позапрошлом месяце — в этом месяце «Халявщик»
+        s.add(_completed(p1, p3, p1.id, 10.0, two_months_ago))
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.send_monthly_summary(bot)
+    await engine.dispose()
+
+    texts = {c.args[0]: c.args[1] for c in bot.send_message.call_args_list}
+    alice_text, bob_text, cara_text = texts[1], texts[2], texts[3]
+
+    # Персонализация — тексты разные, каждый видит СВОЙ счёт/рейтинг
+    assert alice_text != bob_text
+    assert "Побед: <b>3</b>" in alice_text
+    assert "Поражений: <b>3</b>" in bob_text
+
+    # Полоска формы в общем клубном блоке (одинаковая часть у всех)
+    assert "🟩" in alice_text
+
+    # Cara не играла в этом месяце, но играла раньше — Халявщик месяца
+    assert "Халявщик месяца" in alice_text
+    assert "Cara" in alice_text.split("Халявщик месяца")[1][:50]
+
+    # У самой Cara — «не играл» ветка с личной цитатой
+    assert "матчей не было" in cara_text
+    assert "занят жизнью" in cara_text
 
 
 # ── Итоги квартала (v2.98.0) ────────────────────────────────────────────────────
