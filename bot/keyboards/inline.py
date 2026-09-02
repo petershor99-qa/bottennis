@@ -71,6 +71,7 @@ def stats_kb() -> InlineKeyboardMarkup:
     b.row(InlineKeyboardButton(text="📜 Вся история матчей", callback_data="history_0"))
     b.row(InlineKeyboardButton(text="📊 График рейтинга", callback_data="rating_chart"))
     b.row(InlineKeyboardButton(text="🏅 Достижения", callback_data="my_achievements"))
+    b.row(InlineKeyboardButton(text="📅 Сегодня", callback_data="menu_today"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
 
@@ -219,7 +220,6 @@ def leaderboard_kb(players) -> InlineKeyboardMarkup:
     b.row(InlineKeyboardButton(text="⚔️ Матрица доминирования", callback_data="dominance_matrix"))
     b.row(InlineKeyboardButton(text="🌡 Индекс формы", callback_data="form_index"))
     b.row(InlineKeyboardButton(text="🏛 Зал славы", callback_data="hall_of_fame"))
-    b.row(InlineKeyboardButton(text="📅 Сегодня", callback_data="menu_today"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
 
@@ -227,6 +227,12 @@ def leaderboard_kb(players) -> InlineKeyboardMarkup:
 def back_to_leaderboard_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.row(InlineKeyboardButton(text="« К рейтингу", callback_data="menu_leaderboard"))
+    return b.as_markup()
+
+
+def back_to_stats_kb() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="« К статистике", callback_data="menu_stats"))
     return b.as_markup()
 
 

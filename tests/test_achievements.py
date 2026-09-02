@@ -472,6 +472,122 @@ async def test_veteran_at_100th_match(db):
     assert "veteran" in new
 
 
+async def _bulk_wins(session, winner: Player, loser: Player, n: int, sets=None, start: int = 0):
+    """Быстро добавить N завершённых побед напрямую (без check_win_achievements
+    на каждой) — для вех, которым нужны сотни матчей истории."""
+    matches = [
+        Match(
+            challenger_id=winner.id, challenged_id=loser.id,
+            status=MatchStatus.completed, winner_id=winner.id,
+            sets_data=sets or _DEFAULT_SETS,
+            completed_at=_ts(start + i), created_at=_ts(start + i),
+        )
+        for i in range(n)
+    ]
+    session.add_all(matches)
+    await session.flush()
+
+
+# ── workhorse / monument / superstar (500/750/1000 матчей) ──────────────────────
+
+async def test_workhorse_at_500th_match(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _bulk_wins(db, p1, p2, 499)
+    new = await _do_win(db, p1, p2, dt=_ts(499))
+    assert "workhorse" in new
+    assert "monument" not in new
+
+
+async def test_monument_at_750th_match(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _bulk_wins(db, p1, p2, 749)
+    new = await _do_win(db, p1, p2, dt=_ts(749))
+    assert "monument" in new
+    assert "superstar" not in new
+
+
+async def test_superstar_at_1000th_match(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _bulk_wins(db, p1, p2, 999)
+    new = await _do_win(db, p1, p2, dt=_ts(999))
+    assert "superstar" in new
+
+
+# ── очки/партии за карьеру: point_saver/sturdy_grinder/point_farmer, ────────────
+# ── set_sniper/set_veteran/set_legend ────────────────────────────────────────────
+
+async def test_career_points_and_sets_perspective():
+    """_career_points_and_sets считает очки/выигранные партии с перспективы
+    заданного игрока — и для побед, и для поражений, и для обеих сторон ничьей."""
+    from bot.services.achievements import _career_points_and_sets
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    p1.id, p2.id = 1, 2
+
+    win = Match(
+        challenger_id=1, challenged_id=2, winner_id=1,
+        sets_data=[{"w": 11, "l": 5}, {"w": 8, "l": 11}, {"w": 11, "l": 9}],
+    )
+    draw = Match(
+        challenger_id=1, challenged_id=2, winner_id=None,
+        sets_data=[{"w": 11, "l": 9}, {"w": 9, "l": 11}],
+    )
+    matches = [win, draw]
+
+    pts1, sets1 = _career_points_and_sets(matches, 1)
+    pts2, sets2 = _career_points_and_sets(matches, 2)
+    # win: p1(winner-perspective)=11+8+11=30, sets_won=2; p2=5+11+9=25, sets_won=1
+    # draw (challenger=p1): p1=11+9=20, sets_won=1; p2=9+11=20, sets_won=1
+    assert (pts1, sets1) == (50, 3)
+    assert (pts2, sets2) == (45, 2)
+
+
+async def test_point_saver_awarded_at_4000_points(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    big_sets = [{"w": 11, "l": 0}] * 2  # 22 pts/матч победителю
+    await _bulk_wins(db, p1, p2, 181, sets=big_sets)  # 181*22 = 3982
+    new = await _do_win(db, p1, p2, sets=big_sets, dt=_ts(181))  # +22 = 4004
+    assert "point_saver" in new
+    assert "sturdy_grinder" not in new
+
+
+async def test_set_sniper_awarded_at_200_sets(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _bulk_wins(db, p1, p2, 99)  # 99*2 = 198 выигранных партий
+    new = await _do_win(db, p1, p2, dt=_ts(99))  # +2 = 200
+    assert "set_sniper" in new
+    assert "set_veteran" not in new
+
+
+async def test_points_and_sets_milestones_awarded_on_loss(db):
+    """Проигравший тоже набирает очки/партии — вехи должны срабатывать и в
+    check_loss_achievements, не только у победителя."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    big_sets = [{"w": 11, "l": 9}]  # проигравший (l=9) набирает почти столько же
+    await _bulk_wins(db, p2, p1, 449, sets=big_sets)  # p1 проигрывает 449 раз, 9 pts/матч = 4041
+    await _add_win(db, p2, p1, sets=big_sets, dt=_ts(449))
+    new = await check_loss_achievements(db, p1, big_sets)
+    assert "point_saver" in new
+
+
 # ── maniac ─────────────────────────────────────────────────────────────────────
 
 async def test_maniac_10_matches_today(db):
@@ -654,6 +770,23 @@ async def test_backfill_assigns_basic_achievements(db):
     assert "press_start" in get_achievements(p2)
     assert "first_blood" in get_achievements(p1)
     assert "beginners_luck" in get_achievements(p1)
+
+
+async def test_backfill_assigns_workhorse_and_point_saver(db):
+    """Кумулятивные вехи (матчи/очки/партии) полностью восстановимы из истории —
+    в отличие от highlander/rock_bottom и т.п., им не нужен снапшот на момент матча."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    big_sets = [{"w": 11, "l": 0}] * 2  # 22 pts/матч победителю, 2 партии/матч
+    await _bulk_wins(db, p1, p2, 500, sets=big_sets)
+
+    await backfill_achievements(db)
+
+    assert "workhorse" in get_achievements(p1)
+    assert "point_saver" in get_achievements(p1)
+    assert "set_sniper" in get_achievements(p1)
 
 
 async def test_backfill_assigns_hat_trick(db):
