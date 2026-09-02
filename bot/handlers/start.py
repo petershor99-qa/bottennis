@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from bot.db.models import Match, MatchStatus, Player
-from bot.keyboards.inline import back_to_menu_kb, main_menu_kb
+from bot.keyboards.inline import back_to_menu_kb, main_menu_kb, main_reply_kb
 from bot.services.achievements import ACHIEVEMENTS_LIST
 from bot.utils import MSK_OFFSET, compute_ranks, env_int, format_rank, get_match_counts, get_player
 
@@ -69,6 +69,7 @@ async def cmd_start(message: Message, command: CommandObject, session: AsyncSess
         )
         player.last_menu_message_id = sent.message_id
         await session.commit()
+        await message.answer("👇 Быстрый доступ", reply_markup=main_reply_kb())
         return
 
     if INVITE_CODE:
@@ -98,6 +99,7 @@ async def cmd_start(message: Message, command: CommandObject, session: AsyncSess
     player.last_menu_message_id = sent.message_id
     await session.commit()
     await message.answer("🎮 Choose your destiny")
+    await message.answer("👇 Быстрый доступ", reply_markup=main_reply_kb())
 
 
 # ── /cancel ───────────────────────────────────────────────────────────────────
@@ -136,6 +138,8 @@ async def cmd_help(message: Message):
         "/cancel — отменить текущее действие\n"
         "/help — эта справка\n"
         "/feedback — отправить идею или баг напрямую разработчику\n\n"
+        "<b>Быстрый доступ:</b> кнопки под строкой ввода (🏓 Вызвать на матч / "
+        "📊 Рейтинг / 📈 Статистика) — доступны всегда, не нужно открывать меню\n\n"
         "<b>Матчи:</b>\n"
         "• ⚔️ Вызов соперника — матч начинается сразу, оба получают уведомление\n"
         "• 📋 Результат вносит любой участник: пошагово или счётом прямо в чат "
