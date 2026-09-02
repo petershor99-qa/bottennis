@@ -172,7 +172,9 @@ async def _send_activity_heatmap(
             caption=(
                 f"📅 <b>{'Активность клуба' if club else 'Моя активность'}</b> — "
                 f"последние {HEATMAP_DAYS} дней\n"
-                f"⬜ 0 · 🟩 1 · 🟩🟩 2–3 · 🟩🟩🟩 4+"
+                f"⬜ 0 · 🟨 1 · 🟧 2–3 · 🟥 4+\n"
+                f"Ряды сверху вниз: Пн Вт Ср Чт Пт Сб Вс\n"
+                f"Столбцы слева направо: {HEATMAP_DAYS} дней назад → сегодня"
             ),
             reply_markup=kb.as_markup(),
         )
