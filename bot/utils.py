@@ -1152,10 +1152,10 @@ def rating_chart_url(name: str, labels: list[str], values: list[float]) -> str:
 HEATMAP_DAYS = 90
 
 _HEATMAP_TIER_COLORS = [
-    "rgba(230,230,230,1)",  # 0 матчей
-    "rgba(155,213,150,1)",  # 1
-    "rgba(64,160,89,1)",    # 2–3
-    "rgba(20,100,50,1)",    # 4+
+    "rgba(230,230,230,1)",  # 0 матчей — ⬜
+    "rgba(255,205,30,1)",   # 1        — 🟨
+    "rgba(255,149,20,1)",   # 2–3      — 🟧
+    "rgba(224,49,49,1)",    # 4+       — 🟥
 ]
 
 

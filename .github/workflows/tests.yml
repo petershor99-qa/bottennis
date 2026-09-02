@@ -57,8 +57,12 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
+            set -e
             cd /opt/bottennis
-            git pull --ff-only
+            if ! git pull --ff-only; then
+              echo "::error::git pull --ff-only упал — деплой остановлен, на проде осталась предыдущая версия"
+              exit 1
+            fi
             systemctl restart bottennis
             sleep 10
             if ! systemctl is-active --quiet bottennis; then

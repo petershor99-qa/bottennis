@@ -110,6 +110,6 @@ def test_heatmap_high_count_day_lands_in_top_tier():
     # верхний тир (индекс совпадает с порядком добавления — только непустые тиры
     # присутствуют, но тир "4+" последний среди непустых) содержит ровно 1 точку
     top_tier_colors = [ds["backgroundColor"] for ds in config["data"]["datasets"]]
-    assert "rgba(20,100,50,1)" in top_tier_colors
-    top_ds = next(ds for ds in config["data"]["datasets"] if ds["backgroundColor"] == "rgba(20,100,50,1)")
+    assert "rgba(224,49,49,1)" in top_tier_colors
+    top_ds = next(ds for ds in config["data"]["datasets"] if ds["backgroundColor"] == "rgba(224,49,49,1)")
     assert len(top_ds["data"]) == 1
