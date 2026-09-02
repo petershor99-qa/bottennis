@@ -17,11 +17,14 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await _migrate_db()
-    # Бэкфилл достижений по истории матчей + инициализация чемпиона (оба идемпотентны)
+    # Бэкфилл достижений/личных рекордов по истории матчей + инициализация
+    # чемпиона (все три идемпотентны)
     from bot.services.achievements import backfill_achievements
+    from bot.services.personal_records import backfill_personal_records
     from bot.utils import bootstrap_champion
     async with async_session() as session:
         await backfill_achievements(session)
+        await backfill_personal_records(session)
         await bootstrap_champion(session)
 
 

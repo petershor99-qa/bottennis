@@ -80,3 +80,43 @@ class ChampionReign(Base):
     player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
     started_at = Column(DateTime, nullable=False)
     ended_at = Column(DateTime, nullable=True)
+
+
+class AchievementEarned(Base):
+    """Дата получения ачивки (v2.106.0 — раньше нигде не хранилась, только
+    сам факт в Player.achievements). Одна строка на (player_id,
+    achievement_id) — ачивки не переоткрываются, в отличие от личных рекордов.
+
+    earned_at=None — дата принципиально неизвестна: либо ачивка входит в
+    список из 7 полностью исключённых из бэкфилла (нужен снапшот рейтинга/роли
+    на момент КОНКРЕТНОГО исторического матча — highlander, david_goliath,
+    revenge, throne_denied, chance_blown, rock_bottom, rating_1200), либо
+    получена до появления этой таблицы, а восстановить точку в истории не
+    удалось. Новые ачивки (и в реальном времени, и при повторном бэкфилле
+    существующих) всегда получают точную дату — см. backfill_achievements().
+    """
+    __tablename__ = "achievements_earned"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
+    achievement_id = Column(String, nullable=False)
+    earned_at = Column(DateTime, nullable=True)
+
+
+class PersonalRecordEarned(Base):
+    """История личных рекордов (v2.106.0). В отличие от ачивок метрику можно
+    бить многократно за карьеру — поэтому не одна строка на (player_id,
+    metric), а полная история: каждое улучшение — новая строка.
+
+    match_id — матч, на котором рекорд был установлен (может быть NULL для
+    записей, где восстановить конкретный матч не удалось). earned_at=None —
+    та же семантика неизвестной даты, что у AchievementEarned.
+    """
+    __tablename__ = "personal_records_earned"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
+    metric = Column(String, nullable=False)
+    value = Column(Float, nullable=False)
+    match_id = Column(Integer, ForeignKey("matches.id"), nullable=True)
+    earned_at = Column(DateTime, nullable=True)

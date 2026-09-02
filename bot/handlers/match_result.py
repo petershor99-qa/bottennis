@@ -19,6 +19,7 @@ from bot.services.achievements import (
     check_draw_achievements,
     check_loss_achievements,
     check_win_achievements,
+    record_achievements_earned,
 )
 from bot.services.personal_records import (
     check_personal_records_on_draw,
@@ -831,12 +832,14 @@ async def _handle_boss_fight_outcome(
             )
             new_ach_defense = await check_boss_fight_defense_achievement(winner)
             if new_ach_defense:
+                record_achievements_earned(session, winner.id, new_ach_defense, match.completed_at)
                 await session.commit()
                 await _notify_achievements(bot, winner, new_ach_defense)
             # loser здесь по построению — проигравший претендент (winner
             # уже подтверждён как champion_role в этой ветке "трон удержан")
             new_ach_denied = await check_boss_fight_challenger_defeat_achievement(loser)
             if new_ach_denied:
+                record_achievements_earned(session, loser.id, new_ach_denied, match.completed_at)
                 await session.commit()
                 await _notify_achievements(bot, loser, new_ach_denied)
     if bf_result_text is not None:
@@ -851,6 +854,8 @@ async def _award_draw_achievements_and_eggs(
     7 матчей за день / время / H2H-юбилей / быстрый реванш)."""
     new_ch_ach = await check_draw_achievements(session, challenger, final_sets, is_challenger=True)
     new_cd_ach = await check_draw_achievements(session, challenged, final_sets, is_challenger=False)
+    record_achievements_earned(session, challenger.id, new_ch_ach, match.completed_at)
+    record_achievements_earned(session, challenged.id, new_cd_ach, match.completed_at)
     await session.commit()
     await _notify_achievements(bot, challenger, new_ch_ach)
     await _notify_achievements(bot, challenged, new_cd_ach)
@@ -917,6 +922,8 @@ async def _award_win_achievements_and_eggs(
         session, winner, loser, match, old_winner_rating, old_loser_rating, h2h_matches,
     )
     new_ach_loser = await check_loss_achievements(session, loser, final_sets)
+    record_achievements_earned(session, winner.id, new_ach_winner, match.completed_at)
+    record_achievements_earned(session, loser.id, new_ach_loser, match.completed_at)
     await session.commit()
     await _notify_achievements(bot, winner, new_ach_winner)
     await _notify_achievements(bot, loser, new_ach_loser)
@@ -1003,6 +1010,7 @@ async def _notify_challenger_status_change(
     ):
         new_ach_blown = await check_chance_blown_achievement(challenger_before)
         if new_ach_blown:
+            record_achievements_earned(session, challenger_before.id, new_ach_blown, match.completed_at)
             await session.commit()
             await _notify_achievements(bot, challenger_before, new_ach_blown)
         try:
