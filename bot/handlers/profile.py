@@ -1,7 +1,7 @@
 from html import escape as h
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +29,7 @@ from bot.utils import (
     get_career_matches,
     get_match_counts,
     get_player,
+    rank_title,
 )
 
 router = Router()
@@ -219,15 +220,10 @@ def _append_rank_and_throne_lines(lines: list[str], rank_gap: str | None, throne
 
 # ── My stats ──────────────────────────────────────────────────────────────────
 
-@router.callback_query(F.data == "menu_stats")
-async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
-    player = await get_player(session, callback.from_user.id)
-    if not player:
-        await callback.answer("Сначала напиши /start", show_alert=True)
-        return
-
-    await callback.answer()
-
+async def _build_stats_screen(session: AsyncSession, player: Player):
+    """Строит (текст, клавиатуру) экрана «Статистика» для уже найденного
+    игрока — общая часть для инлайн-кнопки меню (edit_text) и постоянной
+    клавиатуры снизу (answer)."""
     players_all, champion, _match_counts, ranks, rank_str, challenger_player = (
         await _load_ranking_context(session, player)
     )
@@ -235,13 +231,12 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
     all_matches = await get_career_matches(session, player.id, with_opponents=True)
 
     if not all_matches:
-        await callback.message.edit_text(
+        return (
             f"📈 <b>Статистика — {h(player.display_name)}</b>\n\n"
-            f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — {rank_str}\n\n"
+            f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — {rank_str}  🎖 {rank_title(player.rating)}\n\n"
             f"Ты ещё не сыграл ни одного матча.\nВызови кого-нибудь! 🏓",
-            reply_markup=stats_kb(),
+            stats_kb(),
         )
-        return
 
     matches = all_matches[:5]
     s = _compute_player_stats(player, all_matches)
@@ -249,7 +244,7 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
     draws_part = f"  |  🤝 Ничьих: <b>{s['draws']}</b>" if s["draws"] > 0 else ""
     lines = [
         f"📈 <b>Статистика — {h(player.display_name)}</b>\n",
-        f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — {rank_str}",
+        f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — {rank_str}  🎖 {rank_title(player.rating)}",
         f"🏆 Побед: <b>{s['wins']}</b>{draws_part}  |  💔 Поражений: <b>{s['losses']}</b>",
         f"📊 Матчи: <b>{s['win_rate']}%</b>  |  🎯 Партии: <b>{s['sets_win_rate']}%</b>",
     ]
@@ -271,10 +266,29 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
         for m in matches:
             lines.append(_match_line(m, player.id))
 
-    await callback.message.edit_text(
-        "\n".join(lines),
-        reply_markup=stats_kb(),
-    )
+    return "\n".join(lines), stats_kb()
+
+
+@router.callback_query(F.data == "menu_stats")
+async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
+    player = await get_player(session, callback.from_user.id)
+    if not player:
+        await callback.answer("Сначала напиши /start", show_alert=True)
+        return
+    await callback.answer()
+    text, kb = await _build_stats_screen(session, player)
+    await callback.message.edit_text(text, reply_markup=kb)
+
+
+@router.message(F.text == "📈 Статистика")
+async def show_my_stats_from_reply_kb(message: Message, session: AsyncSession):
+    """Тот же экран, что и menu_stats, но с постоянной клавиатуры снизу."""
+    player = await get_player(session, message.from_user.id)
+    if not player:
+        await message.answer("Сначала напиши /start 🏓")
+        return
+    text, kb = await _build_stats_screen(session, player)
+    await message.answer(text, reply_markup=kb)
 
 
 # ── Player profile (public view) ──────────────────────────────────────────────
@@ -323,7 +337,7 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
     draws_part = f"  |  🤝 Ничьих: <b>{s['draws']}</b>" if s["draws"] > 0 else ""
     lines = [
         f"👤 <b>{h(player.display_name)}</b>\n",
-        f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — {rank_str}",
+        f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — {rank_str}  🎖 {rank_title(player.rating)}",
         f"🏆 Побед: <b>{s['wins']}</b>{draws_part}  |  💔 Поражений: <b>{s['losses']}</b>",
         f"📊 Винрейт: <b>{s['win_rate']}%</b>",
     ]

@@ -2,12 +2,12 @@ from datetime import datetime, timedelta, timezone
 from html import escape as h
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from bot.db.models import Match, MatchStatus, Player
+from bot.db.models import ChampionReign, Match, MatchStatus, Player
 from bot.keyboards.inline import back_to_leaderboard_kb, back_to_menu_kb, leaderboard_kb
 from bot.utils import (
     MSK_OFFSET,
@@ -33,19 +33,17 @@ router = Router()
 
 # ── Leaderboard ───────────────────────────────────────────────────────────────
 
-@router.callback_query(F.data == "menu_leaderboard")
-async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
-    await callback.answer()
-
-    viewer = await get_player(session, callback.from_user.id)
+async def _build_leaderboard_screen(session: AsyncSession, telegram_id: int):
+    """Строит (текст, клавиатуру) экрана «Рейтинг» — общая часть для
+    инлайн-кнопки меню (edit_text) и постоянной клавиатуры снизу (answer)."""
+    viewer = await get_player(session, telegram_id)
     viewer_id = viewer.id if viewer else None
 
     r = await session.execute(select(Player).order_by(desc(Player.rating)))
     players = r.scalars().all()
 
     if not players:
-        await callback.message.edit_text("Пока нет игроков.", reply_markup=back_to_menu_kb())
-        return
+        return "Пока нет игроков.", back_to_menu_kb()
 
     matches_r = await session.execute(
         select(Match)
@@ -80,10 +78,7 @@ async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
     played = [p for p in players if match_count.get(p.id, 0) > 0]
 
     if not played:
-        await callback.message.edit_text(
-            "Пока нет сыгранных матчей. 🏓", reply_markup=back_to_menu_kb()
-        )
-        return
+        return "Пока нет сыгранных матчей. 🏓", back_to_menu_kb()
 
     # Место #1 занимается только через босс-файт, не по очкам — leaderboard не
     # использует compute_ranks (своя сортировка), поэтому пиннинг чемпиона
@@ -164,10 +159,21 @@ async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
             f"  <i>({pluralize_matches(count)}, {wr}%)</i>{pos_str}"
         )
 
-    await callback.message.edit_text(
-        "\n".join(lines),
-        reply_markup=leaderboard_kb(players),
-    )
+    return "\n".join(lines), leaderboard_kb(players)
+
+
+@router.callback_query(F.data == "menu_leaderboard")
+async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
+    await callback.answer()
+    text, kb = await _build_leaderboard_screen(session, callback.from_user.id)
+    await callback.message.edit_text(text, reply_markup=kb)
+
+
+@router.message(F.text == "📊 Рейтинг")
+async def show_leaderboard_from_reply_kb(message: Message, session: AsyncSession):
+    """Тот же экран, что и menu_leaderboard, но с постоянной клавиатуры снизу."""
+    text, kb = await _build_leaderboard_screen(session, message.from_user.id)
+    await message.answer(text, reply_markup=kb)
 
 
 # ── Today stats ───────────────────────────────────────────────────────────────
@@ -716,6 +722,48 @@ async def show_form_index(callback: CallbackQuery, session: AsyncSession):
             f"{prefix} {icon} <b>{h(p.display_name)}</b> — "
             f"{wins}–{losses}{draws_str}  <i>({sign}{delta} pts за {total})</i>"
         )
+
+    await callback.message.edit_text(
+        "\n".join(lines),
+        reply_markup=back_to_leaderboard_kb(),
+    )
+
+
+# ── Зал славы ─────────────────────────────────────────────────────────────────
+# История всех правлений на месте #1 (ChampionReign) — до сих пор эти записи
+# использовались только для одного числа в рекордах клуба («Дольше всех
+# лидировал»), сам список правлений целиком нигде не показывался.
+
+@router.callback_query(F.data == "hall_of_fame")
+async def show_hall_of_fame(callback: CallbackQuery, session: AsyncSession):
+    await callback.answer()
+
+    reigns_r = await session.execute(
+        select(ChampionReign).order_by(desc(ChampionReign.started_at))
+    )
+    reigns = reigns_r.scalars().all()
+
+    if not reigns:
+        await callback.message.edit_text(
+            "🏛 <b>Зал славы</b>\n\nБоссфайт за 1-е место ещё ни разу не активировался.",
+            reply_markup=back_to_leaderboard_kb(),
+        )
+        return
+
+    players_r = await session.execute(select(Player))
+    name_map = {p.id: p.display_name for p in players_r.scalars().all()}
+
+    lines = ["🏛 <b>Зал славы</b>\n"]
+    for reign in reigns:
+        name = h(name_map.get(reign.player_id, "?"))
+        start_str = reign.started_at.strftime("%d.%m.%y")
+        if reign.ended_at is None:
+            lines.append(f"👑 <b>{name}</b> — сейчас  <i>(с {start_str})</i>")
+        else:
+            end_str = reign.ended_at.strftime("%d.%m.%y")
+            days = (reign.ended_at - reign.started_at).days
+            days_str = "меньше дня" if days == 0 else pluralize_days(days)
+            lines.append(f"👑 <b>{name}</b> — {start_str} – {end_str}  <i>({days_str})</i>")
 
     await callback.message.edit_text(
         "\n".join(lines),

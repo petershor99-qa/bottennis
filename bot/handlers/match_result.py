@@ -34,6 +34,7 @@ from bot.utils import (
     get_champion,
     get_h2h_matches,
     get_player,
+    match_report,
     msk_day_start,
     msk_hour_and_weekday,
     notify_all_players,
@@ -1285,13 +1286,19 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             f"  {h(loser.display_name)}: {round(old_loser_rating, 1)} → <b>{round(loser.rating, 1)}</b> ({loser_delta_str})"
         )
         reporter_opponent_id = loser_db_id if reporter_player_id == winner_db_id else winner_db_id
+        reporter_is_winner = reporter_player_id == winner_db_id
         await callback.message.edit_text(
             result_text,
-            reply_markup=rematch_kb(reporter_opponent_id, can_rematch=not match.is_boss_fight),
+            reply_markup=rematch_kb(
+                reporter_opponent_id,
+                can_rematch=not match.is_boss_fight,
+                share_match_id=match_id if reporter_is_winner else None,
+            ),
         )
 
-        if reporter_player_id == winner_db_id:
-            # Репортёр — победитель: уведомляем проигравшего
+        if reporter_is_winner:
+            # Репортёр — победитель: уведомляем проигравшего (карточка победы
+            # ему не положена — кнопка только на экране самого победителя выше)
             try:
                 await bot.send_message(
                     loser.telegram_id,
@@ -1304,7 +1311,9 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             except Exception:
                 pass
         else:
-            # Репортёр — проигравший (инверсия): уведомляем победителя
+            # Репортёр — проигравший (инверсия): уведомляем победителя. У него
+            # нет интерактивного экрана результата (тот достался репортёру) —
+            # кнопку карточки победы прицепляем прямо к этому уведомлению.
             try:
                 await bot.send_message(
                     winner.telegram_id,
@@ -1312,7 +1321,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                     f"Ты победил <b>{h(loser.display_name)}</b>\n"
                     f"Счёт партий: {sets_str}\n\n"
                     f"Твой рейтинг: {round(old_winner_rating, 1)} → <b>{round(winner.rating, 1)}</b> (+{delta})",
-                    reply_markup=main_menu_kb(),
+                    reply_markup=main_menu_kb(share_match_id=match_id),
                 )
             except Exception:
                 pass
@@ -1327,3 +1336,58 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
     await _notify_challenger_status_change(session, bot, match, challenger_before, challenger_before_id)
 
     await callback.answer()
+
+
+# ── Карточка «поделиться победой» ────────────────────────────────────────────
+# Кнопка на уведомлении о результате — только у победителя (см. confirm_result
+# выше, share_match_id прицепляется к обоим местам, где победитель может
+# оказаться: его собственный интерактивный экран ИЛИ плоское уведомление,
+# если счёт внёс проигравший). По тапу — отдельное сообщение, не трогает
+# исходный экран/уведомление. Только для побед, не для ничьих.
+
+@router.callback_query(F.data.startswith("share_card_"))
+async def send_share_card(callback: CallbackQuery, session: AsyncSession):
+    # Ровно один callback.answer() на путь выполнения — Telegram не даёт
+    # ответить на один и тот же callback дважды, второй вызов до пользователя
+    # не долетит (алерт «не твоя карточка» иначе никогда бы не показался).
+    try:
+        match_id = int(callback.data.split("_")[2])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
+
+    r = await session.execute(select(Match).where(Match.id == match_id))
+    match = r.scalar_one_or_none()
+    if not match or match.status != MatchStatus.completed or match.winner_id is None:
+        await callback.answer("Матч не найден.", show_alert=True)
+        return
+
+    viewer = await get_player(session, callback.from_user.id)
+    if not viewer or viewer.id != match.winner_id:
+        await callback.answer("Эта карточка не твоя.", show_alert=True)
+        return
+
+    await callback.answer()
+
+    loser_id = match.challenged_id if match.winner_id == match.challenger_id else match.challenger_id
+    wr = await session.execute(select(Player).where(Player.id == match.winner_id))
+    lr = await session.execute(select(Player).where(Player.id == loser_id))
+    winner = wr.scalar_one()
+    loser = lr.scalar_one()
+
+    # sets_data для побед уже хранится в перспективе победителя — форматируем как есть.
+    sets_str = ", ".join(f"{s['w']}:{s['l']}" for s in (match.sets_data or []))
+    delta = match.rating_change or 0.0
+    report = match_report(match, winner.display_name)
+
+    card_text = (
+        f"🏆 <b>ПОБЕДА</b>\n\n"
+        f"<b>{h(winner.display_name)}</b> обыграл <b>{h(loser.display_name)}</b>\n"
+        f"{sets_str}\n\n"
+        f"📈 +{delta} pts → <b>{round(winner.rating, 1)}</b> pts\n\n"
+        f"<i>{report}</i>"
+    )
+    try:
+        await callback.message.answer(card_text)
+    except Exception:
+        pass
