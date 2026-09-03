@@ -151,6 +151,11 @@ def pluralize_defenses(n: int) -> str:
     return _ru_plural(n, "защита", "защиты", "защит")
 
 
+def pluralize_times(n: int) -> str:
+    """1 раз / 2 раза / 5 раз"""
+    return _ru_plural(n, "раз", "раза", "раз")
+
+
 # ── Звания по диапазону рейтинга (косметика, IT-тематика) ─────────────────────
 # Чисто декоративная строка в статистике/профиле — не влияет ни на рейтинг, ни
 # на матчмейкинг, ни на боссфайт. Пороги подняты на +100 в v2.103.0 — на
@@ -446,6 +451,106 @@ async def most_boss_fight_defenses(session: AsyncSession) -> tuple[int, int] | N
             best_count = cnt
             best_player_id = reign.player_id
     return (best_player_id, best_count) if best_player_id is not None else None
+
+
+async def shortest_champion_reign(session: AsyncSession) -> tuple[int, int] | None:
+    """(player_id, дней) самого короткого ЗАКРЫТОГО правления на #1 — антипод
+    longest_champion_reign(). Только завершённые правления (ended_at не None) —
+    текущее незакрытое ещё растёт, сравнивать его как «короткое» нечестно.
+    None, если закрытых правлений нет."""
+    r = await session.execute(select(ChampionReign).where(ChampionReign.ended_at.isnot(None)))
+    reigns = r.scalars().all()
+    if not reigns:
+        return None
+    best_days: int | None = None
+    best_player_id: int | None = None
+    for reign in reigns:
+        days = (reign.ended_at - reign.started_at).days
+        if best_days is None or days < best_days:
+            best_days = days
+            best_player_id = reign.player_id
+    return (best_player_id, best_days) if best_player_id is not None else None
+
+
+async def most_throne_ascensions(session: AsyncSession) -> tuple[int, int] | None:
+    """(player_id, число правлений) — кто чаще всех ВОСХОДИЛ на трон: число
+    отдельных периодов ChampionReign, не их длительность (тот же игрок может
+    занимать трон несколько раз за карьеру, теряя и отвоёвывая его). None, если
+    правлений не было, или ни у кого не было больше одного — единственное
+    восхождение это не рекорд, а просто факт активации боссфайта."""
+    r = await session.execute(select(ChampionReign))
+    reigns = r.scalars().all()
+    if not reigns:
+        return None
+    counts: dict[int, int] = {}
+    for reign in reigns:
+        counts[reign.player_id] = counts.get(reign.player_id, 0) + 1
+    best_pid = max(counts, key=counts.get)
+    return (best_pid, counts[best_pid]) if counts[best_pid] >= 2 else None
+
+
+async def longest_awaited_revenge(session: AsyncSession) -> tuple[int, int, int] | None:
+    """(avenger_id, opponent_id, дней) — самый большой разрыв по времени между
+    поражением и следующей ПОБЕДОЙ над тем же соперником (не любым следующим
+    матчем вообще — считаются только очные матчи этой пары, промежуточные
+    матчи с другими соперниками разрыв не прерывают). Порог 7 дней — «на
+    следующий день отыгрался» не тянет на «долгожданную», нужна пауза хотя бы
+    в неделю. None, если ни разу не набралось порога."""
+    r = await session.execute(
+        select(Match)
+        .where(Match.status == MatchStatus.completed, Match.winner_id.isnot(None))
+        .order_by(Match.completed_at)
+    )
+    matches = r.scalars().all()
+    pair_matches: dict[tuple[int, int], list[Match]] = {}
+    for m in matches:
+        key = (min(m.challenger_id, m.challenged_id), max(m.challenger_id, m.challenged_id))
+        pair_matches.setdefault(key, []).append(m)
+
+    best: tuple[int, int, int] | None = None
+    best_days = -1
+    for (a_id, b_id), ms in pair_matches.items():
+        last_loss_at: dict[int, datetime] = {}
+        for m in ms:
+            winner_id = m.winner_id
+            loser_id = b_id if winner_id == a_id else a_id
+            if winner_id in last_loss_at:
+                gap_days = (m.completed_at - last_loss_at[winner_id]).days
+                if gap_days > best_days:
+                    best_days = gap_days
+                    best = (winner_id, loser_id, gap_days)
+                del last_loss_at[winner_id]
+            last_loss_at[loser_id] = m.completed_at
+    return best if best is not None and best_days >= 7 else None
+
+
+async def steadiest_career(session: AsyncSession) -> tuple[int, float] | None:
+    """(player_id, средняя волатильность рейтинга за матч) — наименьший разброс
+    рейтинга за ВСЮ карьеру, антипод «Американских горок» (scheduler.py,
+    _biggest_swing), но за карьеру целиком, а не за период, и нормировано на
+    число матчей — иначе игрок с более короткой историей искусственно выглядел
+    бы «стабильнее» просто за счёт меньшей выборки. Порог NEWCOMER_THRESHOLD
+    матчей (та же планка, что и у права претендовать на трон) — отсекает
+    слишком короткую выборку. None, если ни у кого нет достаточно матчей."""
+    r = await session.execute(select(Match).where(Match.status == MatchStatus.completed))
+    matches = r.scalars().all()
+    net: dict[int, float] = {}
+    abs_total: dict[int, float] = {}
+    count: dict[int, int] = {}
+    for m in matches:
+        for pid in (m.challenger_id, m.challenged_id):
+            d = match_rating_delta(m, pid)
+            net[pid] = net.get(pid, 0.0) + d
+            abs_total[pid] = abs_total.get(pid, 0.0) + abs(d)
+            count[pid] = count.get(pid, 0) + 1
+    eligible = {
+        pid: (abs_total[pid] - abs(net.get(pid, 0.0))) / count[pid]
+        for pid in abs_total if count[pid] >= NEWCOMER_THRESHOLD
+    }
+    if not eligible:
+        return None
+    best_pid = min(eligible, key=eligible.get)
+    return (best_pid, round(eligible[best_pid], 1))
 
 
 async def notify_all_players(bot: Bot, session: AsyncSession, text: str) -> None:
