@@ -1683,6 +1683,98 @@ async def test_hall_of_fame_empty_when_boss_fight_never_activated(db):
     assert "ещё ни разу не активировался" in text
 
 
+async def test_hall_of_fame_stays_under_telegram_limit_with_many_dramatic_reigns(db):
+    """РЕГРЕССИЯ (v2.116.0): без пагинации 15 закрытых правлений с максимально
+    драматичным нарративом (камбэк + марафон + дьюс + апсет — самая длинная
+    фраза, какую вообще может выдать `match_report`) уже давали 4139 символов
+    — выше лимита Telegram на сообщение (4096). Добавлена пагинация
+    (`HALL_OF_FAME_PAGE_SIZE = 8`, как у history_kb/h2h_kb) — эта же выборка
+    теперь укладывается на первой странице с запасом. Если тест снова начнёт
+    падать — значит по какой-то причине страница выросла (например, кто-то
+    увеличил PAGE_SIZE) и лимит нужно пересчитать.
+    """
+    from bot.handlers.leaderboard import show_hall_of_fame
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    # Максимально «драматичный» счёт: камбэк с 0:2, марафон (5 партий),
+    # решающая на дьюсе (min >= 10), + апсет (rating_change >= 20) —
+    # включает все 4 фактора match_report() одновременно.
+    dramatic_sets = [
+        {"w": 8, "l": 11}, {"w": 9, "l": 11},
+        {"w": 11, "l": 7}, {"w": 11, "l": 6}, {"w": 13, "l": 11},
+    ]
+
+    NUM_REIGNS = 15
+    start = datetime(2026, 1, 1)
+    champion, challenger = p1, p2
+    for i in range(NUM_REIGNS):
+        end = start + timedelta(days=3)
+        db.add(ChampionReign(player_id=champion.id, started_at=start, ended_at=end))
+        db.add(Match(
+            challenger_id=champion.id, challenged_id=challenger.id,
+            status=MatchStatus.completed, winner_id=challenger.id,
+            is_boss_fight=True, sets_data=dramatic_sets,
+            rating_change=25.0, completed_at=end,
+        ))
+        champion, challenger = challenger, champion
+        start = end
+    # Последнее правление — ещё не закрыто (текущий чемпион)
+    db.add(ChampionReign(player_id=champion.id, started_at=start, ended_at=None))
+    await db.commit()
+
+    cb = _callback(1, "hall_of_fame")
+    await show_hall_of_fame(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert len(text) < 4096
+    # 16 правлений (15 закрытых + 1 текущее) / 8 на странице = 2 страницы —
+    # пагинация должна была реально включиться, а не просто "не упасть"
+    assert "стр. 1/2" in text
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    nav_texts = [b.text for row in kb.inline_keyboard for b in row]
+    assert any("Вперёд" in t for t in nav_texts)
+
+
+async def test_hall_of_fame_page_out_of_range_clamped_to_last(db):
+    """Некорректный/устаревший номер страницы в callback_data не должен
+    падать с ошибкой — обрезается до последней существующей страницы, тот же
+    приём, что у history_kb/h2h_kb."""
+    from bot.handlers.leaderboard import show_hall_of_fame
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=None))
+    await db.commit()
+
+    cb = _callback(1, "hall_of_fame_99")
+    await show_hall_of_fame(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "стр. 1/1" in text
+
+
+async def test_hall_of_fame_old_callback_without_page_defaults_to_first_page(db):
+    """Кнопка без номера страницы (кэшированная в старом сообщении до
+    v2.116.0) не должна падать с ошибкой — считаем это страницей 0."""
+    from bot.handlers.leaderboard import show_hall_of_fame
+
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.flush()
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=None))
+    await db.commit()
+
+    cb = _callback(1, "hall_of_fame")  # старый формат, без "_0"
+    await show_hall_of_fame(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Alice" in text
+
+
 async def test_dbstats_escapes_player_name(db, monkeypatch):
     """РЕГРЕССИЯ: имя игрока со спецсимволами в /dbstats шло в HTML без
     экранирования (топ рейтингов и топ/боттом начислений)."""
@@ -1791,7 +1883,7 @@ def test_leaderboard_kb_extra_links_grouped_two_per_row():
     link_rows = rows[:-1]
     assert all(len(row) == 2 for row in link_rows)
     all_callbacks = {btn.callback_data for row in rows for btn in row}
-    assert all_callbacks == {"club_records", "dominance_matrix", "form_index", "hall_of_fame", "back_to_menu"}
+    assert all_callbacks == {"club_records", "dominance_matrix", "form_index", "hall_of_fame_0", "back_to_menu"}
 
 
 async def test_today_screen_back_button_returns_to_stats(db):

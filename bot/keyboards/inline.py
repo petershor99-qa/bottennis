@@ -139,6 +139,24 @@ def history_kb(page: int, total_pages: int) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
+def hall_of_fame_kb(page: int, total_pages: int) -> InlineKeyboardMarkup:
+    """Клавиатура для листания «Зала славы» (v2.116.0) — список правлений не
+    ограничен по росту (в отличие от рекордов клуба), с каждой сменой трона
+    становится длиннее; без пагинации в худшем случае (все правления с
+    максимально драматичным нарративом) уже на ~15 записях упирается в лимит
+    Telegram на сообщение (4096 символов) — поймано регресс-тестом."""
+    b = InlineKeyboardBuilder()
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="← Назад", callback_data=f"hall_of_fame_{page - 1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton(text="Вперёд →", callback_data=f"hall_of_fame_{page + 1}"))
+    if nav:
+        b.row(*nav)
+    b.row(InlineKeyboardButton(text="« К рейтингу", callback_data="menu_leaderboard"))
+    return b.as_markup()
+
+
 def players_list_kb(
     players,
     exclude_telegram_id: int,
@@ -238,7 +256,7 @@ def leaderboard_kb(players) -> InlineKeyboardMarkup:
     )
     b.row(
         InlineKeyboardButton(text="🌡 Индекс", callback_data="form_index"),
-        InlineKeyboardButton(text="🏛 Трон", callback_data="hall_of_fame"),
+        InlineKeyboardButton(text="🏛 Трон", callback_data="hall_of_fame_0"),
     )
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()

@@ -8,7 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from bot.db.models import ChampionReign, Match, MatchStatus, Player
-from bot.keyboards.inline import back_to_leaderboard_kb, back_to_menu_kb, back_to_stats_kb, leaderboard_kb
+from bot.keyboards.inline import (
+    back_to_leaderboard_kb,
+    back_to_menu_kb,
+    back_to_stats_kb,
+    hall_of_fame_kb,
+    leaderboard_kb,
+)
 from bot.utils import (
     MSK_OFFSET,
     _pin_champion,
@@ -35,6 +41,11 @@ from bot.utils import (
 )
 
 router = Router()
+
+# 8, не больше — даже в худшем случае (все правления с максимально
+# драматичным нарративом от match_report) страница комфортно укладывается в
+# лимит Telegram на сообщение (см. hall_of_fame_kb и регресс-тест на лимит).
+HALL_OF_FAME_PAGE_SIZE = 8
 
 
 # ── Leaderboard ───────────────────────────────────────────────────────────────
@@ -805,8 +816,13 @@ async def _reign_end_narrative(session: AsyncSession, reign: ChampionReign, name
     return f"Сверг {h(winner_name)}: {match_report(m, winner_name)}"
 
 
-@router.callback_query(F.data == "hall_of_fame")
+@router.callback_query(F.data.startswith("hall_of_fame"))
 async def show_hall_of_fame(callback: CallbackQuery, session: AsyncSession):
+    try:
+        page = int(callback.data.rsplit("_", 1)[-1])
+    except ValueError:
+        page = 0  # старая кнопка без номера страницы (до пагинации, v2.116.0)
+
     await callback.answer()
 
     reigns_r = await session.execute(
@@ -824,9 +840,14 @@ async def show_hall_of_fame(callback: CallbackQuery, session: AsyncSession):
     players_r = await session.execute(select(Player))
     name_map = {p.id: p.display_name for p in players_r.scalars().all()}
 
+    total_pages = max(1, (len(reigns) + HALL_OF_FAME_PAGE_SIZE - 1) // HALL_OF_FAME_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    chunk = reigns[page * HALL_OF_FAME_PAGE_SIZE:(page + 1) * HALL_OF_FAME_PAGE_SIZE]
+
     # Шапка с яркими фактами — сколько всего было смен трона + самое короткое
     # правление (та же метрика, что и в «Рекордах клуба», здесь — для контекста
-    # прямо над списком, чтобы не заставлять читателя листать список самому)
+    # прямо над списком, чтобы не заставлять читателя листать список самому).
+    # Считается по ПОЛНОМУ списку правлений, не по странице.
     header_facts = [f"Смен трона: <b>{len(reigns)}</b>"]
     short_reign = await shortest_champion_reign(session)
     if short_reign is not None:
@@ -836,8 +857,11 @@ async def show_hall_of_fame(callback: CallbackQuery, session: AsyncSession):
             f"Самое короткое правление: <b>{h(name_map.get(short_pid, '?'))}</b> ({short_str})"
         )
 
-    lines = ["🏛 <b>Зал славы</b>", "  •  ".join(header_facts), ""]
-    for reign in reigns:
+    lines = [
+        f"🏛 <b>Зал славы</b>  <i>(стр. {page + 1}/{total_pages})</i>",
+        "  •  ".join(header_facts), "",
+    ]
+    for reign in chunk:
         name = h(name_map.get(reign.player_id, "?"))
         start_str = reign.started_at.strftime("%d.%m.%y")
         if reign.ended_at is None:
@@ -854,5 +878,5 @@ async def show_hall_of_fame(callback: CallbackQuery, session: AsyncSession):
 
     await callback.message.edit_text(
         "\n".join(lines).rstrip(),
-        reply_markup=back_to_leaderboard_kb(),
+        reply_markup=hall_of_fame_kb(page, total_pages),
     )
