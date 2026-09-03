@@ -75,7 +75,7 @@ def stats_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.row(
         InlineKeyboardButton(text="📜 История", callback_data="history_0"),
-        InlineKeyboardButton(text="📊 Рейтинг", callback_data="rating_chart"),
+        InlineKeyboardButton(text="📊 График", callback_data="rating_chart"),
     )
     b.row(
         InlineKeyboardButton(text="🔥 Активность", callback_data="activity_heatmap_me"),
@@ -177,7 +177,7 @@ def players_list_kb(
             else:
                 badge = ""
             b.row(InlineKeyboardButton(
-                text=f"{rank_str}{icon}{p.display_name}{badge}  ({round(p.rating, 1)} pts)",
+                text=f"{rank_str}{icon}{p.display_name}{badge}  ({round(p.rating)} pts)",
                 callback_data=f"challenge_{p.id}",
             ))
     b.row(InlineKeyboardButton(text="« Назад", callback_data="back_to_menu"))

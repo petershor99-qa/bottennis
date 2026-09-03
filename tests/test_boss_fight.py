@@ -178,6 +178,34 @@ def test_players_list_kb_boss_fight_shortcut_row():
     assert any("БОСС-ФАЙТ" in t and "Чемпион" in t for t in first_row_texts)
 
 
+def test_players_list_kb_rating_rounded_to_integer():
+    """На экране «Вызвать на матч» рейтинг округлён до целого (v2.115.0) —
+    исключение из общего правила «везде один знак после запятой», по прямой
+    просьбе пользователя: десятые в списке соперников были визуальным шумом."""
+    p1 = _player(1, "Someone", rating=959.6)
+    p1.id = 1
+    kb = players_list_kb([p1], exclude_telegram_id=999)
+    text = kb.inline_keyboard[0][0].text
+    assert "960 pts" in text
+    assert "959.6" not in text
+
+
+def test_players_list_kb_order_unaffected_by_rounding_ties():
+    """Если после округления у двух игроков одинаковое число очков, выше в
+    списке должен остаться тот, кто реально выше по сырому рейтингу —
+    players_list_kb сама список не сортирует (это делает вызывающий код в
+    challenge.py по -p.rating), тут проверяем, что порядок ПЕРЕДАННЫХ игроков
+    сохраняется как есть, не переупорядочивается по округлённому значению."""
+    higher = _player(1, "Higher", rating=960.4)  # округлится тоже в 960
+    lower = _player(2, "Lower", rating=959.6)     # округлится в 960
+    higher.id, lower.id = 1, 2
+    kb = players_list_kb([higher, lower], exclude_telegram_id=999)
+    texts = [btn.text for row in kb.inline_keyboard[:-1] for btn in row]
+    assert texts[0].startswith("Higher")
+    assert texts[1].startswith("Lower")
+    assert "960 pts" in texts[0] and "960 pts" in texts[1]
+
+
 # ── B. Претендент / bootstrap ─────────────────────────────────────────────────
 
 async def test_get_challenger_none_when_no_champion(db):
