@@ -13,6 +13,7 @@ from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import after_set_kb, back_to_menu_kb, main_menu_kb, rematch_kb
 from bot.services.achievements import (
     ACHIEVEMENTS_MAP,
+    _career_points_and_sets,
     check_boss_fight_challenger_defeat_achievement,
     check_boss_fight_defense_achievement,
     check_chance_blown_achievement,
@@ -31,6 +32,7 @@ from bot.services.validation import validate_set_score
 from bot.states.states import MatchResultStates
 from bot.utils import (
     NEWCOMER_THRESHOLD,
+    get_career_matches,
     get_challenger,
     get_champion,
     get_h2h_matches,
@@ -53,6 +55,82 @@ VETERAN_FLOOR = 900.0     # пол рейтинга для ветеранов (1
 NEWCOMER_BONUS = 1.2      # бонус к победам новичка
 REPEAT_MIN = 0.5          # минимальный множитель за повтор
 MAX_SETS = 10             # максимальное число партий в матче
+
+# ── Мгновенные вехи по матчам/очкам за карьеру (v2.110.0) ─────────────────────
+# НЕ ачивки — разовый мгновенный пинг сразу после матча на круглых цифрах,
+# отдельно от постоянной коллекции достижений. Круглые числа, которые уже
+# празднует своя ачивка (500/1000 матчей — «Стахановец»/«Суперстар»; 4000/8000/
+# 12000 очков — «Копил по очку»/«Крепкий середняк»/«Нафармил очков»), намеренно
+# пропускаются — иначе одно и то же событие поздравлялось бы дважды подряд.
+
+MATCH_MILESTONE_STEP = 100
+POINTS_MILESTONE_STEP = 500
+_MATCH_MILESTONE_SKIP = {500, 1000}
+_POINTS_MILESTONE_SKIP = {4000, 8000, 12000}
+
+MATCH_MILESTONE_PHRASES = [
+    "Ты либо очень любишь теннис, либо не любишь работать.",
+    "Ещё чуть-чуть и придётся вписывать это в трудовую книжку.",
+    "Стол уже узнаёт твои шаги.",
+    "Хорошо что у нас нет HR.",
+    "Продуктивность отдела упала, зато рейтинг вырос.",
+    "Это уже не хобби, это вторая работа.",
+    "Число матчей растёт быстрее квартальных показателей.",
+    "Легенда стола продолжает писать историю.",
+]
+
+POINTS_MILESTONE_PHRASES = [
+    "Очков больше, чем в KPI на квартал.",
+    "Каждое очко в копилку новых достижений.",
+    "Такими темпами скоро придётся вести бухгалтерию очков.",
+    "Число на табло растёт быстрее курса доллара.",
+    "Выпьем за ваше здоровье и за моё очко.",
+    "Ты играешь или очки майнишь?",
+    "Такой актив даже в резюме можно вписать.",
+    "Ещё немного — и попросишь премию за очки.",
+]
+
+
+async def _check_and_send_milestones(session: AsyncSession, bot: Bot, player: Player, match: Match) -> None:
+    """Проверяет и шлёт мгновенный пинг на круглых вехах по матчам (каждые 100)
+    и очкам за карьеру (каждые 500) — для ОБОИХ участников любого матча
+    (победа/поражение/ничья одинаково растят оба счётчика). match — только что
+    завершённый (нужен для points_this_match — очки, набранные именно в нём, с
+    перспективы player, чтобы вычислить points ДО матча и поймать пересечение
+    границы 500, а не только точное попадание в неё)."""
+    matches = await get_career_matches(session, player.id)
+    total = len(matches)
+    points, _sets_won = _career_points_and_sets(matches, player.id)
+
+    if total % MATCH_MILESTONE_STEP == 0 and total not in _MATCH_MILESTONE_SKIP:
+        idx = (total // MATCH_MILESTONE_STEP - 1) % len(MATCH_MILESTONE_PHRASES)
+        try:
+            await bot.send_message(
+                player.telegram_id,
+                f"🎯 <b>{total}-й матч в клубе!</b>\n{MATCH_MILESTONE_PHRASES[idx]}",
+            )
+        except Exception:
+            pass
+
+    points_this_match = 0
+    if match.sets_data:
+        i_am_ch = match.challenger_id == player.id
+        i_am_winner = match.winner_id == player.id
+        i_am_favored = i_am_ch if match.winner_id is None else i_am_winner
+        for s in match.sets_data:
+            points_this_match += s["w"] if i_am_favored else s["l"]
+    points_before = points - points_this_match
+    if points // POINTS_MILESTONE_STEP != points_before // POINTS_MILESTONE_STEP:
+        milestone = (points // POINTS_MILESTONE_STEP) * POINTS_MILESTONE_STEP
+        if milestone > 0 and milestone not in _POINTS_MILESTONE_SKIP:
+            idx = (milestone // POINTS_MILESTONE_STEP - 1) % len(POINTS_MILESTONE_PHRASES)
+            try:
+                await bot.send_message(
+                    player.telegram_id,
+                    f"💰 <b>{milestone} очков за карьеру!</b>\n{POINTS_MILESTONE_PHRASES[idx]}",
+                )
+            except Exception:
+                pass
 BOSS_FIGHT_MULT = 2.0     # множитель дельты в босс-файте
 
 
@@ -1190,6 +1268,10 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             session, bot, challenger, challenged, final_sets, match, match_id,
         )
 
+        # Мгновенные вехи по матчам/очкам — для обоих участников
+        await _check_and_send_milestones(session, bot, challenger, match)
+        await _check_and_send_milestones(session, bot, challenged, match)
+
     else:
         # Определяем победителя с учётом инверсии (reporter мог проиграть)
         reporter_sets_won = sum(1 for s in sets_data if s["reporter"] > s["opponent"])
@@ -1340,6 +1422,10 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             session, bot, winner, loser, final_sets, match, match_id,
             old_winner_rating, old_loser_rating, winner_db_id, loser_db_id,
         )
+
+        # Мгновенные вехи по матчам/очкам — для обоих участников
+        await _check_and_send_milestones(session, bot, winner, match)
+        await _check_and_send_milestones(session, bot, loser, match)
 
     # Смена претендента — «обошёл чемпиона» / «Просран шанс» / «ПОТРАЧЕНО»
     await _notify_challenger_status_change(session, bot, match, challenger_before, challenger_before_id)
