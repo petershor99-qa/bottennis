@@ -67,6 +67,7 @@ def _render_stats_lines(player, s: dict) -> list[str]:
     opponent_lines: list[str] = []
     rating_lines: list[str] = []
     misc_lines: list[str] = []
+    insight_lines: list[str] = []
 
     recent_7 = s["recent_7"]
     if recent_7:
@@ -136,8 +137,31 @@ def _render_stats_lines(player, s: dict) -> list[str]:
     if s["best_day"]:
         misc_lines.append(f"📅 Активный день: <b>{s['best_day']}</b> ({s['best_day_count']} матчей)")
 
+    if s["lucky_day"]:
+        day, wr = s["lucky_day"]
+        insight_lines.append(f"🍀 Счастливый день: <b>{day}</b> ({wr}% побед)")
+    if s["post_loss"]:
+        wr, n = s["post_loss"]
+        if wr >= 50:
+            insight_lines.append(f"💪 После поражений отыгрываешься: <b>{wr}%</b> побед ({n} матчей)")
+        else:
+            insight_lines.append(f"😮‍💨 После поражений тяжело: <b>{wr}%</b> побед ({n} матчей)")
+    if s["favorite_score"]:
+        score, cnt = s["favorite_score"]
+        insight_lines.append(f"🎯 Любимый счёт партии: <b>{score}</b> ({cnt} раз)")
+    if s["style_insight"]:
+        style, own_wr, other_wr = s["style_insight"]
+        if style == "sprinter":
+            insight_lines.append(
+                f"🏃 Ты спринтер: <b>{own_wr}%</b> побед в коротких матчах (vs {other_wr}% в длинных)"
+            )
+        else:
+            insight_lines.append(
+                f"🐢 Ты марафонец: <b>{own_wr}%</b> побед в длинных матчах (vs {other_wr}% в коротких)"
+            )
+
     lines: list[str] = []
-    for group in (form_lines, opponent_lines, rating_lines, misc_lines):
+    for group in (form_lines, opponent_lines, rating_lines, misc_lines, insight_lines):
         if group:
             if lines:
                 lines.append("")
