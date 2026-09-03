@@ -2917,6 +2917,134 @@ async def test_confirm_result_veteran_floor_is_900(db):
     assert p2.rating >= 900.0 - 1e-9
 
 
+# ── Мгновенные вехи по матчам/очкам v2.110.0 ─────────────────────────────────
+
+async def test_match_milestone_fires_at_100th_match(db):
+    p1, p2 = _player(1, "Winner"), _player(2, "Loser")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(99):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.completed, winner_id=p1.id,
+            sets_data=[{"w": 11, "l": 0}], rating_change=5.0,
+            completed_at=datetime(2026, 1, 1) + timedelta(hours=i),
+        ))
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 0}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    texts = [c.args[1] for c in bot.send_message.call_args_list]
+    assert any("100-й матч в клубе" in t for t in texts)
+
+
+async def test_match_milestone_skips_500_already_covered_by_achievement(db):
+    p1, p2 = _player(1, "Winner"), _player(2, "Loser")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(499):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.completed, winner_id=p1.id,
+            sets_data=[{"w": 11, "l": 0}], rating_change=5.0,
+            completed_at=datetime(2026, 1, 1) + timedelta(hours=i),
+        ))
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 0}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    texts = [c.args[1] for c in bot.send_message.call_args_list]
+    assert not any("500-й матч в клубе" in t for t in texts)
+
+
+async def test_points_milestone_fires_on_crossing_500(db):
+    """45 предыдущих матчей по 11 очков (495 очков), финальный матч добавляет
+    ещё 11 — переход через границу 500 (495 → 506)."""
+    p1, p2 = _player(1, "Winner"), _player(2, "Loser")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(45):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.completed, winner_id=p1.id,
+            sets_data=[{"w": 11, "l": 0}], rating_change=5.0,
+            completed_at=datetime(2026, 1, 1) + timedelta(hours=i),
+        ))
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 0}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    texts = [c.args[1] for c in bot.send_message.call_args_list]
+    assert any("500 очков за карьеру" in t for t in texts)
+
+
+async def test_points_milestone_skips_4000_already_covered_by_achievement(db):
+    """364 предыдущих матча по 11 очков = 4004, крайний ДО финального — 3993
+    (< 4000), финальный доводит до 4004, пересекая ровно веху 4000 —
+    пропускаем, т.к. её уже празднует ачивка "Копил по очку"."""
+    p1, p2 = _player(1, "Winner"), _player(2, "Loser")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(363):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.completed, winner_id=p1.id,
+            sets_data=[{"w": 11, "l": 0}], rating_change=5.0,
+            completed_at=datetime(2026, 1, 1) + timedelta(hours=i),
+        ))
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 0}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    # Уточнённая подстрока: ачивка «Копил по очку» сама упоминает «4000 очков
+    # за карьеру» в своём описании — проверяем именно формат пинга (эмодзи 💰
+    # + восклицательный знак), а не любое упоминание этих слов в тексте.
+    texts = [c.args[1] for c in bot.send_message.call_args_list]
+    assert not any("💰 <b>4000 очков за карьеру!" in t for t in texts)
+
+
+async def test_match_milestone_fires_for_both_participants_on_draw(db):
+    """99 матчей МЕЖДУ этой же парой (не 99+99) — иначе оба уже проскочат
+    отметку 100 до финального матча и он станет для них 199-м, а не 100-м."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(99):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.completed, winner_id=p1.id,
+            sets_data=[{"w": 11, "l": 0}], rating_change=5.0,
+            completed_at=datetime(2026, 1, 1) + timedelta(hours=i),
+        ))
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = _state(1)
+    await st.set_state(MatchResultStates.confirming)
+    await st.update_data(
+        match_id=m.id, reporter_player_id=p1.id,
+        sets_data=[{"reporter": 11, "opponent": 5}, {"reporter": 5, "opponent": 11}],
+        is_draw=True,
+    )
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    texts = [c.args[1] for c in bot.send_message.call_args_list]
+    assert sum("100-й матч в клубе" in t for t in texts) == 2  # оба участника
+
+
 # ── Новые пасхалки после матча ───────────────────────────────────────────────
 
 def _egg_ctx(**overrides) -> dict:
