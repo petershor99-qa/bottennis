@@ -1,5 +1,5 @@
 # Конфиг линтера ruff. Запуск: ruff check .
-target-version = "py311"
+target-version = "py313"
 line-length = 120
 
 [lint]
