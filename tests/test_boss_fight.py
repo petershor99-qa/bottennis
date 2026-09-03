@@ -686,6 +686,152 @@ async def test_champion_auto_release_transfers_after_7_days_inactive(monkeypatch
     assert any("Трон освободился" in t for t in texts)
 
 
+async def test_throne_cracking_notifies_champion_when_chaser_close(monkeypatch):
+    """Chaser рейтингом НИЖЕ чемпиона (не официальный претендент — тот был бы
+    строго выше), разрыв 15 < THRONE_CRACKING_GAP=20 — уведомление уходит
+    только чемпиону."""
+    import bot.scheduler as sched
+
+    engine, factory = await _sched_db()
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    async with factory() as s:
+        champion = _player(1, "Champion", rating=1100.0)
+        champion.is_champion = True
+        chaser = _player(2, "Chaser", rating=1085.0)
+        s.add_all([champion, chaser])
+        await s.flush()
+        await _seed_matches(s, chaser, champion, NEWCOMER_THRESHOLD, base)
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.check_throne_cracking(bot)
+    await engine.dispose()
+
+    calls = bot.send_message.await_args_list
+    assert len(calls) == 1
+    assert calls[0].args[0] == champion.telegram_id
+    assert "Трон трещит" in calls[0].args[1]
+    assert "Chaser" in calls[0].args[1]
+
+
+async def test_throne_cracking_no_notification_when_gap_large(monkeypatch):
+    import bot.scheduler as sched
+
+    engine, factory = await _sched_db()
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    async with factory() as s:
+        champion = _player(1, "Champion", rating=1200.0)
+        champion.is_champion = True
+        chaser = _player(2, "Chaser", rating=1100.0)  # разрыв 100 >= 20
+        s.add_all([champion, chaser])
+        await s.flush()
+        await _seed_matches(s, chaser, champion, NEWCOMER_THRESHOLD, base)
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.check_throne_cracking(bot)
+    await engine.dispose()
+
+    bot.send_message.assert_not_awaited()
+
+
+async def test_throne_cracking_ignores_player_already_above_champion(monkeypatch):
+    """Игрок с рейтингом ВЫШЕ чемпиона — уже официальный претендент
+    (get_challenger()), не «подкрадывается снизу», это другой сценарий."""
+    import bot.scheduler as sched
+
+    engine, factory = await _sched_db()
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    async with factory() as s:
+        champion = _player(1, "Champion", rating=1000.0)
+        champion.is_champion = True
+        above = _player(2, "Above", rating=1005.0)  # уже выше чемпиона
+        s.add_all([champion, above])
+        await s.flush()
+        await _seed_matches(s, above, champion, NEWCOMER_THRESHOLD, base)
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.check_throne_cracking(bot)
+    await engine.dispose()
+
+    bot.send_message.assert_not_awaited()
+
+
+async def test_throne_cracking_ignores_candidate_below_match_threshold(monkeypatch):
+    import bot.scheduler as sched
+
+    engine, factory = await _sched_db()
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    async with factory() as s:
+        champion = _player(1, "Champion", rating=1100.0)
+        champion.is_champion = True
+        newbie = _player(2, "Newbie", rating=1090.0)  # разрыв 10 < 20, но мало матчей
+        s.add_all([champion, newbie])
+        await s.flush()
+        await _seed_matches(s, newbie, champion, NEWCOMER_THRESHOLD - 1, base)
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.check_throne_cracking(bot)
+    await engine.dispose()
+
+    bot.send_message.assert_not_awaited()
+
+
+async def test_throne_cracking_none_when_no_champion(monkeypatch):
+    import bot.scheduler as sched
+
+    engine, factory = await _sched_db()
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    async with factory() as s:
+        s.add(_player(1, "Alice"))
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.check_throne_cracking(bot)  # не должно упасть
+    await engine.dispose()
+
+    bot.send_message.assert_not_awaited()
+
+
+async def test_throne_cracking_picks_closest_chaser_among_several(monkeypatch):
+    import bot.scheduler as sched
+
+    engine, factory = await _sched_db()
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    async with factory() as s:
+        champion = _player(1, "Champion", rating=1100.0)
+        champion.is_champion = True
+        far = _player(2, "Far", rating=1050.0)
+        close = _player(3, "Close", rating=1090.0)
+        s.add_all([champion, far, close])
+        await s.flush()
+        await _seed_matches(s, far, champion, NEWCOMER_THRESHOLD, base)
+        await _seed_matches(s, close, champion, NEWCOMER_THRESHOLD, base)
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.check_throne_cracking(bot)
+    await engine.dispose()
+
+    calls = bot.send_message.await_args_list
+    assert len(calls) == 1
+    assert "Close" in calls[0].args[1]
+    assert "Far" not in calls[0].args[1]
+
+
 async def test_champion_auto_release_no_candidates_keeps_throne(monkeypatch):
     import bot.scheduler as sched
 
