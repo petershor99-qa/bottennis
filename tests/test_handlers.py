@@ -2329,6 +2329,15 @@ def test_pluralize_defenses():
     assert pluralize_defenses(21) == "21 защита"
 
 
+def test_pluralize_losses():
+    from bot.utils import pluralize_losses
+    assert pluralize_losses(1) == "1 поражение"
+    assert pluralize_losses(2) == "2 поражения"
+    assert pluralize_losses(5) == "5 поражений"
+    assert pluralize_losses(11) == "11 поражений"
+    assert pluralize_losses(21) == "21 поражение"
+
+
 # ── Итоги дня: новые секции ─────────────────────────────────────────────────────
 
 async def test_daily_summary_new_sections(monkeypatch):
@@ -3768,3 +3777,170 @@ async def test_career_recap_counts_distinct_personal_records(db):
 
     text = cb.message.edit_text.await_args.args[0]
     assert "Личных рекордов покорено: <b>2/7</b>" in text
+
+
+# ── _build_career_narrative (v2.112.0) ───────────────────────────────────────
+# _full_stats (см. выше) уже даёт нейтральные дефолты для всех сигнальных
+# ключей — сюда добавляем только wins/draws/losses/win_rate, которых там нет.
+
+def test_career_narrative_none_below_5_matches():
+    from bot.services.stats import _build_career_narrative
+
+    p = _player(1, "Alice")
+    p.id = 1
+    s = _full_stats(wins=2, draws=0, losses=2, win_rate=50)
+    assert _build_career_narrative(p, s) is None
+
+
+def test_career_narrative_dominant_opening_mentions_win_rate():
+    from bot.services.stats import _build_career_narrative
+
+    p = _player(1, "Alice")
+    p.id = 1
+    s = _full_stats(wins=8, draws=0, losses=2, win_rate=80)
+    text = _build_career_narrative(p, s)
+    assert "80%" in text
+
+
+def test_career_narrative_struggling_opening_mentions_win_rate():
+    from bot.services.stats import _build_career_narrative
+
+    p = _player(1, "Alice")
+    p.id = 1
+    s = _full_stats(wins=1, draws=0, losses=9, win_rate=10)
+    text = _build_career_narrative(p, s)
+    assert "10%" in text
+
+
+def test_career_narrative_style_insight_sprinter_and_marathoner():
+    from bot.services.stats import _build_career_narrative
+
+    p = _player(1, "Alice")
+    p.id = 1
+    sprinter = _build_career_narrative(
+        p, _full_stats(wins=6, draws=0, losses=4, win_rate=60, style_insight=("sprinter", 80, 40))
+    )
+    assert "Короткие матчи" in sprinter
+    assert "80%" in sprinter and "40%" in sprinter
+
+    marathoner = _build_career_narrative(
+        p, _full_stats(wins=6, draws=0, losses=4, win_rate=60, style_insight=("marathoner", 75, 30))
+    )
+    assert "марафонец" in marathoner
+    assert "75%" in marathoner and "30%" in marathoner
+
+
+def test_career_narrative_lucky_day_uses_locative_case():
+    """День недели должен склоняться в родительный/дательный («по вторникам»),
+    а не вставляться как есть сокращением («Вт»)."""
+    from bot.services.stats import _build_career_narrative
+
+    p = _player(1, "Alice")
+    p.id = 1
+    s = _full_stats(wins=6, draws=0, losses=4, win_rate=60, lucky_day=("Вт", 90))
+    text = _build_career_narrative(p, s)
+    assert "вторникам" in text
+    assert " Вт " not in text
+
+
+def test_career_narrative_post_loss_positive_and_negative_framing():
+    from bot.services.stats import _build_career_narrative
+
+    p = _player(1, "Alice")
+    p.id = 1
+    positive = _build_career_narrative(
+        p, _full_stats(wins=6, draws=0, losses=4, win_rate=60, post_loss=(70, 5))
+    )
+    assert "не раскисаешь" in positive
+
+    negative = _build_career_narrative(
+        p, _full_stats(wins=6, draws=0, losses=4, win_rate=60, post_loss=(20, 5))
+    )
+    assert "тяжеловато" in negative
+
+
+def test_career_narrative_favorite_score_shown():
+    from bot.services.stats import _build_career_narrative
+
+    p = _player(1, "Alice")
+    p.id = 1
+    s = _full_stats(wins=6, draws=0, losses=4, win_rate=60, favorite_score=("11:7", 3))
+    text = _build_career_narrative(p, s)
+    assert "11:7" in text
+    assert "3 раза" in text
+
+
+def test_career_narrative_nemesis_only_above_threshold():
+    from bot.services.stats import _build_career_narrative
+
+    p = _player(1, "Alice")
+    p.id = 1
+    below = _build_career_narrative(
+        p, _full_stats(wins=6, draws=0, losses=4, win_rate=60, nemesis={"name": "Bob", "losses": 2})
+    )
+    assert "Bob" not in below
+
+    above = _build_career_narrative(
+        p, _full_stats(wins=6, draws=0, losses=4, win_rate=60, nemesis={"name": "Bob", "losses": 3})
+    )
+    assert "Bob" in above
+    assert "3 поражения" in above
+
+
+def test_career_narrative_boss_fight_champion_vs_challenger():
+    from bot.services.stats import _build_career_narrative
+
+    p = _player(1, "Alice")
+    p.id = 1
+    p.is_champion = True
+    champion_text = _build_career_narrative(
+        p, _full_stats(wins=6, draws=0, losses=4, win_rate=60, boss_fights_played=2, boss_fights_won=2)
+    )
+    assert "трон" in champion_text.lower()
+
+    p2 = _player(2, "Bob")
+    p2.id = 2
+    p2.is_champion = False
+    challenger_text = _build_career_narrative(
+        p2, _full_stats(wins=6, draws=0, losses=4, win_rate=60, boss_fights_played=2, boss_fights_won=1)
+    )
+    assert "1/2" in challenger_text
+
+
+async def test_career_recap_includes_narrative_paragraph_with_enough_matches(db):
+    """С 5+ матчами «Моя история» показывает абзац-репортаж, а не только сухие
+    цифры — по прямой просьбе пользователя после живого скриншота."""
+    from bot.handlers.profile import show_career_recap
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i, winner in enumerate([p1.id, p1.id, p1.id, p1.id, p2.id]):
+        db.add(_completed(p1, p2, winner, 10.0, datetime(2026, 6, 1 + i, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "career_recap")
+    await show_career_recap(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "80%" in text  # 4/5 побед — win_rate из открывающей фразы репортажа
+
+
+async def test_career_recap_no_narrative_below_5_matches(db):
+    from bot.handlers.profile import show_career_recap
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "career_recap")
+    await show_career_recap(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    # с 1 матчем win_rate=100% попадёт в DOMINANT-пул — ни одна из трёх его
+    # фраз-заготовок не должна появиться (репортаж не строится при total < 5)
+    assert "тебе почти нет равных" not in text
+    assert "стараются не пересекаться лишний раз" not in text
+    assert "ты играешь в клубе на своей волне" not in text

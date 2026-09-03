@@ -18,7 +18,7 @@ from bot.services.achievements import (
     CATEGORY_ORDER,
     get_achievements,
 )
-from bot.services.stats import _compute_player_stats, _nearest_achievement_progress
+from bot.services.stats import _build_career_narrative, _compute_player_stats, _nearest_achievement_progress
 from bot.utils import (
     NEWCOMER_THRESHOLD,
     _challenger_among,
@@ -363,9 +363,15 @@ async def show_career_recap(callback: CallbackQuery, session: AsyncSession):
         f"В клубе с <b>{joined_str}</b>. Позади <b>{pluralize_matches(total)}</b>: "
         f"<b>{s['wins']}</b> побед / <b>{s['losses']}</b> поражений{draws_part} "
         f"(<b>{s['win_rate']}%</b> винрейт).",
-        "",
-        f"⭐ Рейтинг сейчас: <b>{round(player.rating, 1)}</b> pts — 🎖 {rank_title(player.rating)}",
     ]
+
+    narrative = _build_career_narrative(player, s)
+    if narrative:
+        lines.append("")
+        lines.append(narrative)
+
+    lines.append("")
+    lines.append(f"⭐ Рейтинг сейчас: <b>{round(player.rating, 1)}</b> pts — 🎖 {rank_title(player.rating)}")
     if player.peak_rating and player.peak_rating > player.rating:
         lines.append(f"📈 Пик за карьеру: <b>{round(player.peak_rating, 1)}</b> pts")
     if s["best_win"] is not None:
