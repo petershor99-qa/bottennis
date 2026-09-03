@@ -6,9 +6,10 @@
 """
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from html import escape as h
 
 from bot.services.achievements import ACHIEVEMENTS_MAP, get_achievements
-from bot.utils import match_rating_delta
+from bot.utils import match_rating_delta, pluralize_losses, pluralize_matches, pluralize_times
 
 
 def _compute_player_stats(player, all_matches: list) -> dict:
@@ -251,6 +252,93 @@ def _compute_player_stats(player, all_matches: list) -> dict:
         "lucky_day": lucky_day, "post_loss": post_loss,
         "favorite_score": favorite_score, "style_insight": style_insight,
     }
+
+
+# ── Career narrative (v2.112.0) ─────────────────────────────────────────────────
+# «Моя история» показывала сухой список цифр — по просьбе пользователя добавлен
+# абзац-репортаж перед ним, той же идеей, что match_report() (bot/utils.py):
+# склейка готовых фраз по доступным сигналам, а не генерация с нуля. Сигналы —
+# те же «умные советы» (lucky_day/post_loss/favorite_score/style_insight), что
+# уже показываются на «Статистике» отдельными строками; здесь — связным текстом.
+
+_DAY_LOCATIVE = {
+    "Пн": "понедельникам", "Вт": "вторникам", "Ср": "средам", "Чт": "четвергам",
+    "Пт": "пятницам", "Сб": "субботам", "Вс": "воскресеньям",
+}
+
+_OPENING_DOMINANT = [
+    "На столе тебе почти нет равных: винрейт держится на {wr}%.",
+    "Ты один из тех, с кем в клубе стараются не пересекаться лишний раз — {wr}% побед говорят сами за себя.",
+    "{wr}% побед — ты играешь в клубе на своей волне, редко кто может ответить.",
+]
+_OPENING_EVEN = [
+    "Ты играешь ровно — {wr}% побед, без резких взлётов и провалов.",
+    "На столе примерно фифти-фифти: {wr}% побед, борьба идёт на равных.",
+    "{wr}% побед — крепкий средний уровень, тут решает не рейтинг, а день.",
+]
+_OPENING_STRUGGLING = [
+    "Пока побеждать получается реже, чем хотелось бы — {wr}% побед, но каждая тем ценнее.",
+    "{wr}% побед — путь непростой, но ты продолжаешь выходить к столу.",
+    "На столе сейчас тяжело — {wr}% побед, но кто не проигрывал, тот не играл.",
+]
+
+
+def _build_career_narrative(player, s: dict) -> str | None:
+    """Абзац-репортаж по карьере игрока для «Моей истории» — вместо сухого
+    списка. None при < 5 матчей: слишком мало данных для честного портрета,
+    получилась бы либо пустая, либо натянутая на пустом месте фраза.
+    """
+    total = s["wins"] + s["draws"] + s["losses"]
+    if total < 5:
+        return None
+
+    wr = s["win_rate"]
+    pool = _OPENING_DOMINANT if wr >= 65 else _OPENING_EVEN if wr >= 45 else _OPENING_STRUGGLING
+    parts = [pool[player.id % len(pool)].format(wr=wr)]
+
+    if s["style_insight"]:
+        style, own_wr, other_wr = s["style_insight"]
+        if style == "sprinter":
+            parts.append(f"Короткие матчи — твоя стихия: {own_wr}% побед против {other_wr}% в затяжных.")
+        else:
+            parts.append(f"Ты марафонец: {own_wr}% побед в длинных матчах против {other_wr}% в скоротечных.")
+
+    if s["lucky_day"]:
+        day, day_wr = s["lucky_day"]
+        loc = _DAY_LOCATIVE.get(day, day)
+        parts.append(f"Особенно удачно играется по {loc} — {day_wr}% побед именно в этот день.")
+
+    if s["post_loss"]:
+        pl_wr, pl_n = s["post_loss"]
+        if pl_wr >= 50:
+            parts.append(
+                f"После поражений не раскисаешь — отыгрываешься в {pl_wr}% случаев "
+                f"(из {pluralize_matches(pl_n)})."
+            )
+        else:
+            parts.append(
+                f"После поражений тяжеловато вернуться в колею — только {pl_wr}% побед в следующем матче "
+                f"(из {pluralize_matches(pl_n)})."
+            )
+
+    if s["favorite_score"]:
+        score, cnt = s["favorite_score"]
+        parts.append(f"Любимый счёт партии — <b>{score}</b>, случался уже {pluralize_times(cnt)}.")
+
+    nemesis = s["nemesis"]
+    if nemesis and nemesis["losses"] >= 3:
+        parts.append(
+            f"Особый разговор — <b>{h(nemesis['name'])}</b>: "
+            f"{pluralize_losses(nemesis['losses'])} от одного соперника, есть над чем поработать."
+        )
+
+    if s["boss_fights_played"] > 0:
+        if player.is_champion:
+            parts.append("И прямо сейчас держишь трон клуба — попробуй его отними.")
+        elif s["boss_fights_won"] > 0:
+            parts.append(f"В боссфайтах уже {s['boss_fights_won']}/{s['boss_fights_played']} — трон видел твою силу.")
+
+    return " ".join(parts)
 
 
 # ── Achievement progress ──────────────────────────────────────────────────────

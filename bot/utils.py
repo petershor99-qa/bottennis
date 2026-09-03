@@ -151,6 +151,11 @@ def pluralize_defenses(n: int) -> str:
     return _ru_plural(n, "защита", "защиты", "защит")
 
 
+def pluralize_losses(n: int) -> str:
+    """1 поражение / 2 поражения / 5 поражений"""
+    return _ru_plural(n, "поражение", "поражения", "поражений")
+
+
 def pluralize_times(n: int) -> str:
     """1 раз / 2 раза / 5 раз"""
     return _ru_plural(n, "раз", "раза", "раз")
