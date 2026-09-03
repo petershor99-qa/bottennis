@@ -71,6 +71,7 @@ def stats_kb() -> InlineKeyboardMarkup:
     b.row(InlineKeyboardButton(text="📜 Вся история матчей", callback_data="history_0"))
     b.row(InlineKeyboardButton(text="📊 График рейтинга", callback_data="rating_chart"))
     b.row(InlineKeyboardButton(text="🔥 Активность", callback_data="activity_heatmap_me"))
+    b.row(InlineKeyboardButton(text="🎬 Моя история", callback_data="career_recap"))
     b.row(InlineKeyboardButton(text="🏅 Достижения", callback_data="my_achievements"))
     b.row(InlineKeyboardButton(text="📅 Сегодня", callback_data="menu_today"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
