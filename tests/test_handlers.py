@@ -361,6 +361,46 @@ async def test_challenge_screen_shows_free_players(db):
     assert any("Bob" in t for t in buttons)
 
 
+async def test_challenge_screen_rating_rounded_and_tie_broken_by_raw_rating(db):
+    """Рейтинг на экране «Вызвать на матч» — целое число (v2.115.0), но
+    сортировка списка остаётся по НЕОКРУГЛЁННОМУ рейтингу: если после
+    округления у двух соперников совпадает число очков, выше должен быть тот,
+    кто реально выше."""
+    me = _player(1, "Alice", 1000.0)
+    higher = _player(2, "Higher", 960.4)  # округлится в 960
+    lower = _player(3, "Lower", 959.6)    # тоже округлится в 960
+    db.add_all([me, higher, lower])
+    await db.commit()
+
+    cb = _callback(1, "menu_play")
+    await show_players_for_challenge(cb, db)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    buttons = [b.text for row in kb.inline_keyboard for b in row]
+    higher_idx = next(i for i, t in enumerate(buttons) if "Higher" in t)
+    lower_idx = next(i for i, t in enumerate(buttons) if "Lower" in t)
+    assert higher_idx < lower_idx
+    assert "960 pts" in buttons[higher_idx] and "960 pts" in buttons[lower_idx]
+    assert "959.6" not in buttons[lower_idx] and "960.4" not in buttons[higher_idx]
+
+
+async def test_challenge_screen_header_rounds_own_rating(db):
+    """«Твой рейтинг» в заголовке экрана вызова — тоже целое число (v2.115.0),
+    для единообразия с остальным списком на этом же экране."""
+    p1, p2 = _player(1, "Alice", 959.6), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "menu_play")
+    await show_players_for_challenge(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Твой рейтинг: <b>960</b> pts" in text
+    assert "959.6" not in text
+
+
 # ── do_cancel_match (отмена + уведомление + ачивка) ─────────────────────────────
 
 async def test_cancel_match_declines_and_notifies(db):
