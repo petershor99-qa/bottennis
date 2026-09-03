@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from bot.db.models import Base, ChampionReign, Match, MatchStatus, Player
 from bot.handlers.challenge import send_challenge, show_players_for_challenge
 from bot.handlers.history import show_h2h
-from bot.handlers.leaderboard import show_club_records, show_leaderboard
+from bot.handlers.leaderboard import show_club_records, show_hall_of_fame, show_leaderboard
 from bot.handlers.match_result import confirm_result, finish_sets
 from bot.handlers.profile import show_my_stats, show_player_profile
 from bot.keyboards.inline import players_list_kb, rematch_kb
@@ -28,8 +28,12 @@ from bot.utils import (
     compute_ranks,
     get_challenger,
     get_champion,
+    longest_awaited_revenge,
     longest_champion_reign,
     most_boss_fight_defenses,
+    most_throne_ascensions,
+    shortest_champion_reign,
+    steadiest_career,
     try_transfer_champion,
 )
 
@@ -1476,3 +1480,289 @@ async def test_stats_screen_omits_boss_fight_line_when_none_played(db):
 
     text = cb.message.edit_text.await_args.args[0]
     assert "Боссфайты" not in text
+
+
+# ── Новые рекорды клуба + Зал славы v2.108.0 ───────────────────────────────────
+
+# -- «Самое короткое правление» --
+
+async def test_shortest_champion_reign_picks_shortest_closed(db):
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=datetime(2026, 1, 20)))
+    db.add(ChampionReign(player_id=p2.id, started_at=datetime(2026, 2, 1), ended_at=datetime(2026, 2, 3)))
+    await db.commit()
+
+    result = await shortest_champion_reign(db)
+    assert result == (p2.id, 2)
+
+
+async def test_shortest_champion_reign_ignores_open_reign(db):
+    """Текущее незакрытое правление ещё растёт — сравнивать его как «короткое»
+    нечестно, поэтому оно не должно попадать в выборку."""
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=datetime(2026, 1, 20)))
+    db.add(ChampionReign(player_id=p2.id, started_at=datetime(2026, 2, 1), ended_at=None))
+    await db.commit()
+
+    result = await shortest_champion_reign(db)
+    assert result == (p1.id, 19)
+
+
+async def test_shortest_champion_reign_none_when_no_closed_reigns(db):
+    p1 = _player(1, "A")
+    db.add(p1)
+    await db.flush()
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=None))
+    await db.commit()
+
+    assert await shortest_champion_reign(db) is None
+
+
+# -- «Больше всего восхождений на трон» --
+
+async def test_most_throne_ascensions_counts_separate_reigns(db):
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=datetime(2026, 1, 5)))
+    db.add(ChampionReign(player_id=p2.id, started_at=datetime(2026, 1, 5), ended_at=datetime(2026, 1, 10)))
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 10), ended_at=None))
+    await db.commit()
+
+    result = await most_throne_ascensions(db)
+    assert result == (p1.id, 2)
+
+
+async def test_most_throne_ascensions_none_when_nobody_returned(db):
+    """Единственное восхождение каждого игрока — это не рекорд, просто факт
+    активации фичи, показывать нечего."""
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=datetime(2026, 1, 5)))
+    db.add(ChampionReign(player_id=p2.id, started_at=datetime(2026, 1, 5), ended_at=None))
+    await db.commit()
+
+    assert await most_throne_ascensions(db) is None
+
+
+# -- «Долгожданная месть» --
+
+async def test_longest_awaited_revenge_finds_biggest_gap(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p2.id, datetime(2026, 1, 1, 12, 0, 0)))  # Alice проиграла
+    db.add(_completed(p1, p2, p1.id, datetime(2026, 3, 1, 12, 0, 0)))  # Alice отомстила спустя 59 дней
+    await db.commit()
+
+    result = await longest_awaited_revenge(db)
+    assert result == (p1.id, p2.id, 59)
+
+
+async def test_longest_awaited_revenge_ignores_intervening_wins(db):
+    """Промежуточный матч с ДРУГИМ соперником разрыв не прерывает — считаются
+    только очные матчи именно этой пары."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    db.add(_completed(p1, p2, p2.id, datetime(2026, 1, 1, 12, 0, 0)))   # Alice проиграла Bob
+    db.add(_completed(p1, p3, p1.id, datetime(2026, 1, 5, 12, 0, 0)))   # Alice выиграла у Cara — не считается
+    db.add(_completed(p1, p2, p1.id, datetime(2026, 2, 1, 12, 0, 0)))   # Alice отомстила Bob спустя 31 день
+    await db.commit()
+
+    result = await longest_awaited_revenge(db)
+    assert result == (p1.id, p2.id, 31)
+
+
+async def test_longest_awaited_revenge_none_below_threshold(db):
+    """Меньше 7 дней между поражением и реваншем — не «долгожданная»."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p2.id, datetime(2026, 1, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p1.id, datetime(2026, 1, 3, 12, 0, 0)))
+    await db.commit()
+
+    assert await longest_awaited_revenge(db) is None
+
+
+async def test_longest_awaited_revenge_none_without_any_revenge(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p2.id, datetime(2026, 1, 1, 12, 0, 0)))
+    await db.commit()
+
+    assert await longest_awaited_revenge(db) is None
+
+
+# -- «Железные нервы» --
+
+async def test_steadiest_career_picks_lowest_volatility(db):
+    p1, p2 = _player(1, "Steady"), _player(2, "Volatile")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(NEWCOMER_THRESHOLD):
+        # Steady всегда выигрывает у Volatile ровно на одну и ту же дельту —
+        # чистый net без всякого "туда-обратно", волатильность ~0
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+            winner_id=p1.id, sets_data=[{"w": 11, "l": 5}], rating_change=5.0,
+            completed_at=datetime(2026, 1, 1 + i, 12, 0, 0),
+        ))
+    await db.commit()
+
+    result = await steadiest_career(db)
+    assert result is not None
+    assert result[0] == p1.id
+    assert result[1] == 0.0
+
+
+async def test_steadiest_career_respects_newcomer_threshold(db):
+    """Игрок с историей короче NEWCOMER_THRESHOLD не участвует — иначе более
+    короткая выборка искусственно выглядела бы «стабильнее»."""
+    p1, p2 = _player(1, "A"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, datetime(2026, 1, 1, 12, 0, 0)))
+    await db.commit()
+
+    assert await steadiest_career(db) is None
+
+
+# -- Рендер новых рекордов на экране «Рекорды клуба» --
+
+async def test_club_records_shows_shortest_reign(db):
+    p1, p2 = _player(1, "ShortReign"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, datetime(2026, 6, 1, 12, 0, 0)))
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=datetime(2026, 1, 3)))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Самое короткое правление" in text
+    assert "ShortReign" in text
+
+
+async def test_club_records_shows_throne_ascensions(db):
+    p1, p2 = _player(1, "Comeback"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, datetime(2026, 6, 1, 12, 0, 0)))
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=datetime(2026, 1, 5)))
+    db.add(ChampionReign(player_id=p2.id, started_at=datetime(2026, 1, 5), ended_at=datetime(2026, 1, 10)))
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 10), ended_at=None))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Больше всего восхождений на трон" in text
+    assert "Comeback" in text
+
+
+async def test_club_records_shows_longest_awaited_revenge(db):
+    p1, p2 = _player(1, "Avenger"), _player(2, "Bully")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p2.id, datetime(2026, 1, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p1.id, datetime(2026, 3, 1, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Долгожданная месть" in text
+    assert "Avenger" in text
+    assert "Bully" in text
+
+
+async def test_club_records_shows_steadiest_career(db):
+    p1, p2 = _player(1, "Steady"), _player(2, "B")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(NEWCOMER_THRESHOLD):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+            winner_id=p1.id, sets_data=[{"w": 11, "l": 5}], rating_change=5.0,
+            completed_at=datetime(2026, 1, 1 + i, 12, 0, 0),
+        ))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Железные нервы" in text
+    assert "Steady" in text
+
+
+# -- Зал славы: шапка с фактами + нарратив «как закончилось» --
+
+async def test_hall_of_fame_header_shows_facts(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=datetime(2026, 1, 3)))
+    db.add(ChampionReign(player_id=p2.id, started_at=datetime(2026, 1, 3), ended_at=None))
+    await db.commit()
+
+    cb = _callback(1, "hall_of_fame")
+    await show_hall_of_fame(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Смен трона: <b>2</b>" in text
+    assert "Самое короткое правление" in text
+
+
+async def test_hall_of_fame_narrative_no_boss_fight_match(db):
+    """Смена трона без соответствующего боссфайт-матча (совпадающего по
+    completed_at с ended_at) — авто-освобождение трона, без боя."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=datetime(2026, 1, 10)))
+    db.add(ChampionReign(player_id=p2.id, started_at=datetime(2026, 1, 10), ended_at=None))
+    await db.commit()
+
+    cb = _callback(1, "hall_of_fame")
+    await show_hall_of_fame(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "без боя" in text
+
+
+async def test_hall_of_fame_narrative_finds_boss_fight_match(db):
+    """Смена трона матчем-боссфайтом с completed_at == ended_at правления —
+    нарратив собирается через match_report() и упоминает победителя."""
+    p1, p2 = _player(1, "OldChamp"), _player(2, "NewChamp")
+    db.add_all([p1, p2])
+    await db.flush()
+    end_at = datetime(2026, 1, 10, 12, 0, 0)
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=end_at))
+    db.add(ChampionReign(player_id=p2.id, started_at=end_at, ended_at=None))
+    db.add(Match(
+        challenger_id=p2.id, challenged_id=p1.id, status=MatchStatus.completed,
+        winner_id=p2.id, is_boss_fight=True, sets_data=[{"w": 11, "l": 5}],
+        completed_at=end_at,
+    ))
+    await db.commit()
+
+    cb = _callback(1, "hall_of_fame")
+    await show_hall_of_fame(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Сверг" in text
+    assert "NewChamp" in text
+    assert "без боя" not in text

@@ -1432,7 +1432,11 @@ async def test_hall_of_fame_lists_reigns_newest_first(db):
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Зал славы" in text
-    assert text.index("Bob") < text.index("Alice")  # свежее правление первым
+    # шапка с фактами (шаг v2.108.0) может упомянуть Alice раньше по тексту
+    # (единственное закрытое правление — оно же и «самое короткое») — порядок
+    # проверяем только внутри списка правлений, после шапки
+    body = text.split("\n\n", 1)[1]
+    assert body.index("Bob") < body.index("Alice")  # свежее правление первым
     assert "сейчас" in text  # незакрытое правление Bob
 
 

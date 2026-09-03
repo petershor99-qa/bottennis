@@ -3,7 +3,7 @@ from html import escape as h
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,17 +15,23 @@ from bot.utils import (
     compute_alltime_streak,
     get_champion_and_challenger,
     get_player,
+    longest_awaited_revenge,
     longest_champion_reign,
     match_drama_reason,
     match_drama_score,
     match_rating_delta,
+    match_report,
     match_score_challenger_first,
     most_boss_fight_defenses,
+    most_throne_ascensions,
     msk_day_start,
     pluralize_days,
     pluralize_defenses,
     pluralize_matches,
+    pluralize_times,
     pluralize_wins,
+    shortest_champion_reign,
+    steadiest_career,
 )
 
 router = Router()
@@ -354,6 +360,46 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
                 f"🛡 Больше всего защит трона подряд — <b>{h(name_map.get(defense_player_id, '?'))}</b>: "
                 f"{pluralize_defenses(defense_count)}"
             )
+
+    # Самое короткое правление на #1 — антипод «Дольше всех лидировал»
+    short_reign = await shortest_champion_reign(session)
+    if short_reign is not None:
+        short_reign_pid, short_reign_days = short_reign
+        short_reign_str = "меньше дня" if short_reign_days == 0 else pluralize_days(short_reign_days)
+        volume_lines.append(
+            f"⏳ Самое короткое правление — <b>{h(name_map.get(short_reign_pid, '?'))}</b>: "
+            f"{short_reign_str}"
+        )
+
+    # Больше всего восхождений на трон — число ОТДЕЛЬНЫХ правлений, не длительность
+    ascensions = await most_throne_ascensions(session)
+    if ascensions is not None:
+        asc_pid, asc_count = ascensions
+        volume_lines.append(
+            f"🪜 Больше всего восхождений на трон — <b>{h(name_map.get(asc_pid, '?'))}</b>: "
+            f"{pluralize_times(asc_count)}"
+        )
+
+    # Железные нервы — наименьший разброс рейтинга за всю карьеру (антипод
+    # «Американских горок» из периодических дайджестов, но за карьеру целиком)
+    steadiest = await steadiest_career(session)
+    if steadiest is not None:
+        steady_pid, steady_val = steadiest
+        volume_lines.append(
+            f"🧘 Железные нервы — <b>{h(name_map.get(steady_pid, '?'))}</b>: "
+            f"рейтинг качает всего на {steady_val} pts/матч"
+        )
+
+    # Долгожданная месть — самый большой разрыв по времени между поражением и
+    # следующей победой над тем же соперником
+    revenge = await longest_awaited_revenge(session)
+    if revenge is not None:
+        avenger_id, opp_id, revenge_days = revenge
+        rivalry_lines.append(
+            f"⏰ Долгожданная месть — <b>{h(name_map.get(avenger_id, '?'))}</b> "
+            f"взял реванш у <b>{h(name_map.get(opp_id, '?'))}</b> спустя "
+            f"{pluralize_days(revenge_days)}"
+        )
 
     # Больше всего ничьих
     draw_count: dict[int, int] = {}
@@ -734,6 +780,31 @@ async def show_form_index(callback: CallbackQuery, session: AsyncSession):
 # использовались только для одного числа в рекордах клуба («Дольше всех
 # лидировал»), сам список правлений целиком нигде не показывался.
 
+async def _reign_end_narrative(session: AsyncSession, reign: ChampionReign, name_map: dict) -> str | None:
+    """Короткий нарратив «как закончилось правление» — кто сверг и насколько
+    драматично, переиспользует уже готовый match_report() на матче смены
+    трона. Матч ищем по совпадению completed_at с ended_at правления — их
+    связывает try_transfer_champion(), который передаёт at=match.completed_at
+    ровно в этот момент. Если такого матча нет — трон освободился
+    автоматически (scheduler.py, check_champion_auto_release, без боя)."""
+    if reign.ended_at is None:
+        return None
+    m_r = await session.execute(
+        select(Match).where(
+            Match.is_boss_fight == True,  # noqa: E712
+            Match.status == MatchStatus.completed,
+            Match.completed_at == reign.ended_at,
+            or_(Match.challenger_id == reign.player_id, Match.challenged_id == reign.player_id),
+            Match.winner_id != reign.player_id,
+        ).limit(1)
+    )
+    m = m_r.scalar_one_or_none()
+    if m is None:
+        return "Трон отошёл без боя — чемпион давно не защищался."
+    winner_name = name_map.get(m.winner_id, "?")
+    return f"Сверг {h(winner_name)}: {match_report(m, winner_name)}"
+
+
 @router.callback_query(F.data == "hall_of_fame")
 async def show_hall_of_fame(callback: CallbackQuery, session: AsyncSession):
     await callback.answer()
@@ -753,7 +824,19 @@ async def show_hall_of_fame(callback: CallbackQuery, session: AsyncSession):
     players_r = await session.execute(select(Player))
     name_map = {p.id: p.display_name for p in players_r.scalars().all()}
 
-    lines = ["🏛 <b>Зал славы</b>\n"]
+    # Шапка с яркими фактами — сколько всего было смен трона + самое короткое
+    # правление (та же метрика, что и в «Рекордах клуба», здесь — для контекста
+    # прямо над списком, чтобы не заставлять читателя листать список самому)
+    header_facts = [f"Смен трона: <b>{len(reigns)}</b>"]
+    short_reign = await shortest_champion_reign(session)
+    if short_reign is not None:
+        short_pid, short_days = short_reign
+        short_str = "меньше дня" if short_days == 0 else pluralize_days(short_days)
+        header_facts.append(
+            f"Самое короткое правление: <b>{h(name_map.get(short_pid, '?'))}</b> ({short_str})"
+        )
+
+    lines = ["🏛 <b>Зал славы</b>", "  •  ".join(header_facts), ""]
     for reign in reigns:
         name = h(name_map.get(reign.player_id, "?"))
         start_str = reign.started_at.strftime("%d.%m.%y")
@@ -764,8 +847,12 @@ async def show_hall_of_fame(callback: CallbackQuery, session: AsyncSession):
             days = (reign.ended_at - reign.started_at).days
             days_str = "меньше дня" if days == 0 else pluralize_days(days)
             lines.append(f"👑 <b>{name}</b> — {start_str} – {end_str}  <i>({days_str})</i>")
+            narrative = await _reign_end_narrative(session, reign, name_map)
+            if narrative:
+                lines.append(f"<i>{narrative}</i>")
+        lines.append("")
 
     await callback.message.edit_text(
-        "\n".join(lines),
+        "\n".join(lines).rstrip(),
         reply_markup=back_to_leaderboard_kb(),
     )
