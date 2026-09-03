@@ -1727,6 +1727,33 @@ def test_today_button_moved_from_leaderboard_to_stats_kb():
     assert "menu_today" in stats_callbacks
 
 
+def test_stats_kb_grouped_two_per_row():
+    """6 экранных ссылок на «Статистике» сгруппированы по 2 в ряд (v2.114.0),
+    не растянуты в столбец на 7 строк — по прямой просьбе пользователя."""
+    from bot.keyboards.inline import stats_kb
+
+    rows = stats_kb().inline_keyboard
+    link_rows = rows[:-1]  # последняя строка — одиночная «« В меню»
+    assert all(len(row) == 2 for row in link_rows)
+    all_callbacks = {btn.callback_data for row in rows for btn in row}
+    assert all_callbacks == {
+        "history_0", "rating_chart", "activity_heatmap_me", "career_recap",
+        "my_achievements", "menu_today", "back_to_menu",
+    }
+
+
+def test_leaderboard_kb_extra_links_grouped_two_per_row():
+    """4 доп.экрана под таблицей рейтинга сгруппированы по 2 в ряд, не в
+    столбец (v2.114.0)."""
+    from bot.keyboards.inline import leaderboard_kb
+
+    rows = leaderboard_kb([]).inline_keyboard
+    link_rows = rows[:-1]
+    assert all(len(row) == 2 for row in link_rows)
+    all_callbacks = {btn.callback_data for row in rows for btn in row}
+    assert all_callbacks == {"club_records", "dominance_matrix", "form_index", "hall_of_fame", "back_to_menu"}
+
+
 async def test_today_screen_back_button_returns_to_stats(db):
     """После переноса кнопки «« К рейтингу» на этом экране вела бы не туда,
     откуда пришёл пользователь — теперь ведёт обратно на «Статистику»."""

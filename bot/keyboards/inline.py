@@ -66,14 +66,25 @@ def back_to_menu_kb() -> InlineKeyboardMarkup:
 
 
 def stats_kb() -> InlineKeyboardMarkup:
-    """Клавиатура под экраном статистики."""
+    """Клавиатура под экраном статистики.
+
+    По 2 кнопки в ряд (v2.114.0) — 6 экранных ссылок в один столбец растягивали
+    экран на 7 строк, читалось хуже, чем сгруппированное. Подписи сокращены
+    (полные названия — в тексте самих экранов, тут только ярлыки для навигации).
+    """
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="📜 Вся история матчей", callback_data="history_0"))
-    b.row(InlineKeyboardButton(text="📊 График рейтинга", callback_data="rating_chart"))
-    b.row(InlineKeyboardButton(text="🔥 Активность", callback_data="activity_heatmap_me"))
-    b.row(InlineKeyboardButton(text="🎬 Моя история", callback_data="career_recap"))
-    b.row(InlineKeyboardButton(text="🏅 Достижения", callback_data="my_achievements"))
-    b.row(InlineKeyboardButton(text="📅 Сегодня", callback_data="menu_today"))
+    b.row(
+        InlineKeyboardButton(text="📜 История", callback_data="history_0"),
+        InlineKeyboardButton(text="📊 Рейтинг", callback_data="rating_chart"),
+    )
+    b.row(
+        InlineKeyboardButton(text="🔥 Активность", callback_data="activity_heatmap_me"),
+        InlineKeyboardButton(text="🎬 Обо мне", callback_data="career_recap"),
+    )
+    b.row(
+        InlineKeyboardButton(text="🏅 Достижения", callback_data="my_achievements"),
+        InlineKeyboardButton(text="📅 Сегодня", callback_data="menu_today"),
+    )
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
 
@@ -207,7 +218,10 @@ def after_set_kb(match_id: int, has_sets: bool) -> InlineKeyboardMarkup:
 
 
 def leaderboard_kb(players) -> InlineKeyboardMarkup:
-    """Клавиатура под таблицей рейтинга — кнопки профилей игроков."""
+    """Клавиатура под таблицей рейтинга — кнопки профилей игроков.
+
+    4 экранных ссылки ниже сгруппированы по 2 в ряд и с сокращёнными подписями
+    (v2.114.0) — тот же приём и мотивация, что у stats_kb ниже."""
     b = InlineKeyboardBuilder()
     btns = [
         InlineKeyboardButton(
@@ -218,10 +232,14 @@ def leaderboard_kb(players) -> InlineKeyboardMarkup:
     ]
     for i in range(0, len(btns), 2):
         b.row(*btns[i:i + 2])
-    b.row(InlineKeyboardButton(text="🏆 Рекорды клуба", callback_data="club_records"))
-    b.row(InlineKeyboardButton(text="⚔️ Матрица доминирования", callback_data="dominance_matrix"))
-    b.row(InlineKeyboardButton(text="🌡 Индекс формы", callback_data="form_index"))
-    b.row(InlineKeyboardButton(text="🏛 Зал славы", callback_data="hall_of_fame"))
+    b.row(
+        InlineKeyboardButton(text="🏆 Рекорды", callback_data="club_records"),
+        InlineKeyboardButton(text="⚔️ Матрица", callback_data="dominance_matrix"),
+    )
+    b.row(
+        InlineKeyboardButton(text="🌡 Индекс", callback_data="form_index"),
+        InlineKeyboardButton(text="🏛 Трон", callback_data="hall_of_fame"),
+    )
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
 
