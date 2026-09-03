@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import selectinload, sessionmaker
 
-from bot.db.models import Base, ChampionReign, Match, MatchStatus, Player
+from bot.db.models import Base, ChampionReign, Match, MatchStatus, PersonalRecordEarned, Player
 from bot.handlers.challenge import do_cancel_match, send_challenge, show_players_for_challenge
 from bot.handlers.match_result import (
     _send_h2h_milestone_egg,
@@ -3554,3 +3554,89 @@ async def test_reply_kb_stats_button_without_registration(db):
 
     text = msg.answer.call_args.args[0]
     assert "/start" in text
+
+
+# ── Карьер-рекап v2.108.0 ────────────────────────────────────────────────────
+
+async def test_career_recap_requires_registration(db):
+    from bot.handlers.profile import show_career_recap
+
+    cb = _callback(1, "career_recap")
+    await show_career_recap(cb, db)
+
+    cb.answer.assert_awaited_once()
+    assert cb.answer.call_args.args[0] == "Сначала напиши /start"
+
+
+async def test_career_recap_empty_when_no_matches(db):
+    from bot.handlers.profile import show_career_recap
+
+    db.add(_player(1, "Alice"))
+    await db.commit()
+
+    cb = _callback(1, "career_recap")
+    await show_career_recap(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Моя история" in text
+    assert "первый матч" in text
+
+
+async def test_career_recap_shows_totals_and_rank(db):
+    from bot.handlers.profile import show_career_recap
+
+    p1, p2 = _player(1, "Alice", 1200.0), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p2.id, 10.0, datetime(2026, 6, 2, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "career_recap")
+    await show_career_recap(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Моя история — Alice" in text
+    assert "2 матча" in text
+    assert "🎖" in text  # звание
+    assert "Ачивок открыто" in text
+    assert "Личных рекордов покорено" in text
+
+
+async def test_career_recap_shows_peak_only_above_current(db):
+    from bot.handlers.profile import show_career_recap
+
+    p1, p2 = _player(1, "Alice", 1000.0), _player(2, "Bob")
+    p1.peak_rating = 1050.0
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "career_recap")
+    await show_career_recap(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Пик за карьеру" in text
+    assert "1050" in text
+
+
+async def test_career_recap_counts_distinct_personal_records(db):
+    """Метрику можно побить несколько раз — считаем УНИКАЛЬНЫЕ метрики, не строки."""
+    from bot.handlers.profile import show_career_recap
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+    db.add(PersonalRecordEarned(player_id=p1.id, metric="win_streak", value=2.0, earned_at=datetime(2026, 6, 1)))
+    db.add(PersonalRecordEarned(player_id=p1.id, metric="win_streak", value=3.0, earned_at=datetime(2026, 6, 5)))
+    db.add(PersonalRecordEarned(player_id=p1.id, metric="wins_per_day", value=2.0, earned_at=datetime(2026, 6, 2)))
+    await db.commit()
+
+    cb = _callback(1, "career_recap")
+    await show_career_recap(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Личных рекордов покорено: <b>2/7</b>" in text

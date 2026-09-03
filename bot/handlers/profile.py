@@ -2,12 +2,13 @@ from html import escape as h
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import Player
+from bot.db.models import PersonalRecordEarned, Player
 from bot.keyboards.inline import (
     achievements_kb,
+    back_to_stats_kb,
     player_achievements_kb,
     player_profile_kb,
     stats_kb,
@@ -29,6 +30,7 @@ from bot.utils import (
     get_career_matches,
     get_match_counts,
     get_player,
+    pluralize_matches,
     rank_title,
 )
 
@@ -313,6 +315,76 @@ async def show_my_stats_from_reply_kb(message: Message, session: AsyncSession):
         return
     text, kb = await _build_stats_screen(session, player)
     await message.answer(text, reply_markup=kb)
+
+
+# ── Карьер-рекап ──────────────────────────────────────────────────────────────
+# «Highlight reel» по запросу в любое время — та же идея, что у «Итогов года»
+# (scheduler.py, send_yearly_summary), но не привязана к календарю: пользователь
+# явно попросил доступ круглый год, не раз в 31 декабря. Собирается ИЗ уже
+# посчитанных _compute_player_stats() полей, кроме двух новых источников —
+# числа заработанных ачивок (get_achievements) и числа уникальных ПОБИТЫХ
+# личных рекордов (PersonalRecordEarned, distinct по metric — метрику можно
+# бить многократно, но в рекапе интересно, СКОЛЬКО ИЗ 7 хоть раз покорились).
+
+@router.callback_query(F.data == "career_recap")
+async def show_career_recap(callback: CallbackQuery, session: AsyncSession):
+    player = await get_player(session, callback.from_user.id)
+    if not player:
+        await callback.answer("Сначала напиши /start", show_alert=True)
+        return
+    await callback.answer()
+
+    all_matches = await get_career_matches(session, player.id, with_opponents=True)
+    if not all_matches:
+        await callback.message.edit_text(
+            f"🎬 <b>Моя история — {h(player.display_name)}</b>\n\n"
+            f"Пока рассказывать нечего — сыграй свой первый матч! 🏓",
+            reply_markup=back_to_stats_kb(),
+        )
+        return
+
+    s = _compute_player_stats(player, all_matches)
+    total = s["wins"] + s["draws"] + s["losses"]
+    joined_str = player.created_at.strftime("%d.%m.%y") if player.created_at else "неизвестно когда"
+
+    earned_ids = get_achievements(player)
+    achievements_line = f"🏅 Ачивок открыто: <b>{len(earned_ids)}/{len(ACHIEVEMENTS_LIST)}</b>"
+
+    pr_r = await session.execute(
+        select(func.count(func.distinct(PersonalRecordEarned.metric)))
+        .where(PersonalRecordEarned.player_id == player.id)
+    )
+    pr_count = pr_r.scalar() or 0
+    pr_line = f"💎 Личных рекордов покорено: <b>{pr_count}/7</b>"
+
+    draws_part = f" / <b>{s['draws']}</b> ничьих" if s["draws"] > 0 else ""
+    lines = [
+        f"🎬 <b>Моя история — {h(player.display_name)}</b>\n",
+        f"В клубе с <b>{joined_str}</b>. Позади <b>{pluralize_matches(total)}</b>: "
+        f"<b>{s['wins']}</b> побед / <b>{s['losses']}</b> поражений{draws_part} "
+        f"(<b>{s['win_rate']}%</b> винрейт).",
+        "",
+        f"⭐ Рейтинг сейчас: <b>{round(player.rating, 1)}</b> pts — 🎖 {rank_title(player.rating)}",
+    ]
+    if player.peak_rating and player.peak_rating > player.rating:
+        lines.append(f"📈 Пик за карьеру: <b>{round(player.peak_rating, 1)}</b> pts")
+    if s["best_win"] is not None:
+        lines.append(f"🏆 Лучшая победа: <b>+{s['best_win']} pts</b>")
+    if s["best_streak"] >= 2:
+        lines.append(f"🔥 Лучшая серия: <b>{s['best_streak']} побед подряд</b>")
+    if s["best_opp"]:
+        lines.append(f"🎁 Подарок: <b>{h(s['best_opp']['name'])}</b> ({s['best_opp']['wins']} побед)")
+    if s["nemesis"]:
+        lines.append(f"😱 Кошмар: <b>{h(s['nemesis']['name'])}</b> ({s['nemesis']['losses']} поражений)")
+    if s["boss_fights_played"] > 0:
+        lines.append(f"⚔️ Боссфайты: <b>{s['boss_fights_won']}/{s['boss_fights_played']}</b>")
+    if player.is_champion:
+        lines.append("👑 Прямо сейчас на троне клуба.")
+    lines.append("")
+    lines.append(achievements_line)
+    lines.append(pr_line)
+
+    await callback.message.edit_text("\n".join(lines), reply_markup=back_to_stats_kb())
 
 
 # ── Player profile (public view) ──────────────────────────────────────────────
