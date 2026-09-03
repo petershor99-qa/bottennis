@@ -132,7 +132,7 @@ async def _build_challenge_screen(session: AsyncSession, telegram_id: int):
         my_rank = rank_map[current_player.id]
         header = (
             f"Кого хочешь вызвать? 🏓\n"
-            f"Твой рейтинг: <b>{round(current_player.rating, 1)}</b> pts "
+            f"Твой рейтинг: <b>{round(current_player.rating)}</b> pts "
             f"(#{my_rank} из {len(rank_map)})"
         )
     else:
