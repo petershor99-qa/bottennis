@@ -1,4 +1,4 @@
 # Зависимости для разработки и CI (не нужны для самого бота)
-pytest
-pytest-asyncio
+pytest==9.0.3
+pytest-asyncio==1.4.0
 ruff==0.15.15
