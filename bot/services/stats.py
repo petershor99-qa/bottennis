@@ -141,6 +141,92 @@ def _compute_player_stats(player, all_matches: list) -> dict:
     else:
         best_day, best_day_count = None, 0
 
+    # ── «Умные советы» v2.108.0 — персональные инсайты из уже собранной
+    # истории, без новой инфраструктуры. Каждый показывается только при
+    # достаточной выборке — тот же принцип порогов, что у остальных пунктов
+    # этой функции (top_opp>=2, диплом от 5 ничьих и т.д.).
+
+    # Счастливый день — винрейт по дню недели (НЕ путать с best_day выше,
+    # тот про самый ИГРАЕМЫЙ день, этот — про самый ПОБЕДНЫЙ)
+    day_wins: dict[int, int] = {}
+    day_totals: dict[int, int] = {}
+    for m in all_matches:
+        if not m.completed_at:
+            continue
+        wd = m.completed_at.weekday()
+        day_totals[wd] = day_totals.get(wd, 0) + 1
+        if m.winner_id == player.id:
+            day_wins[wd] = day_wins.get(wd, 0) + 1
+    lucky_day = None
+    best_wr = -1.0
+    for wd, total in day_totals.items():
+        if total < 3:
+            continue
+        wr = day_wins.get(wd, 0) / total
+        if wr > best_wr:
+            best_wr = wr
+            lucky_day = (_day_names[wd], int(round(wr * 100)))
+
+    # Момент-анализ — как играешь в матче СРАЗУ ПОСЛЕ поражения
+    matches_chrono = list(reversed(all_matches))  # all_matches — desc(completed_at)
+    after_loss_wins = after_loss_total = 0
+    for i in range(1, len(matches_chrono)):
+        prev, cur = matches_chrono[i - 1], matches_chrono[i]
+        if prev.winner_id is not None and prev.winner_id != player.id:
+            after_loss_total += 1
+            if cur.winner_id == player.id:
+                after_loss_wins += 1
+    post_loss = (
+        (int(round(after_loss_wins / after_loss_total * 100)), after_loss_total)
+        if after_loss_total >= 3 else None
+    )
+
+    # Любимый счёт — самый частый точный счёт ВЫИГРАННОЙ партии (с перспективы игрока)
+    won_set_scores: Counter = Counter()
+    for m in all_matches:
+        if not m.sets_data:
+            continue
+        i_am_ch = m.challenger_id == player.id
+        i_am_winner = m.winner_id == player.id
+        i_am_favored = i_am_ch if m.winner_id is None else i_am_winner
+        for s in m.sets_data:
+            won_this_set = (
+                (i_am_ch and s["w"] > s["l"]) or (not i_am_ch and s["l"] > s["w"])
+                if m.winner_id is None else
+                (i_am_winner and s["w"] > s["l"]) or (not i_am_winner and s["l"] > s["w"])
+            )
+            if won_this_set:
+                my_score = (s["w"], s["l"]) if i_am_favored else (s["l"], s["w"])
+                won_set_scores[my_score] += 1
+    favorite_score = None
+    if won_set_scores:
+        (fw, fl), cnt = won_set_scores.most_common(1)[0]
+        if cnt >= 2:
+            favorite_score = (f"{fw}:{fl}", cnt)
+
+    # Спринтер vs марафонец — винрейт в коротких (1 партия) vs длинных (3+) матчах
+    short_wins = short_total = long_wins = long_total = 0
+    for m in all_matches:
+        if not m.sets_data:
+            continue
+        n = len(m.sets_data)
+        won = m.winner_id == player.id
+        if n == 1:
+            short_total += 1
+            short_wins += won
+        elif n >= 3:
+            long_total += 1
+            long_wins += won
+    style_insight = None
+    if short_total >= 3 and long_total >= 3:
+        short_wr = short_wins / short_total * 100
+        long_wr = long_wins / long_total * 100
+        if abs(short_wr - long_wr) >= 15:
+            style_insight = (
+                ("sprinter", round(short_wr), round(long_wr)) if short_wr > long_wr
+                else ("marathoner", round(long_wr), round(short_wr))
+            )
+
     return {
         "wins": wins, "draws": draws, "losses": losses,
         "win_rate": int(wins / len(all_matches) * 100) if all_matches else 0,
@@ -162,6 +248,8 @@ def _compute_player_stats(player, all_matches: list) -> dict:
         "trend_30d": trend_30d, "trend_30d_matches": len(recent_30),
         "deuce_total": deuce_total, "deuce_won": deuce_won,
         "sets_won": sets_won, "career_points": career_points,
+        "lucky_day": lucky_day, "post_loss": post_loss,
+        "favorite_score": favorite_score, "style_insight": style_insight,
     }
 
 

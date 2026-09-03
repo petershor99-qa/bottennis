@@ -277,6 +277,57 @@ async def check_champion_auto_release(bot: Bot) -> None:
         logger.info("Авто-освобождение трона: %s → %s", old_champion_name, heir.display_name)
 
 
+THRONE_CRACKING_GAP = 20.0  # порог разрыва (pts) для уведомления «Трон трещит»
+
+
+async def check_throne_cracking(bot: Bot) -> None:
+    """Раз в час (тем же интервалом, что напоминания/авто-освобождение):
+    если кто-то ПОДБИРАЕТСЯ К ЧЕМПИОНУ СНИЗУ (рейтинг ниже чемпионского, но
+    разрыв <THRONE_CRACKING_GAP) — приватное уведомление чемпиону.
+
+    ВАЖНО: это НЕ get_challenger() — тот возвращает игрока, чей рейтинг УЖЕ
+    строго выше чемпионского (официальный претендент, боссфайт уже действует
+    на их будущие матчи). «Трон трещит» — заблаговременное предупреждение ДО
+    этого момента: кто-то ещё НИЖЕ чемпиона, но близко подошёл и вот-вот сам
+    станет официальным претендентом. Порог NEWCOMER_THRESHOLD матчей — та же
+    планка, что и у права на статус претендента, иначе предупреждали бы про
+    случайного новичка с 3 матчами, который явно не реальная угроза.
+
+    Уведомляет КАЖДЫЙ раз, когда джоба видит разрыв ниже порога — без
+    отдельного флага «уже предупреждали» в БД. Если разрыв то расширяется, то
+    снова сужается, чемпион может получить несколько уведомлений подряд по
+    разным часам — осознанно принятый компромисс простоты (согласовано с
+    пользователем: доп. поле на Player ради дедупликации сочли лишней
+    сложностью для 5-игрокового клуба)."""
+    async with async_session() as session:
+        champion = await get_champion(session)
+        if champion is None:
+            return
+        counts = await get_match_counts(session)
+        players_r = await session.execute(select(Player))
+        candidates = [
+            p for p in players_r.scalars().all()
+            if p.id != champion.id
+            and p.rating < champion.rating
+            and counts.get(p.id, 0) >= NEWCOMER_THRESHOLD
+        ]
+        if not candidates:
+            return
+        chaser = max(candidates, key=lambda p: p.rating)
+        gap = round(champion.rating - chaser.rating, 1)
+        if gap <= 0 or gap >= THRONE_CRACKING_GAP:
+            return
+        try:
+            await bot.send_message(
+                champion.telegram_id,
+                f"👑 <b>Трон трещит</b>\n\n"
+                f"<b>{h(chaser.display_name)}</b> отстаёт всего на <b>{gap} pts</b> — "
+                f"будь готов защищаться.",
+            )
+        except Exception:
+            pass
+
+
 # ── Еженедельный дайджест ─────────────────────────────────────────────────────
 
 
@@ -1259,6 +1310,14 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         IntervalTrigger(hours=1),
         args=[bot],
         id="champion_auto_release",
+    )
+
+    # «Трон трещит» — тем же часовым интервалом
+    scheduler.add_job(
+        check_throne_cracking,
+        IntervalTrigger(hours=1),
+        args=[bot],
+        id="throne_cracking",
     )
 
     # ВАЖНО: каждому CronTrigger таймзона задаётся явно. CronTrigger без аргумента

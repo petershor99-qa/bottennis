@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import selectinload, sessionmaker
 
-from bot.db.models import Base, ChampionReign, Match, MatchStatus, Player
+from bot.db.models import Base, ChampionReign, Match, MatchStatus, PersonalRecordEarned, Player
 from bot.handlers.challenge import do_cancel_match, send_challenge, show_players_for_challenge
 from bot.handlers.match_result import (
     _send_h2h_milestone_egg,
@@ -691,6 +691,8 @@ def _full_stats(**overrides) -> dict:
         "boss_fights_played": 0, "boss_fights_won": 0,
         "trend_30d": None, "trend_30d_matches": 0,
         "deuce_total": 0, "deuce_won": 0,
+        "lucky_day": None, "post_loss": None,
+        "favorite_score": None, "style_insight": None,
     }
     base.update(overrides)
     return base
@@ -836,6 +838,194 @@ async def test_compute_stats_deuce_counts_total_and_won(db):
     # партия 1 (12:10) — на дьюсе, p1 выиграл; партия 2 (10:12) — на дьюсе, p1 проиграл
     assert s["deuce_total"] == 2
     assert s["deuce_won"] == 1
+
+
+# ── «Умные советы» v2.108.0 ──────────────────────────────────────────────────
+
+async def test_compute_stats_lucky_day_picks_highest_win_rate_weekday(db):
+    """Счастливый день — по винрейту, НЕ по числу матчей (это best_day)."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    # Понедельник (weekday=0): 3 матча, 3 победы — 100%
+    for d in (5, 12, 19):  # три понедельника января 2026
+        db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 1, d, 12, 0, 0)))
+    # Вторник (weekday=1): 3 матча, 1 победа — 33%
+    for i, d in enumerate((6, 13, 20)):
+        winner = p1.id if i == 0 else p2.id
+        db.add(_completed(p1, p2, winner, 5.0, datetime(2026, 1, d, 12, 0, 0)))
+    await db.commit()
+
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["lucky_day"] == ("Пн", 100)
+
+
+def test_compute_stats_lucky_day_none_below_sample_threshold():
+    """Меньше 3 матчей на день недели — недостаточно данных."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    p1.id, p2.id = 1, 2
+    m = _completed(p1, p2, p1.id, 5.0, datetime(2026, 1, 5, 12, 0, 0))
+    m.challenger, m.challenged = p1, p2
+    s = _compute_player_stats(p1, [m])
+    assert s["lucky_day"] is None
+
+
+async def test_compute_stats_post_loss_win_rate(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    # Alice: проигрыш, победа, проигрыш, победа, проигрыш, победа — 3 матча
+    # сразу после поражения, все 3 — победы: 100%
+    results = [p2.id, p1.id, p2.id, p1.id, p2.id, p1.id]
+    for i, winner in enumerate(results):
+        db.add(_completed(p1, p2, winner, 5.0, datetime(2026, 1, 1 + i, 12, 0, 0)))
+    await db.commit()
+
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+        .order_by(Match.completed_at.desc())
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["post_loss"] == (100, 3)
+
+
+async def test_compute_stats_post_loss_none_below_threshold(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p2.id, 5.0, datetime(2026, 1, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 1, 2, 12, 0, 0)))
+    await db.commit()
+
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["post_loss"] is None
+
+
+async def test_compute_stats_favorite_score_most_common_won_set(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(2):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+            winner_id=p1.id, sets_data=[{"w": 11, "l": 7}], rating_change=5.0,
+            completed_at=datetime(2026, 1, 1 + i, 12, 0, 0),
+        ))
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id, sets_data=[{"w": 11, "l": 3}], rating_change=5.0,
+        completed_at=datetime(2026, 1, 3, 12, 0, 0),
+    ))
+    await db.commit()
+
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["favorite_score"] == ("11:7", 2)
+
+
+async def test_compute_stats_style_insight_sprinter(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    # Короткие матчи (1 партия): 3 победы из 3 — 100%
+    for i in range(3):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+            winner_id=p1.id, sets_data=[{"w": 11, "l": 5}], rating_change=5.0,
+            completed_at=datetime(2026, 1, 1 + i, 12, 0, 0),
+        ))
+    # Длинные матчи (3 партии): 0 побед из 3 — 0%
+    for i in range(3):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+            winner_id=p2.id,
+            sets_data=[{"w": 5, "l": 11}, {"w": 5, "l": 11}, {"w": 5, "l": 11}],
+            rating_change=5.0, completed_at=datetime(2026, 2, 1 + i, 12, 0, 0),
+        ))
+    await db.commit()
+
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["style_insight"] == ("sprinter", 100, 0)
+
+
+async def test_compute_stats_style_insight_none_when_close(db):
+    """Разница винрейта короткие/длинные <15pp — не показываем, недостаточно ярко."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(3):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+            winner_id=p1.id, sets_data=[{"w": 11, "l": 5}], rating_change=5.0,
+            completed_at=datetime(2026, 1, 1 + i, 12, 0, 0),
+        ))
+    for i in range(3):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+            winner_id=p1.id,
+            sets_data=[{"w": 11, "l": 5}, {"w": 5, "l": 11}, {"w": 11, "l": 5}],
+            rating_change=5.0, completed_at=datetime(2026, 2, 1 + i, 12, 0, 0),
+        ))
+    await db.commit()
+
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["style_insight"] is None
+
+
+def test_render_stats_lines_shows_lucky_day():
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    lines = _render_stats_lines(p, _full_stats(lucky_day=("Пн", 100)))
+    assert any("Счастливый день" in ln and "Пн" in ln for ln in lines)
+
+
+def test_render_stats_lines_shows_post_loss_bounce_back():
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    lines = _render_stats_lines(p, _full_stats(post_loss=(80, 5)))
+    assert any("отыгрываешься" in ln for ln in lines)
+
+
+def test_render_stats_lines_shows_post_loss_struggle():
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    lines = _render_stats_lines(p, _full_stats(post_loss=(20, 5)))
+    assert any("тяжело" in ln for ln in lines)
+
+
+def test_render_stats_lines_shows_favorite_score():
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    lines = _render_stats_lines(p, _full_stats(favorite_score=("11:7", 4)))
+    assert any("Любимый счёт" in ln and "11:7" in ln for ln in lines)
+
+
+def test_render_stats_lines_shows_sprinter():
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    lines = _render_stats_lines(p, _full_stats(style_insight=("sprinter", 90, 40)))
+    assert any("спринтер" in ln for ln in lines)
+
+
+def test_render_stats_lines_shows_marathoner():
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    lines = _render_stats_lines(p, _full_stats(style_insight=("marathoner", 90, 40)))
+    assert any("марафонец" in ln for ln in lines)
 
 
 # ── _rank_gap_line ────────────────────────────────────────────────────────────
@@ -1432,7 +1622,11 @@ async def test_hall_of_fame_lists_reigns_newest_first(db):
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Зал славы" in text
-    assert text.index("Bob") < text.index("Alice")  # свежее правление первым
+    # шапка с фактами (шаг v2.108.0) может упомянуть Alice раньше по тексту
+    # (единственное закрытое правление — оно же и «самое короткое») — порядок
+    # проверяем только внутри списка правлений, после шапки
+    body = text.split("\n\n", 1)[1]
+    assert body.index("Bob") < body.index("Alice")  # свежее правление первым
     assert "сейчас" in text  # незакрытое правление Bob
 
 
@@ -2723,6 +2917,134 @@ async def test_confirm_result_veteran_floor_is_900(db):
     assert p2.rating >= 900.0 - 1e-9
 
 
+# ── Мгновенные вехи по матчам/очкам v2.110.0 ─────────────────────────────────
+
+async def test_match_milestone_fires_at_100th_match(db):
+    p1, p2 = _player(1, "Winner"), _player(2, "Loser")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(99):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.completed, winner_id=p1.id,
+            sets_data=[{"w": 11, "l": 0}], rating_change=5.0,
+            completed_at=datetime(2026, 1, 1) + timedelta(hours=i),
+        ))
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 0}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    texts = [c.args[1] for c in bot.send_message.call_args_list]
+    assert any("100-й матч в клубе" in t for t in texts)
+
+
+async def test_match_milestone_skips_500_already_covered_by_achievement(db):
+    p1, p2 = _player(1, "Winner"), _player(2, "Loser")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(499):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.completed, winner_id=p1.id,
+            sets_data=[{"w": 11, "l": 0}], rating_change=5.0,
+            completed_at=datetime(2026, 1, 1) + timedelta(hours=i),
+        ))
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 0}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    texts = [c.args[1] for c in bot.send_message.call_args_list]
+    assert not any("500-й матч в клубе" in t for t in texts)
+
+
+async def test_points_milestone_fires_on_crossing_500(db):
+    """45 предыдущих матчей по 11 очков (495 очков), финальный матч добавляет
+    ещё 11 — переход через границу 500 (495 → 506)."""
+    p1, p2 = _player(1, "Winner"), _player(2, "Loser")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(45):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.completed, winner_id=p1.id,
+            sets_data=[{"w": 11, "l": 0}], rating_change=5.0,
+            completed_at=datetime(2026, 1, 1) + timedelta(hours=i),
+        ))
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 0}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    texts = [c.args[1] for c in bot.send_message.call_args_list]
+    assert any("500 очков за карьеру" in t for t in texts)
+
+
+async def test_points_milestone_skips_4000_already_covered_by_achievement(db):
+    """364 предыдущих матча по 11 очков = 4004, крайний ДО финального — 3993
+    (< 4000), финальный доводит до 4004, пересекая ровно веху 4000 —
+    пропускаем, т.к. её уже празднует ачивка "Копил по очку"."""
+    p1, p2 = _player(1, "Winner"), _player(2, "Loser")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(363):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.completed, winner_id=p1.id,
+            sets_data=[{"w": 11, "l": 0}], rating_change=5.0,
+            completed_at=datetime(2026, 1, 1) + timedelta(hours=i),
+        ))
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = await _confirming_state(m.id, p1.id, [{"reporter": 11, "opponent": 0}])
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    # Уточнённая подстрока: ачивка «Копил по очку» сама упоминает «4000 очков
+    # за карьеру» в своём описании — проверяем именно формат пинга (эмодзи 💰
+    # + восклицательный знак), а не любое упоминание этих слов в тексте.
+    texts = [c.args[1] for c in bot.send_message.call_args_list]
+    assert not any("💰 <b>4000 очков за карьеру!" in t for t in texts)
+
+
+async def test_match_milestone_fires_for_both_participants_on_draw(db):
+    """99 матчей МЕЖДУ этой же парой (не 99+99) — иначе оба уже проскочат
+    отметку 100 до финального матча и он станет для них 199-м, а не 100-м."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(99):
+        db.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.completed, winner_id=p1.id,
+            sets_data=[{"w": 11, "l": 0}], rating_change=5.0,
+            completed_at=datetime(2026, 1, 1) + timedelta(hours=i),
+        ))
+    m = await _accepted_match(db, p1, p2)
+    await db.commit()
+
+    st = _state(1)
+    await st.set_state(MatchResultStates.confirming)
+    await st.update_data(
+        match_id=m.id, reporter_player_id=p1.id,
+        sets_data=[{"reporter": 11, "opponent": 5}, {"reporter": 5, "opponent": 11}],
+        is_draw=True,
+    )
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    texts = [c.args[1] for c in bot.send_message.call_args_list]
+    assert sum("100-й матч в клубе" in t for t in texts) == 2  # оба участника
+
+
 # ── Новые пасхалки после матча ───────────────────────────────────────────────
 
 def _egg_ctx(**overrides) -> dict:
@@ -3360,3 +3682,89 @@ async def test_reply_kb_stats_button_without_registration(db):
 
     text = msg.answer.call_args.args[0]
     assert "/start" in text
+
+
+# ── Карьер-рекап v2.108.0 ────────────────────────────────────────────────────
+
+async def test_career_recap_requires_registration(db):
+    from bot.handlers.profile import show_career_recap
+
+    cb = _callback(1, "career_recap")
+    await show_career_recap(cb, db)
+
+    cb.answer.assert_awaited_once()
+    assert cb.answer.call_args.args[0] == "Сначала напиши /start"
+
+
+async def test_career_recap_empty_when_no_matches(db):
+    from bot.handlers.profile import show_career_recap
+
+    db.add(_player(1, "Alice"))
+    await db.commit()
+
+    cb = _callback(1, "career_recap")
+    await show_career_recap(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Моя история" in text
+    assert "первый матч" in text
+
+
+async def test_career_recap_shows_totals_and_rank(db):
+    from bot.handlers.profile import show_career_recap
+
+    p1, p2 = _player(1, "Alice", 1200.0), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p2.id, 10.0, datetime(2026, 6, 2, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "career_recap")
+    await show_career_recap(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Моя история — Alice" in text
+    assert "2 матча" in text
+    assert "🎖" in text  # звание
+    assert "Ачивок открыто" in text
+    assert "Личных рекордов покорено" in text
+
+
+async def test_career_recap_shows_peak_only_above_current(db):
+    from bot.handlers.profile import show_career_recap
+
+    p1, p2 = _player(1, "Alice", 1000.0), _player(2, "Bob")
+    p1.peak_rating = 1050.0
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "career_recap")
+    await show_career_recap(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Пик за карьеру" in text
+    assert "1050" in text
+
+
+async def test_career_recap_counts_distinct_personal_records(db):
+    """Метрику можно побить несколько раз — считаем УНИКАЛЬНЫЕ метрики, не строки."""
+    from bot.handlers.profile import show_career_recap
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    await db.commit()
+    db.add(PersonalRecordEarned(player_id=p1.id, metric="win_streak", value=2.0, earned_at=datetime(2026, 6, 1)))
+    db.add(PersonalRecordEarned(player_id=p1.id, metric="win_streak", value=3.0, earned_at=datetime(2026, 6, 5)))
+    db.add(PersonalRecordEarned(player_id=p1.id, metric="wins_per_day", value=2.0, earned_at=datetime(2026, 6, 2)))
+    await db.commit()
+
+    cb = _callback(1, "career_recap")
+    await show_career_recap(cb, db)
+
+    text = cb.message.edit_text.await_args.args[0]
+    assert "Личных рекордов покорено: <b>2/7</b>" in text
