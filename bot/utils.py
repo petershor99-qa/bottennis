@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import random
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from html import escape as h
@@ -997,13 +998,52 @@ def favor_icon(rating_diff: float) -> str:
     Общий хелпер для списка вызова (players_list_kb) и «С кем сыграть?»
     (show_my_matches) — раньше на втором экране показывались сырые "+123 pts"
     без перевода в понятный вид, тогда как первый экран уже переводил ту же
-    разницу в 💪/😊/⚡. Единая логика убирает расхождение между экранами.
+    разницу в понятные иконки. Единая логика убирает расхождение между экранами.
+
+    5 уровней (v2.117.0, было 3) — 35 pts как и раньше отделяет «примерно
+    равны» от заметной разницы, 120 pts (примерно один диапазон IT-звания,
+    см. RANK_TITLE_BANDS) — от откровенно разного уровня.
     """
+    if rating_diff > 120:
+        return "💀 "
     if rating_diff > 35:
         return "💪 "
+    if rating_diff < -120:
+        return "🤣 "
     if rating_diff < -35:
         return "😊 "
     return "⚡ "
+
+
+# ── Разнообразие текста на экране вызова (v2.117.0) ─────────────────────────────
+# Чисто косметика — по просьбе пользователя, чтобы кнопка/заголовок не
+# примелькались за месяцы использования. Пулы, а не одна случайная строка на
+# всё приложение — рендерятся заново при каждом показе экрана/клавиатуры.
+
+CHALLENGE_BUTTON_LABELS = [
+    "🏓 Вызвать на матч",
+    "🏓 Сыграть партейку",
+    "🏓 Отдохнуть от работы",
+    "🏓 Перекурить",
+    "🏓 Настучать по шарам",
+    "🏓 Помахать ракеткой",
+    "🏓 Неистово сразиться",
+]
+
+CHALLENGE_HEADER_GREETINGS = [
+    "Кого хочешь вызвать? 🏓",
+    "🎮 Choose your destiny",
+    "Кого сегодня вынесем? 🏓",
+    "С кем будем биться? 🏓",
+]
+
+
+def random_challenge_button_label() -> str:
+    return random.choice(CHALLENGE_BUTTON_LABELS)
+
+
+def random_challenge_greeting() -> str:
+    return random.choice(CHALLENGE_HEADER_GREETINGS)
 
 
 def get_rec_signal(

@@ -18,6 +18,7 @@ from bot.keyboards.inline import (
 from bot.services.achievements import ACHIEVEMENTS_MAP, check_cancel_achievements, record_achievements_earned
 from bot.services.rating import win_probability
 from bot.utils import (
+    CHALLENGE_BUTTON_LABELS,
     _pin_champion,
     boss_fight_rematch_blocked,
     compute_ranks,
@@ -26,6 +27,7 @@ from bot.utils import (
     get_player,
     match_phrase,
     notify_all_players,
+    random_challenge_greeting,
 )
 
 router = Router()
@@ -128,15 +130,16 @@ async def _build_challenge_screen(session: AsyncSession, telegram_id: int):
     # Ранг — единый для всех экранов: только среди игравших (как на лидерборде)
     rank_map = compute_ranks(players, match_count_map, champion_id=champion_id)
 
+    greeting = random_challenge_greeting()
     if current_player and current_player.id in rank_map:
         my_rank = rank_map[current_player.id]
         header = (
-            f"Кого хочешь вызвать? 🏓\n"
+            f"{greeting}\n"
             f"Твой рейтинг: <b>{round(current_player.rating)}</b> pts "
             f"(#{my_rank} из {len(rank_map)})"
         )
     else:
-        header = "Кого хочешь вызвать на матч? 🏓"
+        header = greeting
 
     # Ярлык прямого вызова на босс-файт — только на экране самого претендента, и
     # только если пара реально может сыграть (не под блоком реванша после
@@ -178,7 +181,7 @@ async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSess
     await callback.message.edit_text(text, reply_markup=kb)
 
 
-@router.message(F.text == "🏓 Вызвать на матч")
+@router.message(F.text.in_(CHALLENGE_BUTTON_LABELS))
 async def show_players_for_challenge_from_reply_kb(message: Message, session: AsyncSession):
     """Тот же экран, что и menu_play, но с постоянной клавиатуры снизу —
     у входящего текстового сообщения нет своего сообщения для редактирования,
