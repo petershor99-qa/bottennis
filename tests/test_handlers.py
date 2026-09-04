@@ -2323,13 +2323,64 @@ async def test_my_matches_shows_challenge_buttons_when_viewer_free(db):
 # ── favor_icon / единый вид сложности соперника ──────────────────────────────
 
 def test_favor_icon_thresholds():
+    """5 уровней (v2.117.0, было 3): 💀 сильнее на 120+ / 💪 сильнее на 35-120 /
+    ⚡ примерно равны / 😊 слабее на 35-120 / 🤣 слабее на 120+."""
     from bot.utils import favor_icon
 
-    assert favor_icon(50) == "💪 "    # соперник сильно сильнее
-    assert favor_icon(-50) == "😊 "   # соперник сильно слабее
-    assert favor_icon(0) == "⚡ "     # примерно равны
+    assert favor_icon(50) == "💪 "     # заметно сильнее, но не разгромно
+    assert favor_icon(-50) == "😊 "    # заметно слабее, но не разгромно
+    assert favor_icon(0) == "⚡ "      # примерно равны
     assert favor_icon(35.1) == "💪 "
     assert favor_icon(-35.1) == "😊 "
+    assert favor_icon(150) == "💀 "    # сильно сильнее
+    assert favor_icon(-150) == "🤣 "   # сильно слабее
+    assert favor_icon(120.1) == "💀 "
+    assert favor_icon(-120.1) == "🤣 "
+    assert favor_icon(120) == "💪 "    # ровно на границе — ещё не "сильно"
+    assert favor_icon(-120) == "😊 "
+
+
+# ── Разнообразие текста на экране вызова (v2.117.0) ─────────────────────────────
+
+def test_random_challenge_button_label_from_pool():
+    from bot.utils import CHALLENGE_BUTTON_LABELS, random_challenge_button_label
+
+    for _ in range(30):
+        assert random_challenge_button_label() in CHALLENGE_BUTTON_LABELS
+
+
+def test_random_challenge_greeting_from_pool():
+    from bot.utils import CHALLENGE_HEADER_GREETINGS, random_challenge_greeting
+
+    for _ in range(30):
+        assert random_challenge_greeting() in CHALLENGE_HEADER_GREETINGS
+
+
+def test_main_menu_kb_challenge_button_uses_pool_label():
+    from bot.keyboards.inline import main_menu_kb
+    from bot.utils import CHALLENGE_BUTTON_LABELS
+
+    kb = main_menu_kb()
+    texts = [b.text for row in kb.inline_keyboard for b in row]
+    play_button = next(b for row in kb.inline_keyboard for b in row if b.callback_data == "menu_play")
+    assert play_button.text in CHALLENGE_BUTTON_LABELS
+    assert play_button.text in texts
+
+
+async def test_reply_kb_challenge_button_accepts_every_pool_label(db):
+    """Хендлер матчит ВЕСЬ пул подписей (F.text.in_), не только оригинал —
+    иначе после ротации подписи кнопка молча переставала бы работать."""
+    from bot.handlers.challenge import show_players_for_challenge_from_reply_kb
+    from bot.utils import CHALLENGE_BUTTON_LABELS
+
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.commit()
+
+    for label in CHALLENGE_BUTTON_LABELS:
+        msg = _message(1, label)
+        await show_players_for_challenge_from_reply_kb(msg, db)
+        assert msg.answer.await_count == 1
 
 
 async def test_my_matches_shows_favor_icon_matching_players_list_kb(db):
@@ -3768,7 +3819,10 @@ async def test_reply_kb_sent_on_start_for_new_player(db):
     ]
     assert len(reply_kb_calls) == 1
     buttons = [b.text for row in reply_kb_calls[0].kwargs["reply_markup"].keyboard for b in row]
-    assert buttons == ["🏓 Вызвать на матч", "📊 Рейтинг", "📈 Статистика"]
+    # Первая подпись случайная из CHALLENGE_BUTTON_LABELS (v2.117.0)
+    from bot.utils import CHALLENGE_BUTTON_LABELS
+    assert buttons[0] in CHALLENGE_BUTTON_LABELS
+    assert buttons[1:] == ["📊 Рейтинг", "📈 Статистика"]
 
 
 async def test_reply_kb_sent_on_start_for_returning_player(db):
@@ -3802,7 +3856,9 @@ async def test_reply_kb_challenge_button_shows_same_screen_as_menu(db):
     await show_players_for_challenge_from_reply_kb(msg, db)
 
     text = msg.answer.call_args.args[0]
-    assert "Кого хочешь вызвать" in text
+    # Заголовок случайный из CHALLENGE_HEADER_GREETINGS (v2.117.0)
+    from bot.utils import CHALLENGE_HEADER_GREETINGS
+    assert any(text.startswith(g) for g in CHALLENGE_HEADER_GREETINGS)
     kb = msg.answer.call_args.kwargs["reply_markup"]
     buttons = [b.text for row in kb.inline_keyboard for b in row]
     assert any("Bob" in b for b in buttons)
