@@ -6,7 +6,7 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from bot.utils import favor_icon
+from bot.utils import favor_icon, random_challenge_button_label
 
 
 def main_reply_kb() -> ReplyKeyboardMarkup:
@@ -18,10 +18,14 @@ def main_reply_kb() -> ReplyKeyboardMarkup:
     profile.py — F.message(F.text == "...")), поэтому у результата нет «своего»
     сообщения для редактирования, каждый тап шлёт новое сообщение в чат — как
     и любое другое уведомление бота (пасхалки, вызовы и т.д.), не хуже.
+
+    Подпись первой кнопки случайная из CHALLENGE_BUTTON_LABELS (v2.117.0) —
+    хендлер в challenge.py матчит ПУЛ вариантов (F.text.in_(...)), не одну
+    строку, иначе после смены подписи кнопка перестала бы что-либо делать.
     """
     return ReplyKeyboardMarkup(
         keyboard=[[
-            KeyboardButton(text="🏓 Вызвать на матч"),
+            KeyboardButton(text=random_challenge_button_label()),
             KeyboardButton(text="📊 Рейтинг"),
             KeyboardButton(text="📈 Статистика"),
         ]],
@@ -50,7 +54,7 @@ def main_menu_kb(
                 text=f"📋 Внести результат — vs {opponent_name}",
                 callback_data=f"report_{match_id}",
             ))
-    b.row(InlineKeyboardButton(text="🏓 Вызвать на матч", callback_data="menu_play"))
+    b.row(InlineKeyboardButton(text=random_challenge_button_label(), callback_data="menu_play"))
     b.row(InlineKeyboardButton(text="📊 Рейтинг", callback_data="menu_leaderboard"))
     b.row(
         InlineKeyboardButton(text="📈 Статистика", callback_data="menu_stats"),
