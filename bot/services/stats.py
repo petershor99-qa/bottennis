@@ -343,6 +343,19 @@ def _build_career_narrative(player, s: dict) -> str | None:
 
 # ── Achievement progress ──────────────────────────────────────────────────────
 
+def _progress_bar(ratio: float, width: int = 10) -> str:
+    """Текстовый прогресс-бар из █/░ (v2.119.0) — обычные юникод-символы,
+    Telegram рендерит их как простой текст, никакой спецподдержки не нужно
+    (работает и в HTML parse_mode, и без него, на любом клиенте).
+
+    int(), не round() — ratio всегда < 1.0 (вызывающий уже отфильтровал
+    достигнутые цели), поэтому округление в большую сторону могло бы
+    показать бар полностью заполненным для ещё не выполненной цели.
+    """
+    filled = max(0, min(width, int(ratio * width)))
+    return "█" * filled + "░" * (width - filled)
+
+
 def _nearest_achievement_progress(player, s: dict, total_players: int) -> str | None:
     """Возвращает строку прогресса до ближайшей незаработанной счётной ачивки или None."""
     earned = set(get_achievements(player))
@@ -392,5 +405,5 @@ def _nearest_achievement_progress(player, s: dict, total_players: int) -> str | 
     valid = [(r, t) for r, t in candidates if r < 1.0]
     if not valid:
         return None
-    _, text = max(valid, key=lambda x: x[0])
-    return f"⏳ Цель: {text}"
+    ratio, text = max(valid, key=lambda x: x[0])
+    return f"⏳ Цель: {text}\n{_progress_bar(ratio)}"
