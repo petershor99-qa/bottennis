@@ -657,6 +657,28 @@ def test_ach_progress_streak_hat_trick():
     assert "Хет-трик" in result
 
 
+def test_ach_progress_shows_bar_proportional_to_ratio():
+    """Хет-трик 2/3 (ratio ~0.67) — бар из 10 символов, ~6-7 заполненных."""
+    from bot.services.stats import _progress_bar
+
+    p = _p_ach(["rating_1200"])
+    result = _nearest_achievement_progress(p, _stats(wins=2, streak=2), total_players=3)
+    assert result is not None
+    bar_line = result.split("\n")[1]
+    assert bar_line == _progress_bar(2 / 3)
+    assert bar_line.count("█") + bar_line.count("░") == 10
+
+
+def test_progress_bar_never_shows_full_below_100_percent():
+    """ratio < 1.0 никогда не должен рисовать бар полностью заполненным —
+    иначе выглядит как «уже готово», хотя ачивка ещё не заработана."""
+    from bot.services.stats import _progress_bar
+
+    assert _progress_bar(0.999) == "█████████░"
+    assert _progress_bar(0.0) == "░░░░░░░░░░"
+    assert _progress_bar(0.5) == "█████░░░░░"
+
+
 def test_ach_progress_skips_earned():
     """hat_trick уже заработан → показывает следующую по прогрессу."""
     p = _p_ach(["press_start", "first_blood", "hat_trick", "rating_1200"])
@@ -3842,6 +3864,41 @@ async def test_reply_kb_sent_on_start_for_returning_player(db):
         and hasattr(c.kwargs["reply_markup"], "keyboard")
     ]
     assert len(reply_kb_calls) == 1
+
+
+def test_challenge_button_label_matches_between_reply_kb_and_inline_menu():
+    """РЕГРЕССИЯ: постоянная клавиатура снизу и инлайн-кнопка «Вызвать на
+    матч» в главном меню строились независимыми вызовами random.choice() —
+    подписи почти всегда расходились, хотя обе кнопки видны на экране
+    одновременно (живая жалоба пользователя). Индекс теперь детерминирован
+    по текущему часу (v2.119.0) — оба построения в рамках одного вызова
+    (тем более одного часа) обязаны совпасть."""
+    from bot.keyboards.inline import main_menu_kb, main_reply_kb
+
+    reply_kb = main_reply_kb()
+    inline_kb = main_menu_kb()
+
+    reply_label = reply_kb.keyboard[0][0].text
+    inline_label = next(
+        btn.text for row in inline_kb.inline_keyboard for btn in row
+        if btn.callback_data == "menu_play"
+    )
+    assert reply_label == inline_label
+
+
+def test_challenge_button_label_deterministic_within_same_hour(monkeypatch):
+    """Одинаковый час → одинаковая подпись независимо от места/повода вызова."""
+    import bot.utils as u
+
+    class _FixedDatetime(u.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return u.datetime(2026, 6, 1, 12, 34, 56, tzinfo=tz)
+
+    monkeypatch.setattr(u, "datetime", _FixedDatetime)
+    first = u.random_challenge_button_label()
+    second = u.random_challenge_button_label()
+    assert first == second
 
 
 async def test_reply_kb_challenge_button_shows_same_screen_as_menu(db):

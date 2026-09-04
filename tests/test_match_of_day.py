@@ -13,6 +13,7 @@ from bot.utils import (
     MARATHON_FRAGMENTS,
     PLAIN_WIN_PHRASES,
     UPSET_FRAGMENT_TEMPLATES,
+    _stable_pool_index,
     match_drama_reason,
     match_drama_score,
     match_report,
@@ -159,12 +160,13 @@ def test_report_comeback_only():
     в репортаже строже, чем «камбэк» в match_drama_reason. 4 партии — без марафона (нужно 5).
 
     Открывающая фраза — из COMEBACK_OPENERS (v2.118.0, было 1 фиксированная),
-    индекс по m.id — ожидаемое значение считаем из того же пула, а не
-    хардкодим литерал, чтобы тест не ломался при правке формулировок."""
+    индекс через _stable_pool_index — ожидаемое значение считаем из того же
+    пула, а не хардкодим литерал, чтобы тест не ломался при правке формулировок."""
     sets = [{"w": 6, "l": 11}, {"w": 8, "l": 11}, {"w": 11, "l": 6}, {"w": 11, "l": 6}]
     m = make_match(sets, winner_id=1, rating_change=5.0)
     text = match_report(m, "Игрок")
-    expected = COMEBACK_OPENERS[m.id % len(COMEBACK_OPENERS)].format(name="Игрок").strip()
+    idx = _stable_pool_index(m.id, "comeback", len(COMEBACK_OPENERS))
+    expected = COMEBACK_OPENERS[idx].format(name="Игрок").strip()
     assert text == expected
     assert "0:2" in text
     assert "дьюс" not in text
@@ -172,14 +174,18 @@ def test_report_comeback_only():
 
 
 def test_report_comeback_opener_varies_by_match_id():
-    """Разные match_id дают разные открывающие фразы — иначе пул из 5
-    вариантов был бы бесполезен (всегда один и тот же индекс)."""
+    """Разные match_id дают разные открывающие фразы — иначе пул был бы
+    бесполезен (всегда один и тот же индекс). Индекс теперь через хэш
+    (_stable_pool_index, v2.119.0), поэтому точное совпадение «N подряд id
+    → все N вариантов пула» больше не гарантировано (в отличие от простого
+    m.id % len) — проверяем достаточную вариативность на широкой выборке,
+    не строгое покрытие ровно len(COMEBACK_OPENERS) подряд идущих id."""
     sets = [{"w": 6, "l": 11}, {"w": 8, "l": 11}, {"w": 11, "l": 6}, {"w": 11, "l": 6}]
     openers = {
         match_report(make_match(sets, winner_id=1, rating_change=5.0, match_id=mid), "Игрок")
-        for mid in range(len(COMEBACK_OPENERS))
+        for mid in range(40)
     }
-    assert len(openers) == len(COMEBACK_OPENERS)
+    assert len(openers) >= len(COMEBACK_OPENERS) - 1
 
 
 def test_report_only_first_set_lost_is_not_comeback():
@@ -194,11 +200,13 @@ def test_report_only_first_set_lost_is_not_comeback():
 
 def test_report_marathon_only():
     """Фрагмент — из MARATHON_FRAGMENTS (v2.118.0, было 1 фиксированный),
-    индекс по m.id+1 (своё смещение на пул, см. match_report)."""
+    индекс через _stable_pool_index (v2.119.0 — хэш вместо линейного
+    смещения, см. докстринг _stable_pool_index про декорреляцию пулов)."""
     sets = [{"w": 11, "l": 9}] * 5
     m = make_match(sets, winner_id=1, rating_change=5.0)
     text = match_report(m, "Игрок")
-    fragment = MARATHON_FRAGMENTS[(m.id + 1) % len(MARATHON_FRAGMENTS)]
+    idx = _stable_pool_index(m.id, "marathon", len(MARATHON_FRAGMENTS))
+    fragment = MARATHON_FRAGMENTS[idx]
     expected = fragment[0].upper() + fragment[1:] + "."
     assert text == expected
     assert "влетел в яму" not in text and "провалил старт" not in text
@@ -206,23 +214,26 @@ def test_report_marathon_only():
 
 def test_report_deuce_decider_only():
     """Фрагмент — из DEUCE_FRAGMENTS (v2.118.0, было 1 фиксированный),
-    индекс по m.id+2. Капитализация первой буквы — тот же живой компромисс,
-    что и раньше (фрагменты начинаются со строчной «а»/«решающая»)."""
+    индекс через _stable_pool_index. Капитализация первой буквы — тот же
+    живой компромисс, что и раньше (фрагменты начинаются со строчной
+    «а»/«решающая»)."""
     sets = [{"w": 11, "l": 5}, {"w": 11, "l": 5}, {"w": 13, "l": 11}]
     m = make_match(sets, winner_id=1, rating_change=5.0)
     text = match_report(m, "Игрок")
-    fragment = DEUCE_FRAGMENTS[(m.id + 2) % len(DEUCE_FRAGMENTS)]
+    idx = _stable_pool_index(m.id, "deuce", len(DEUCE_FRAGMENTS))
+    fragment = DEUCE_FRAGMENTS[idx]
     expected = fragment[0].upper() + fragment[1:] + "."
     assert text == expected
 
 
 def test_report_upset_only():
     """Шаблон — из UPSET_FRAGMENT_TEMPLATES (v2.118.0, было 1 фиксированный),
-    индекс по m.id+3, число очков подставляется как раньше."""
+    индекс через _stable_pool_index, число очков подставляется как раньше."""
     sets = [{"w": 11, "l": 5}, {"w": 11, "l": 5}]
     m = make_match(sets, winner_id=1, rating_change=25.0)
     text = match_report(m, "Игрок")
-    template = UPSET_FRAGMENT_TEMPLATES[(m.id + 3) % len(UPSET_FRAGMENT_TEMPLATES)]
+    idx = _stable_pool_index(m.id, "upset", len(UPSET_FRAGMENT_TEMPLATES))
+    template = UPSET_FRAGMENT_TEMPLATES[idx]
     fragment = template.format(delta=25.0)
     expected = fragment[0].upper() + fragment[1:] + "."
     assert text == expected
@@ -235,11 +246,12 @@ def test_report_all_factors_combined():
     m = make_match(sets, winner_id=1, rating_change=20.0)
     text = match_report(m, "Игрок")
 
-    opener = COMEBACK_OPENERS[m.id % len(COMEBACK_OPENERS)].format(name="Игрок")
+    opener_idx = _stable_pool_index(m.id, "comeback", len(COMEBACK_OPENERS))
+    opener = COMEBACK_OPENERS[opener_idx].format(name="Игрок")
     tail_fragments = [
-        MARATHON_FRAGMENTS[(m.id + 1) % len(MARATHON_FRAGMENTS)],
-        DEUCE_FRAGMENTS[(m.id + 2) % len(DEUCE_FRAGMENTS)],
-        UPSET_FRAGMENT_TEMPLATES[(m.id + 3) % len(UPSET_FRAGMENT_TEMPLATES)].format(delta=20.0),
+        MARATHON_FRAGMENTS[_stable_pool_index(m.id, "marathon", len(MARATHON_FRAGMENTS))],
+        DEUCE_FRAGMENTS[_stable_pool_index(m.id, "deuce", len(DEUCE_FRAGMENTS))],
+        UPSET_FRAGMENT_TEMPLATES[_stable_pool_index(m.id, "upset", len(UPSET_FRAGMENT_TEMPLATES))].format(delta=20.0),
     ]
     joined = ", ".join(tail_fragments)
     tail = joined[0].upper() + joined[1:] + "."
