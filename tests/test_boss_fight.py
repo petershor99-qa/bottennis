@@ -1937,6 +1937,6 @@ async def test_hall_of_fame_narrative_finds_boss_fight_match(db):
     await show_hall_of_fame(cb, db)
 
     text = cb.message.edit_text.await_args.args[0]
-    assert "Сверг" in text
+    assert "захватил трон" in text
     assert "NewChamp" in text
     assert "без боя" not in text
