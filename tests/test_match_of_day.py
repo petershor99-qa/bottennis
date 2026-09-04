@@ -7,8 +7,13 @@ from types import SimpleNamespace
 
 from bot.utils import (
     BLOWOUT_PHRASES,
+    COMEBACK_OPENERS,
+    DEUCE_FRAGMENTS,
     DRAMA_THRESHOLD,
+    MARATHON_FRAGMENTS,
     PLAIN_WIN_PHRASES,
+    UPSET_FRAGMENT_TEMPLATES,
+    _stable_pool_index,
     match_drama_reason,
     match_drama_score,
     match_report,
@@ -152,13 +157,35 @@ def test_score_empty():
 
 def test_report_comeback_only():
     """Проиграл первые ДВЕ партии (0:2), а не только первую — camebac-фрагмент
-    в репортаже строже, чем «камбэк» в match_drama_reason. 4 партии — без марафона (нужно 5)."""
+    в репортаже строже, чем «камбэк» в match_drama_reason. 4 партии — без марафона (нужно 5).
+
+    Открывающая фраза — из COMEBACK_OPENERS (v2.118.0, было 1 фиксированная),
+    индекс через _stable_pool_index — ожидаемое значение считаем из того же
+    пула, а не хардкодим литерал, чтобы тест не ломался при правке формулировок."""
     sets = [{"w": 6, "l": 11}, {"w": 8, "l": 11}, {"w": 11, "l": 6}, {"w": 11, "l": 6}]
-    text = match_report(make_match(sets, winner_id=1, rating_change=5.0), "Игрок")
-    assert "Игрок влетел в яму 0:2" in text
-    assert "дошло до пятой" not in text
+    m = make_match(sets, winner_id=1, rating_change=5.0)
+    text = match_report(m, "Игрок")
+    idx = _stable_pool_index(m.id, "comeback", len(COMEBACK_OPENERS))
+    expected = COMEBACK_OPENERS[idx].format(name="Игрок").strip()
+    assert text == expected
+    assert "0:2" in text
     assert "дьюс" not in text
     assert "апсет" not in text
+
+
+def test_report_comeback_opener_varies_by_match_id():
+    """Разные match_id дают разные открывающие фразы — иначе пул был бы
+    бесполезен (всегда один и тот же индекс). Индекс теперь через хэш
+    (_stable_pool_index, v2.119.0), поэтому точное совпадение «N подряд id
+    → все N вариантов пула» больше не гарантировано (в отличие от простого
+    m.id % len) — проверяем достаточную вариативность на широкой выборке,
+    не строгое покрытие ровно len(COMEBACK_OPENERS) подряд идущих id."""
+    sets = [{"w": 6, "l": 11}, {"w": 8, "l": 11}, {"w": 11, "l": 6}, {"w": 11, "l": 6}]
+    openers = {
+        match_report(make_match(sets, winner_id=1, rating_change=5.0, match_id=mid), "Игрок")
+        for mid in range(40)
+    }
+    assert len(openers) >= len(COMEBACK_OPENERS) - 1
 
 
 def test_report_only_first_set_lost_is_not_comeback():
@@ -172,34 +199,77 @@ def test_report_only_first_set_lost_is_not_comeback():
 
 
 def test_report_marathon_only():
+    """Фрагмент — из MARATHON_FRAGMENTS (v2.118.0, было 1 фиксированный),
+    индекс через _stable_pool_index (v2.119.0 — хэш вместо линейного
+    смещения, см. докстринг _stable_pool_index про декорреляцию пулов)."""
     sets = [{"w": 11, "l": 9}] * 5
-    text = match_report(make_match(sets, winner_id=1, rating_change=5.0), "Игрок")
-    assert text.startswith("Дошло до пятой")
-    assert "влетел в яму" not in text
+    m = make_match(sets, winner_id=1, rating_change=5.0)
+    text = match_report(m, "Игрок")
+    idx = _stable_pool_index(m.id, "marathon", len(MARATHON_FRAGMENTS))
+    fragment = MARATHON_FRAGMENTS[idx]
+    expected = fragment[0].upper() + fragment[1:] + "."
+    assert text == expected
+    assert "влетел в яму" not in text and "провалил старт" not in text
 
 
 def test_report_deuce_decider_only():
+    """Фрагмент — из DEUCE_FRAGMENTS (v2.118.0, было 1 фиксированный),
+    индекс через _stable_pool_index. Капитализация первой буквы — тот же
+    живой компромисс, что и раньше (фрагменты начинаются со строчной
+    «а»/«решающая»)."""
     sets = [{"w": 11, "l": 5}, {"w": 11, "l": 5}, {"w": 13, "l": 11}]
-    text = match_report(make_match(sets, winner_id=1, rating_change=5.0), "Игрок")
-    # Фрагмент начинается с союза «а» — капитализация даёт «А решающая...»,
-    # это осознанный компромисс живого текста, не «Решающая...».
-    assert text == "А решающая партия ушла на дьюс."
+    m = make_match(sets, winner_id=1, rating_change=5.0)
+    text = match_report(m, "Игрок")
+    idx = _stable_pool_index(m.id, "deuce", len(DEUCE_FRAGMENTS))
+    fragment = DEUCE_FRAGMENTS[idx]
+    expected = fragment[0].upper() + fragment[1:] + "."
+    assert text == expected
 
 
 def test_report_upset_only():
+    """Шаблон — из UPSET_FRAGMENT_TEMPLATES (v2.118.0, было 1 фиксированный),
+    индекс через _stable_pool_index, число очков подставляется как раньше."""
     sets = [{"w": 11, "l": 5}, {"w": 11, "l": 5}]
-    text = match_report(make_match(sets, winner_id=1, rating_change=25.0), "Игрок")
-    assert text == "И +25.0 pts апсета под занавес."
+    m = make_match(sets, winner_id=1, rating_change=25.0)
+    text = match_report(m, "Игрок")
+    idx = _stable_pool_index(m.id, "upset", len(UPSET_FRAGMENT_TEMPLATES))
+    template = UPSET_FRAGMENT_TEMPLATES[idx]
+    fragment = template.format(delta=25.0)
+    expected = fragment[0].upper() + fragment[1:] + "."
+    assert text == expected
 
 
 def test_report_all_factors_combined():
+    """Все 4 фактора — открывающая фраза + 3 хвостовых фрагмента через
+    запятую, порядок марафон→дьюс→апсет не поменялся при переходе на пулы."""
     sets = [{"w": 6, "l": 11}, {"w": 8, "l": 11}, {"w": 11, "l": 6}, {"w": 11, "l": 6}, {"w": 13, "l": 11}]
-    text = match_report(make_match(sets, winner_id=1, rating_change=20.0), "Игрок")
-    assert text == (
-        "Игрок влетел в яму 0:2 по партиям — казалось, разговор окончен. "
-        "Дошло до пятой — тут все успели заскучать и снова заинтересоваться, "
-        "а решающая партия ушла на дьюс, и +20.0 pts апсета под занавес."
-    )
+    m = make_match(sets, winner_id=1, rating_change=20.0)
+    text = match_report(m, "Игрок")
+
+    opener_idx = _stable_pool_index(m.id, "comeback", len(COMEBACK_OPENERS))
+    opener = COMEBACK_OPENERS[opener_idx].format(name="Игрок")
+    tail_fragments = [
+        MARATHON_FRAGMENTS[_stable_pool_index(m.id, "marathon", len(MARATHON_FRAGMENTS))],
+        DEUCE_FRAGMENTS[_stable_pool_index(m.id, "deuce", len(DEUCE_FRAGMENTS))],
+        UPSET_FRAGMENT_TEMPLATES[_stable_pool_index(m.id, "upset", len(UPSET_FRAGMENT_TEMPLATES))].format(delta=20.0),
+    ]
+    joined = ", ".join(tail_fragments)
+    tail = joined[0].upper() + joined[1:] + "."
+    expected = (opener + tail).strip()
+
+    assert text == expected
+
+
+def test_report_dramatic_pools_decorrelated_across_factors():
+    """Смещения (+0/+1/+2/+3) на m.id для разных пулов не должны совпадать
+    настолько, чтобы полный текст всегда был одним и тем же набором фраз —
+    иначе весь смысл раздельных пулов на 4 фактора теряется."""
+    sets = [{"w": 6, "l": 11}, {"w": 8, "l": 11}, {"w": 11, "l": 6}, {"w": 11, "l": 6}, {"w": 13, "l": 11}]
+    texts = {
+        match_report(make_match(sets, winner_id=1, rating_change=20.0, match_id=mid), "Игрок")
+        for mid in range(20)
+    }
+    assert len(texts) > 10
 
 
 def test_report_blowout_uses_phrase_pool():

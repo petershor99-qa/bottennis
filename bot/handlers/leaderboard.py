@@ -813,7 +813,13 @@ async def _reign_end_narrative(session: AsyncSession, reign: ChampionReign, name
     if m is None:
         return "Трон отошёл без боя — чемпион давно не защищался."
     winner_name = name_map.get(m.winner_id, "?")
-    return f"Сверг {h(winner_name)}: {match_report(m, winner_name)}"
+    # "Сверг {name}" грамматически требует винительного падежа ("Осташкова",
+    # не "Осташков") — программно склонять русские имена нечем без лишней
+    # зависимости (pymorphy2), да и на латинице (транслитерированные имена
+    # в публичных скринах) склонение всё равно не сработает. Имя оставлено в
+    # именительном падеже — подлежащим, а не дополнением (v2.120.0, живая
+    # жалоба пользователя на несклонённое "Сверг Grigory Boytsov").
+    return f"{h(winner_name)} захватил трон: {match_report(m, winner_name)}"
 
 
 @router.callback_query(F.data.startswith("hall_of_fame"))
