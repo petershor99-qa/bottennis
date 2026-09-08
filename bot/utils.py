@@ -578,6 +578,44 @@ async def get_champion_and_challenger(session: AsyncSession) -> tuple[Player | N
     return champion, challenger
 
 
+def _current_month_start_msk() -> datetime:
+    """Начало ТЕКУЩЕГО (ещё не завершённого) месяца по МСК, в naive-UTC — как
+    хранятся даты в БД. Не путать с месячными границами в scheduler.py
+    (send_monthly_summary) — те считают ПРЕДЫДУЩИЙ завершённый месяц."""
+    now_msk = datetime.now(timezone.utc).replace(tzinfo=None) + MSK_OFFSET
+    month_start_msk = now_msk.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return month_start_msk - MSK_OFFSET
+
+
+async def get_mvp_of_month(session: AsyncSession) -> int | None:
+    """ID игрока с наибольшим суммарным приростом рейтинга с начала текущего
+    месяца (v2.121.0) — «MVP месяца», дешёвая альтернатива годовому
+    голосованию: считается автоматически по уже собранной истории, без
+    голосования и без миграции БД. Live-вычисление на каждый вызов, не
+    персистится — тот же принцип, что у get_champion/get_challenger, бейдж
+    меняется сам собой 1-го числа вместе с началом нового месяца.
+
+    None, если в этом месяце матчей ещё не было или ни у кого нет
+    положительного прироста (тот же порог, что у «Лучшего роста» в дайджестах)."""
+    month_start = _current_month_start_msk()
+    r = await session.execute(
+        select(Match).where(
+            Match.status == MatchStatus.completed,
+            Match.completed_at >= month_start,
+            Match.rating_change.isnot(None),
+        )
+    )
+    matches = r.scalars().all()
+    if not matches:
+        return None
+    delta_sum: dict[int, float] = {}
+    for m in matches:
+        for pid in (m.challenger_id, m.challenged_id):
+            delta_sum[pid] = delta_sum.get(pid, 0.0) + match_rating_delta(m, pid)
+    best_id = max(delta_sum, key=delta_sum.get)
+    return best_id if delta_sum[best_id] > 0 else None
+
+
 async def boss_fight_rematch_blocked(session: AsyncSession, id_a: int, id_b: int) -> bool:
     """После завершённого босс-файта между этими двумя пара не играет друг с
     другом, пока НЕЧЕМПИОН пары (сейчас, на момент проверки — не чемпион на
@@ -1389,6 +1427,38 @@ def rating_chart_url(name: str, labels: list[str], values: list[float]) -> str:
     }
     encoded = urllib.parse.quote(json.dumps(config, separators=(",", ":"), ensure_ascii=False))
     return f"https://quickchart.io/chart?w=700&h=420&bkg=white&c={encoded}"
+
+
+# ── Радар личного стиля (quickchart.io, v2.121.0) ──────────────────────────────
+# type: radar — нативная поддержка Chart.js, в отличие от heatmap выше не нужен
+# bubble-chart хак. Конфиг v2 (radial-шкала — ключ "scale", не "scales"), тот
+# же диалект, что уже используют rating_chart_url/activity_heatmap_url.
+
+def style_radar_url(name: str, radar: dict[str, float]) -> str:
+    """Формирует URL картинки радар-графика личного стиля через quickchart.io.
+
+    radar — {ось: значение 0..100}, см. _build_style_radar (bot/services/stats.py).
+    """
+    config = {
+        "type": "radar",
+        "data": {
+            "labels": list(radar.keys()),
+            "datasets": [{
+                "label": name,
+                "data": list(radar.values()),
+                "backgroundColor": "rgba(54,162,235,0.25)",
+                "borderColor": "rgb(54,162,235)",
+                "pointBackgroundColor": "rgb(54,162,235)",
+            }],
+        },
+        "options": {
+            "title": {"display": True, "text": f"Стиль игры — {name}"},
+            "legend": {"display": False},
+            "scale": {"ticks": {"beginAtZero": True, "max": 100, "min": 0}},
+        },
+    }
+    encoded = urllib.parse.quote(json.dumps(config, separators=(",", ":"), ensure_ascii=False))
+    return f"https://quickchart.io/chart?w=500&h=500&bkg=white&c={encoded}"
 
 
 # ── Тепловая карта активности (quickchart.io) ─────────────────────────────────

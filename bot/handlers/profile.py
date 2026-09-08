@@ -18,6 +18,7 @@ from bot.services.achievements import (
     CATEGORY_ORDER,
     get_achievements,
 )
+from bot.services.rating import what_if_range
 from bot.services.stats import _build_career_narrative, _compute_player_stats, _nearest_achievement_progress
 from bot.utils import (
     NEWCOMER_THRESHOLD,
@@ -29,7 +30,9 @@ from bot.utils import (
     get_active_match,
     get_career_matches,
     get_match_counts,
+    get_mvp_of_month,
     get_player,
+    pluralize_days,
     pluralize_matches,
     rank_title,
 )
@@ -93,6 +96,8 @@ def _render_stats_lines(player, s: dict) -> list[str]:
         form_lines.append(f"😬 Серия: <b>{s['loss_streak']} поражений подряд</b>")
     if s["best_streak"] >= 2 and s["best_streak"] != streak:
         form_lines.append(f"🎖 Рекорд серии: <b>{s['best_streak']} побед подряд</b>")
+    if s["activity_streak_days"] >= 2:
+        form_lines.append(f"📆 Играешь <b>{pluralize_days(s['activity_streak_days'])}</b> подряд")
 
     if s["best_opp"]:
         opponent_lines.append(f"🎁 Подарок: <b>{h(s['best_opp']['name'])}</b> ({s['best_opp']['wins']} побед)")
@@ -105,6 +110,12 @@ def _render_stats_lines(player, s: dict) -> list[str]:
             f"⚔️ Чаще всего: <b>{h(top_opp['name'])}</b> "
             f"({top_opp['total']} матчей, {top_opp['wins']}–{top_opp['losses']}{top_draws_str})"
         )
+    if s["unresolved_debts"]:
+        debts = s["unresolved_debts"]
+        names_str = ", ".join(h(n) for n in debts[:3])
+        if len(debts) > 3:
+            names_str += f" +{len(debts) - 3}"
+        opponent_lines.append(f"📌 Незакрытые долги: <b>{names_str}</b>")
 
     if player.peak_rating and player.peak_rating > player.rating:
         rating_lines.append(f"📈 Пик рейтинга: <b>{round(player.peak_rating, 1)}</b> pts")
@@ -267,6 +278,8 @@ async def _build_stats_screen(session: AsyncSession, player: Player):
     matches = all_matches[:5]
     s = _compute_player_stats(player, all_matches)
 
+    mvp_id = await get_mvp_of_month(session)
+
     draws_part = f"  |  🤝 Ничьих: <b>{s['draws']}</b>" if s["draws"] > 0 else ""
     lines = [
         f"📈 <b>Статистика — {h(player.display_name)}</b>\n",
@@ -274,6 +287,8 @@ async def _build_stats_screen(session: AsyncSession, player: Player):
         f"🏆 Побед: <b>{s['wins']}</b>{draws_part}  |  💔 Поражений: <b>{s['losses']}</b>",
         f"📊 Матчи: <b>{s['win_rate']}%</b>  |  🎯 Партии: <b>{s['sets_win_rate']}%</b>",
     ]
+    if mvp_id == player.id:
+        lines.append("🌟 Ты MVP месяца!")
 
     lines.extend(_render_stats_lines(player, s))
 
@@ -460,6 +475,50 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=player_profile_kb(player.id, viewer_id=viewer_id, can_challenge=can_challenge),
+    )
+
+
+# ── Калькулятор «Что если» (базовая версия, v2.121.0) ────────────────────────────
+# Ориентировочная дельта рейтинга для гипотетического матча — без начала матча
+# и без записи в БД, чистое вычисление по already-known рейтингам. Диапазон
+# («на тоненького» vs «разгром»), не точная цифра — реальный счёт партий
+# заранее не известен. Расширенный вариант (3 сценария, апсет отдельно) — на
+# паузе, см. CLAUDE.md.
+
+@router.callback_query(F.data.startswith("what_if_"))
+async def show_what_if(callback: CallbackQuery, session: AsyncSession):
+    try:
+        target_id = int(callback.data.rsplit("_", 1)[-1])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
+
+    viewer = await get_player(session, callback.from_user.id)
+    if not viewer:
+        await callback.answer("Сначала напиши /start", show_alert=True)
+        return
+
+    tp_r = await session.execute(select(Player).where(Player.id == target_id))
+    opponent = tp_r.scalar_one_or_none()
+    if not opponent:
+        await callback.answer("Игрок не найден.", show_alert=True)
+        return
+
+    await callback.answer()
+
+    match_counts = await get_match_counts(session)
+    viewer_is_newcomer = match_counts.get(viewer.id, 0) < NEWCOMER_THRESHOLD
+    (win_lo, win_hi), (lose_lo, lose_hi) = what_if_range(
+        viewer.rating, opponent.rating, viewer_is_newcomer,
+    )
+
+    await callback.message.answer(
+        f"🎲 Если сыграешь с <b>{h(opponent.display_name)}</b> сейчас:\n\n"
+        f"Твой рейтинг: <b>{round(viewer.rating)}</b> pts\n"
+        f"Рейтинг соперника: <b>{round(opponent.rating)}</b> pts\n\n"
+        f"🏆 Выиграешь — примерно <b>+{win_lo}…+{win_hi}</b> pts\n"
+        f"💔 Проиграешь — примерно <b>−{lose_lo}…−{lose_hi}</b> pts\n\n"
+        f"<i>Точная цифра зависит от счёта партий</i>"
     )
 
 

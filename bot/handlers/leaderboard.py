@@ -20,6 +20,7 @@ from bot.utils import (
     _pin_champion,
     compute_alltime_streak,
     get_champion_and_challenger,
+    get_mvp_of_month,
     get_player,
     longest_awaited_revenge,
     longest_champion_reign,
@@ -104,6 +105,7 @@ async def _build_leaderboard_screen(session: AsyncSession, telegram_id: int):
     champion, challenger_player = await get_champion_and_challenger(session)
     champion_id = champion.id if champion else None
     challenger_id = challenger_player.id if challenger_player else None
+    mvp_id = await get_mvp_of_month(session)
 
     players = _pin_champion(sorted(played, key=lambda p: -p.rating), champion_id)
 
@@ -151,11 +153,14 @@ async def _build_leaderboard_screen(session: AsyncSession, telegram_id: int):
         count = match_count.get(p.id, 0)
         wins = win_count.get(p.id, 0)
         wr = int(wins / count * 100) if count else 0
-        # 👑/🗡 приоритетнее ❄️/🔥 (босс-файт важнее формы), ❄️ приоритетнее 🔥
+        # 👑/🗡 приоритетнее 🌟 (босс-файт важнее звания месяца), 🌟 приоритетнее
+        # ❄️/🔥 (MVP месяца заметнее формы недели), ❄️ приоритетнее 🔥
         if champion_id is not None and p.id == champion_id:
             badge = " 👑"
         elif challenger_id is not None and p.id == challenger_id:
             badge = " 🗡"
+        elif mvp_id is not None and p.id == mvp_id:
+            badge = " 🌟"
         elif p.id not in active_7day:
             badge = " ❄️"
         elif streak_map.get(p.id, 0) >= 3:
