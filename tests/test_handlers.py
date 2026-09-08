@@ -2922,6 +2922,17 @@ def test_main_menu_kb_challenge_button_uses_pool_label():
     assert play_button.text in texts
 
 
+def test_main_menu_kb_matches_button_renamed_to_recommendations():
+    """«Мои матчи» → «Рекомендации» (v2.124.0) — старое название вводило в
+    заблуждение: экран не про личную историю, а про клубные активные матчи и
+    рекомендации соперника, дублируя «Вызвать на матч» с доп. контекстом."""
+    from bot.keyboards.inline import main_menu_kb
+
+    kb = main_menu_kb()
+    matches_button = next(b for row in kb.inline_keyboard for b in row if b.callback_data == "menu_matches")
+    assert matches_button.text == "🎯 Рекомендации"
+
+
 async def test_reply_kb_challenge_button_accepts_every_pool_label(db):
     """Хендлер матчит ВЕСЬ пул подписей (F.text.in_), не только оригинал —
     иначе после ротации подписи кнопка молча переставала бы работать."""

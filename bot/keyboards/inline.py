@@ -58,7 +58,7 @@ def main_menu_kb(
     b.row(InlineKeyboardButton(text="📊 Рейтинг", callback_data="menu_leaderboard"))
     b.row(
         InlineKeyboardButton(text="📈 Статистика", callback_data="menu_stats"),
-        InlineKeyboardButton(text="🎮 Мои матчи", callback_data="menu_matches"),
+        InlineKeyboardButton(text="🎯 Рекомендации", callback_data="menu_matches"),
     )
     return b.as_markup()
 
