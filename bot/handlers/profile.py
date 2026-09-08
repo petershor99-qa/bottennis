@@ -19,7 +19,12 @@ from bot.services.achievements import (
     get_achievements,
 )
 from bot.services.rating import what_if_range
-from bot.services.stats import _build_career_narrative, _compute_player_stats, _nearest_achievement_progress
+from bot.services.stats import (
+    _build_career_narrative,
+    _compute_player_stats,
+    _growth_area,
+    _nearest_achievement_progress,
+)
 from bot.utils import (
     NEWCOMER_THRESHOLD,
     _challenger_among,
@@ -301,6 +306,10 @@ async def _build_stats_screen(session: AsyncSession, player: Player):
     progress = _nearest_achievement_progress(player, s, len(players_all))
     if progress:
         lines.append(progress)
+
+    growth_area = _growth_area(s)
+    if growth_area:
+        lines.append(growth_area)
 
     if matches:
         lines.append("\n<b>Последние матчи:</b>")

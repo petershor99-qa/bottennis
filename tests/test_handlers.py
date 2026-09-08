@@ -757,6 +757,7 @@ def _full_stats(**overrides) -> dict:
         "favorite_score": None, "style_insight": None,
         "comeback_wins": 0, "unresolved_debts": [],
         "stability_score": 100, "activity_streak_days": 0,
+        "first_set_wins": 0,
     }
     base.update(overrides)
     return base
@@ -1244,6 +1245,59 @@ def test_archetype_picks_most_extreme_axis():
     assert _style_archetype(radar) == "Феникс"
 
 
+# ── _growth_area («есть над чем поработать», v2.125.0) ──────────────────────────
+
+def test_growth_area_none_when_nothing_stands_out():
+    from bot.services.stats import _growth_area
+    assert _growth_area(_full_stats()) is None
+
+
+def test_growth_area_deuce_weakness():
+    from bot.services.stats import _growth_area
+    s = _full_stats(deuce_total=5, deuce_won=1)  # 20% на дьюсе
+    text = _growth_area(s)
+    assert "дьюсе" in text and "20%" in text
+
+
+def test_growth_area_deuce_ignored_below_sample_threshold():
+    """Меньше 3 партий на дьюсе — недостаточно данных, не показываем."""
+    from bot.services.stats import _growth_area
+    s = _full_stats(deuce_total=2, deuce_won=0)
+    assert _growth_area(s) is None
+
+
+def test_growth_area_first_set_conversion_weakness():
+    from bot.services.stats import _growth_area
+    s = _full_stats(first_set_wins=4, first_set_conv=30)
+    text = _growth_area(s)
+    assert "дожимаешь матч" in text and "30%" in text
+
+
+def test_growth_area_first_set_ignored_below_sample_threshold():
+    from bot.services.stats import _growth_area
+    s = _full_stats(first_set_wins=2, first_set_conv=0)
+    assert _growth_area(s) is None
+
+
+def test_growth_area_low_stability():
+    from bot.services.stats import _growth_area
+    s = _full_stats(stability_score=10)
+    text = _growth_area(s)
+    assert "скачет" in text
+
+
+def test_growth_area_picks_most_extreme_candidate():
+    """Если проседает несколько метрик сразу — показываем самую выраженную."""
+    from bot.services.stats import _growth_area
+    s = _full_stats(
+        deuce_total=5, deuce_won=3,       # 60% на дьюсе - не проседает
+        stability_score=5,                # margin 35 - сильно проседает
+        first_set_wins=4, first_set_conv=45,  # margin 5 - едва проседает
+    )
+    text = _growth_area(s)
+    assert "скачет" in text
+
+
 def test_style_narrative_dominant_win_rate():
     from bot.services.stats import _build_style_narrative
     text = _build_style_narrative(_radar(**{"Винрейт": 70.0}))
@@ -1723,6 +1777,26 @@ async def test_my_stats_no_mvp_callout_when_viewer_is_not_mvp(db):
 
     text = cb.message.edit_text.call_args[0][0]
     assert "MVP месяца" not in text
+
+
+async def test_my_stats_shows_growth_area_when_stability_is_low(db):
+    from bot.handlers.profile import show_my_stats
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    # Чередующиеся крупные +/- дельты — низкая стабильность
+    for i, (delta, winner) in enumerate([
+        (30.0, p1.id), (30.0, p2.id), (30.0, p1.id), (30.0, p2.id),
+    ]):
+        db.add(_completed(p1, p2, winner, delta, datetime(2026, 1, 1 + i, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "menu_stats")
+    await show_my_stats(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "скачет" in text
 
 
 async def test_player_chart_invalid_id(db):

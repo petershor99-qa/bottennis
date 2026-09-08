@@ -292,6 +292,7 @@ def _compute_player_stats(player, all_matches: list) -> dict:
         "best_streak": best_streak,
         "total_sets_played": total_sets_played,
         "first_set_conv": int(first_set_then_match_wins / first_set_wins * 100) if first_set_wins else None,
+        "first_set_wins": first_set_wins,
         "fav_format": fav_format,
         "best_day": best_day, "best_day_count": best_day_count,
         "beaten_opponents_count": beaten_opponents_count,
@@ -391,6 +392,43 @@ def _style_archetype(radar: dict[str, float]) -> str | None:
             best_margin = margin
             best_label = label
     return best_label
+
+
+# ── «Есть над чем поработать» (v2.125.0) ────────────────────────────────────────
+# Зеркало _style_archetype выше — там ищем самую сильную черту, здесь самую
+# слабую среди трёх кандидатов (дьюс/конвертация лидерства/стабильность).
+# Показывается ОДНА строка — самая выраженная слабость, только если сэмпл
+# достаточен и показатель заметно хуже нормы. Тишина, если ничего не проседает
+# (тот же принцип, что у архетипа — не натягиваем вывод на пустом месте).
+
+def _growth_area(s: dict) -> str | None:
+    candidates: list[tuple[float, str]] = []
+
+    if s["deuce_total"] >= 3:
+        deuce_wr = s["deuce_won"] / s["deuce_total"] * 100
+        if deuce_wr < 40:
+            candidates.append((
+                40 - deuce_wr,
+                f"🎯 На дьюсе выигрываешь только {round(deuce_wr)}% партий — "
+                f"можно потренировать нервы в концовке.",
+            ))
+
+    if s["first_set_wins"] >= 3 and s["first_set_conv"] is not None and s["first_set_conv"] < 50:
+        candidates.append((
+            50 - s["first_set_conv"],
+            f"🎯 Выиграв первую партию, дожимаешь матч только в {s['first_set_conv']}% "
+            f"случаев — есть над чем поработать.",
+        ))
+
+    if s["stability_score"] < 40:
+        candidates.append((
+            40 - s["stability_score"],
+            "🎯 Рейтинг у тебя скачет сильнее обычного — стабильность обычно приходит с объёмом игр.",
+        ))
+
+    if not candidates:
+        return None
+    return max(candidates, key=lambda c: c[0])[1]
 
 
 # ── Career narrative (v2.112.0) ─────────────────────────────────────────────────
