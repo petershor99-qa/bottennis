@@ -16,7 +16,7 @@ from bot.keyboards.inline import (
     player_history_kb,
     player_profile_kb,
 )
-from bot.services.stats import _build_style_radar, _compute_player_stats
+from bot.services.stats import _build_style_narrative, _build_style_radar, _compute_player_stats
 from bot.utils import (
     HEATMAP_DAYS,
     _match_line,
@@ -245,14 +245,16 @@ async def show_style_radar(callback: CallbackQuery, session: AsyncSession, bot: 
         except Exception:
             pass
 
+    narrative = _build_style_narrative(radar)
     axes_line = "  ·  ".join(f"{name}: {round(val)}%" for name, val in radar.items())
+    caption_lines = [f"🕸 <b>Стиль игры — {h(player.display_name)}</b>"]
+    if narrative:
+        caption_lines.append(narrative)
+    caption_lines.append(f"<i>{axes_line}</i>")
     try:
         sent = await bot.send_photo(
             chat_id, url,
-            caption=(
-                f"🕸 <b>Стиль игры — {h(player.display_name)}</b>\n"
-                f"{axes_line}"
-            ),
+            caption="\n\n".join(caption_lines),
         )
         _last_radar_msg[chat_id] = sent.message_id
         await callback.answer()
