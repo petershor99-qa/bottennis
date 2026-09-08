@@ -9,7 +9,13 @@ from datetime import datetime, timedelta, timezone
 from html import escape as h
 
 from bot.services.achievements import ACHIEVEMENTS_MAP, get_achievements
-from bot.utils import match_rating_delta, pluralize_losses, pluralize_matches, pluralize_times
+from bot.utils import (
+    activity_counts_by_day,
+    match_rating_delta,
+    pluralize_losses,
+    pluralize_matches,
+    pluralize_times,
+)
 
 
 def _compute_player_stats(player, all_matches: list) -> dict:
@@ -42,6 +48,7 @@ def _compute_player_stats(player, all_matches: list) -> dict:
     sets_won = sets_total = 0
     deuce_total = deuce_won = 0
     career_points = 0
+    comeback_wins = 0
     for m in all_matches:
         if m.sets_data:
             i_am_ch = m.challenger_id == player.id
@@ -64,8 +71,22 @@ def _compute_player_stats(player, all_matches: list) -> dict:
                     deuce_total += 1
                     if won_this_set:
                         deuce_won += 1
+            # Камбэк (для радара стиля, v2.121.0) — победил, проиграв первые
+            # ДВЕ партии. sets_data уже в перспективе победителя, а победитель
+            # тут — сам игрок, поэтому s["w"]/s["l"] читаются напрямую, без
+            # инверсии (тот же критерий, что у match_report() в utils.py).
+            if i_am_winner and len(m.sets_data) >= 2:
+                s0, s1 = m.sets_data[0], m.sets_data[1]
+                if s0["w"] < s0["l"] and s1["w"] < s1["l"]:
+                    comeback_wins += 1
 
+    # Незакрытые долги (v2.121.0) — соперники, чей САМЫЙ ПОСЛЕДНИЙ матч против
+    # игрока был поражением (и с тех пор реванша не было). all_matches уже
+    # отсортирован desc(completed_at), поэтому первое попадание каждого
+    # соперника в цикле — это и есть его самый недавний матч с игроком.
     opp_stats: dict[int, dict] = {}
+    unresolved_debts: list[str] = []
+    seen_recent: set[int] = set()
     for m in all_matches:
         opp = m.challenged if m.challenger_id == player.id else m.challenger
         if opp.id not in opp_stats:
@@ -77,6 +98,10 @@ def _compute_player_stats(player, all_matches: list) -> dict:
             opp_stats[opp.id]["draws"] += 1
         else:
             opp_stats[opp.id]["losses"] += 1
+        if opp.id not in seen_recent:
+            seen_recent.add(opp.id)
+            if m.winner_id is not None and m.winner_id != player.id:
+                unresolved_debts.append(opp.display_name)
 
     rated = [m for m in all_matches if m.rating_change is not None]
     avg_delta = best_win = None
@@ -88,6 +113,31 @@ def _compute_player_stats(player, all_matches: list) -> dict:
         best_win = max(win_deltas) if win_deltas else None
         total_earned = round(sum(d for d in deltas if d > 0), 1)
         total_lost = round(abs(sum(d for d in deltas if d < 0)), 1)
+
+    # Стабильность (для радара стиля, v2.121.0) — тот же принцип, что у
+    # steadiest_career() в utils.py (клубный рекорд), но за карьеру ОДНОГО
+    # игрока и уже переведён в шкалу 0-100: средняя «холостая» амплитуда
+    # рейтинга за матч (abs_total - abs(net)) / count — чем ближе к 0, тем
+    # ровнее игра (колебания туда-сюда гасят друг друга меньше). Эмпирический
+    # коэффициент 3 подобран так, чтобы типичный разброс (~15-20 pts) не
+    # сразу обнулял шкалу — не более точная наука, чем другие пороги в файле.
+    stability_score = 100.0
+    if rated:
+        abs_total = sum(abs(d) for d in deltas)
+        net = abs(sum(deltas))
+        volatility = (abs_total - net) / len(deltas)
+        stability_score = max(0.0, 100.0 - volatility * 3)
+
+    # Стрик активности (v2.121.0) — сколько дней ПОДРЯД (МСК) заканчивая
+    # последним днём с матчем игрок выходил к столу. Не про победы (это уже
+    # streak/best_streak выше) — про сам факт игры изо дня в день.
+    activity_streak_days = 0
+    day_counts = activity_counts_by_day(all_matches)
+    if day_counts:
+        d = max(day_counts)
+        while d in day_counts:
+            activity_streak_days += 1
+            d -= timedelta(days=1)
 
     week_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
     recent_7 = sorted(
@@ -251,6 +301,26 @@ def _compute_player_stats(player, all_matches: list) -> dict:
         "sets_won": sets_won, "career_points": career_points,
         "lucky_day": lucky_day, "post_loss": post_loss,
         "favorite_score": favorite_score, "style_insight": style_insight,
+        "comeback_wins": comeback_wins, "unresolved_debts": unresolved_debts,
+        "stability_score": round(stability_score), "activity_streak_days": activity_streak_days,
+    }
+
+
+# ── Радар личного стиля (v2.121.0) ──────────────────────────────────────────────
+
+def _build_style_radar(s: dict) -> dict[str, float] | None:
+    """4 оси личного стиля для радар-графика: винрейт, доля партий на дьюсе,
+    доля побед-камбэков среди всех побед, стабильность. None, если ещё не
+    сыграно ни одной партии — рисовать радар не из чего."""
+    if s["total_sets_played"] == 0:
+        return None
+    deuce_rate = round(s["deuce_total"] / s["total_sets_played"] * 100)
+    comeback_rate = round(s["comeback_wins"] / s["wins"] * 100) if s["wins"] else 0
+    return {
+        "Винрейт": float(s["win_rate"]),
+        "На дьюсе": float(deuce_rate),
+        "Камбэки": float(comeback_rate),
+        "Стабильность": float(s["stability_score"]),
     }
 
 

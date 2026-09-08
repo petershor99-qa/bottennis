@@ -14,7 +14,7 @@ import pytest_asyncio
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import selectinload, sessionmaker
 
@@ -755,6 +755,8 @@ def _full_stats(**overrides) -> dict:
         "deuce_total": 0, "deuce_won": 0,
         "lucky_day": None, "post_loss": None,
         "favorite_score": None, "style_insight": None,
+        "comeback_wins": 0, "unresolved_debts": [],
+        "stability_score": 100, "activity_streak_days": 0,
     }
     base.update(overrides)
     return base
@@ -1054,6 +1056,171 @@ async def test_compute_stats_style_insight_none_when_close(db):
     assert s["style_insight"] is None
 
 
+# ── Новые поля _compute_player_stats для v2.121.0 ────────────────────────────────
+
+async def test_compute_stats_comeback_win_counted(db):
+    """Победа после 0:2 по партиям — комбэк, для «Камбэков» на радаре стиля."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id,
+        sets_data=[{"w": 6, "l": 11}, {"w": 8, "l": 11}, {"w": 11, "l": 6}, {"w": 11, "l": 6}, {"w": 11, "l": 6}],
+        rating_change=10.0, completed_at=datetime(2026, 1, 1, 12, 0, 0),
+    ))
+    await db.commit()
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["comeback_wins"] == 1
+
+
+async def test_compute_stats_no_comeback_when_only_first_set_lost(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=p1.id,
+        sets_data=[{"w": 6, "l": 11}, {"w": 11, "l": 6}, {"w": 11, "l": 6}],
+        rating_change=10.0, completed_at=datetime(2026, 1, 1, 12, 0, 0),
+    ))
+    await db.commit()
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["comeback_wins"] == 0
+
+
+async def test_compute_stats_unresolved_debt_when_last_match_lost(db):
+    """Самый недавний матч против Bob — поражение, реванша ещё не было."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 1, 1, 12, 0, 0)))   # выиграла
+    db.add(_completed(p1, p2, p2.id, 5.0, datetime(2026, 1, 5, 12, 0, 0)))  # проиграла (последний)
+    await db.commit()
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+        .order_by(Match.completed_at.desc())
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["unresolved_debts"] == ["Bob"]
+
+
+async def test_compute_stats_no_debt_after_revenge(db):
+    """Проиграла, но потом отыгралась — долг закрыт, в списке быть не должно."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p2.id, 5.0, datetime(2026, 1, 1, 12, 0, 0)))  # проиграла
+    db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 1, 5, 12, 0, 0)))  # реванш (последний)
+    await db.commit()
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+        .order_by(Match.completed_at.desc())
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["unresolved_debts"] == []
+
+
+async def test_compute_stats_activity_streak_counts_consecutive_days(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for d in (1, 2, 3):  # 3 дня подряд
+        db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 1, d, 12, 0, 0)))
+    db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 1, 10, 12, 0, 0)))  # разрыв, не в счёт
+    await db.commit()
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["activity_streak_days"] == 1  # последний активный день (10-е) не имеет соседей
+
+
+async def test_compute_stats_stability_score_lower_with_volatile_deltas(db):
+    """Игрок с чередующимися большими +/- дельтами — менее стабилен, чем тот,
+    у кого дельты идут ровно в одну сторону."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    p3, p4 = _player(3, "Cara"), _player(4, "Dan")
+    db.add_all([p1, p2, p3, p4])
+    await db.flush()
+    # Alice: +30, -30, +30, -30 — волатильно
+    for i, (opp, delta, winner) in enumerate([
+        (p2, 30.0, p1.id), (p2, 30.0, p2.id), (p2, 30.0, p1.id), (p2, 30.0, p2.id),
+    ]):
+        db.add(_completed(p1, opp, winner, delta, datetime(2026, 1, 1 + i, 12, 0, 0)))
+    # Cara: +10, +10, +10, +10 — ровно
+    for i in range(4):
+        db.add(_completed(p3, p4, p3.id, 10.0, datetime(2026, 2, 1 + i, 12, 0, 0)))
+    await db.commit()
+
+    alice_r = await db.execute(
+        select(Match).where(or_(Match.challenger_id == p1.id, Match.challenged_id == p1.id))
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+    )
+    cara_r = await db.execute(
+        select(Match).where(or_(Match.challenger_id == p3.id, Match.challenged_id == p3.id))
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+    )
+    s_alice = _compute_player_stats(p1, alice_r.scalars().all())
+    s_cara = _compute_player_stats(p3, cara_r.scalars().all())
+    assert s_alice["stability_score"] < s_cara["stability_score"]
+    assert s_cara["stability_score"] == 100
+
+
+def test_build_style_radar_none_when_no_sets():
+    from bot.services.stats import _build_style_radar
+    assert _build_style_radar(_full_stats(total_sets_played=0)) is None
+
+
+def test_build_style_radar_returns_four_axes():
+    from bot.services.stats import _build_style_radar
+    radar = _build_style_radar(_full_stats(
+        win_rate=60, total_sets_played=20, deuce_total=5,
+        comeback_wins=2, wins=6, stability_score=70,
+    ))
+    assert set(radar.keys()) == {"Винрейт", "На дьюсе", "Камбэки", "Стабильность"}
+    assert radar["Винрейт"] == 60.0
+    assert radar["На дьюсе"] == 25.0  # 5/20*100
+    assert radar["Камбэки"] == round(2 / 6 * 100)
+    assert radar["Стабильность"] == 70.0
+
+
+def test_render_stats_lines_shows_activity_streak():
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    lines = _render_stats_lines(p, _full_stats(activity_streak_days=4))
+    assert any("4 дня" in ln and "подряд" in ln for ln in lines)
+
+
+def test_render_stats_lines_no_activity_streak_below_two_days():
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    lines = _render_stats_lines(p, _full_stats(activity_streak_days=1))
+    assert not any("подряд" in ln and "Играешь" in ln for ln in lines)
+
+
+def test_render_stats_lines_shows_unresolved_debts():
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    lines = _render_stats_lines(p, _full_stats(unresolved_debts=["Bob", "Cara"]))
+    assert any("Незакрытые долги" in ln and "Bob" in ln and "Cara" in ln for ln in lines)
+
+
+def test_render_stats_lines_debts_truncated_with_count():
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    lines = _render_stats_lines(p, _full_stats(unresolved_debts=["A", "B", "C", "D", "E"]))
+    debt_line = next(ln for ln in lines if "Незакрытые долги" in ln)
+    assert "+2" in debt_line
+
+
 def test_render_stats_lines_shows_lucky_day():
     p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
     lines = _render_stats_lines(p, _full_stats(lucky_day=("Пн", 100)))
@@ -1337,6 +1504,119 @@ async def test_leaderboard_empty_when_no_completed_matches(db):
     assert "Пока нет сыгранных матчей" in text
 
 
+# ── MVP месяца (v2.121.0) ───────────────────────────────────────────────────────
+
+async def test_get_mvp_of_month_none_when_no_matches_this_month(db):
+    from bot.utils import get_mvp_of_month
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    old = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=40)
+    db.add(_completed(p1, p2, p1.id, 10.0, old))
+    await db.commit()
+    assert await get_mvp_of_month(db) is None
+
+
+async def test_get_mvp_of_month_picks_biggest_net_gain(db):
+    from bot.utils import get_mvp_of_month
+
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+    db.add(_completed(p1, p2, p1.id, 10.0, now))   # Alice +10
+    db.add(_completed(p3, p2, p3.id, 25.0, now))   # Cara +25 — больше
+    await db.commit()
+    assert await get_mvp_of_month(db) == p3.id
+
+
+async def test_get_mvp_of_month_none_when_no_positive_gain(db):
+    """Только нулевые дельты (ничьи между равными) — прироста ни у кого нет."""
+    from bot.utils import get_mvp_of_month
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
+        winner_id=None, sets_data=[{"w": 11, "l": 9}, {"w": 9, "l": 11}],
+        rating_change=0.0, completed_at=now,
+    ))
+    await db.commit()
+    assert await get_mvp_of_month(db) is None
+
+
+async def test_leaderboard_shows_mvp_badge(db):
+    from bot.handlers.leaderboard import show_leaderboard
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+    db.add(_completed(p1, p2, p1.id, 30.0, now))
+    await db.commit()
+
+    cb = _callback(1, "menu_leaderboard")
+    await show_leaderboard(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "🌟" in text
+
+
+async def test_challenge_screen_players_list_shows_mvp_badge(db):
+    from bot.handlers.challenge import show_players_for_challenge
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+    db.add(_completed(p1, p2, p2.id, 30.0, now))  # Bob набрал очков в этом месяце
+    await db.commit()
+
+    cb = _callback(1, "menu_play")
+    await show_players_for_challenge(cb, db)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    buttons = [b.text for row in kb.inline_keyboard for b in row]
+    assert any("🌟" in t and "Bob" in t for t in buttons)
+
+
+async def test_my_stats_shows_mvp_callout_when_viewer_is_mvp(db):
+    from bot.handlers.profile import show_my_stats
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+    db.add(_completed(p1, p2, p1.id, 30.0, now))
+    await db.commit()
+
+    cb = _callback(1, "menu_stats")
+    await show_my_stats(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "MVP месяца" in text
+
+
+async def test_my_stats_no_mvp_callout_when_viewer_is_not_mvp(db):
+    from bot.handlers.profile import show_my_stats
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+    db.add(_completed(p1, p2, p2.id, 30.0, now))  # Bob - MVP, не Alice
+    await db.commit()
+
+    cb = _callback(1, "menu_stats")
+    await show_my_stats(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "MVP месяца" not in text
+
+
 async def test_player_chart_invalid_id(db):
     from bot.handlers.history import show_player_rating_chart
 
@@ -1414,6 +1694,52 @@ async def test_activity_heatmap_me_sends_photo_with_club_toggle(db):
     assert any(b.callback_data == "activity_heatmap_club" for b in buttons)
     caption = bot.send_photo.call_args.kwargs["caption"]
     assert "Моя активность" in caption
+
+
+# ── Радар личного стиля (v2.121.0) ──────────────────────────────────────────────
+
+async def test_style_radar_requires_registration(db):
+    from bot.handlers.history import show_style_radar
+
+    cb, bot = _callback(1, "style_radar"), AsyncMock()
+    await show_style_radar(cb, db, bot)
+    cb.answer.assert_awaited_with("Сначала напиши /start", show_alert=True)
+    bot.send_photo.assert_not_called()
+
+
+async def test_style_radar_requires_minimum_matches(db):
+    from bot.handlers.history import MIN_MATCHES_FOR_RADAR, show_style_radar
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(MIN_MATCHES_FOR_RADAR - 1):
+        db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 1, 1 + i, 12, 0, 0)))
+    await db.commit()
+
+    cb, bot = _callback(1, "style_radar"), AsyncMock()
+    await show_style_radar(cb, db, bot)
+    bot.send_photo.assert_not_called()
+    assert "минимум" in cb.answer.call_args.args[0]
+
+
+async def test_style_radar_sends_photo_with_axes_caption(db):
+    from bot.handlers.history import MIN_MATCHES_FOR_RADAR, show_style_radar
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(MIN_MATCHES_FOR_RADAR):
+        db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 1, 1 + i, 12, 0, 0)))
+    await db.commit()
+
+    cb, bot = _callback(1, "style_radar"), AsyncMock()
+    await show_style_radar(cb, db, bot)
+
+    bot.send_photo.assert_awaited()
+    caption = bot.send_photo.call_args.kwargs["caption"]
+    assert "Стиль игры" in caption
+    assert "Винрейт" in caption
 
 
 async def test_activity_heatmap_club_sends_photo_with_personal_toggle(db):
@@ -1882,17 +2208,19 @@ def test_today_button_moved_from_leaderboard_to_stats_kb():
 
 
 def test_stats_kb_grouped_two_per_row():
-    """6 экранных ссылок на «Статистике» сгруппированы по 2 в ряд (v2.114.0),
-    не растянуты в столбец на 7 строк — по прямой просьбе пользователя."""
+    """Экранные ссылки на «Статистике» сгруппированы по 2 в ряд (v2.114.0),
+    не растянуты в столбец — по прямой просьбе пользователя. «Стиль»
+    (v2.121.0) — 7-я ссылка, нечётная, идёт одиночной строкой перед «В меню»."""
     from bot.keyboards.inline import stats_kb
 
     rows = stats_kb().inline_keyboard
-    link_rows = rows[:-1]  # последняя строка — одиночная «« В меню»
+    link_rows = rows[:-2]  # последние 2 строки — «Стиль» соло и «« В меню»
     assert all(len(row) == 2 for row in link_rows)
+    assert len(rows[-2]) == 1 and rows[-2][0].callback_data == "style_radar"
     all_callbacks = {btn.callback_data for row in rows for btn in row}
     assert all_callbacks == {
         "history_0", "rating_chart", "activity_heatmap_me", "career_recap",
-        "my_achievements", "menu_today", "back_to_menu",
+        "my_achievements", "menu_today", "style_radar", "back_to_menu",
     }
 
 
@@ -2286,6 +2614,63 @@ async def test_player_profile_shows_challenge_when_both_free(db):
     kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
     buttons = [b.text for row in kb.inline_keyboard for b in row]
     assert any("Вызвать" in t for t in buttons)
+
+
+# ── Калькулятор «Что если» (v2.121.0) ────────────────────────────────────────────
+
+async def test_player_profile_has_what_if_button(db):
+    from bot.handlers.profile import show_player_profile
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.commit()
+
+    cb = _callback(1, f"player_profile_{p2.id}")
+    await show_player_profile(cb, db)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    buttons = [b for row in kb.inline_keyboard for b in row]
+    assert any(b.callback_data == f"what_if_{p2.id}" for b in buttons)
+
+
+async def test_what_if_requires_registration(db):
+    from bot.handlers.profile import show_what_if
+
+    p2 = _player(2, "Bob")
+    db.add(p2)
+    await db.commit()
+
+    cb = _callback(1, f"what_if_{p2.id}")
+    await show_what_if(cb, db)
+    cb.answer.assert_awaited_with("Сначала напиши /start", show_alert=True)
+
+
+async def test_what_if_unknown_opponent(db):
+    from bot.handlers.profile import show_what_if
+
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.commit()
+
+    cb = _callback(1, "what_if_999")
+    await show_what_if(cb, db)
+    cb.answer.assert_awaited_with("Игрок не найден.", show_alert=True)
+
+
+async def test_what_if_shows_range_message(db):
+    from bot.handlers.profile import show_what_if
+
+    p1, p2 = _player(1, "Alice", 1000.0), _player(2, "Bob", 1300.0)
+    db.add_all([p1, p2])
+    await db.commit()
+
+    cb = _callback(1, f"what_if_{p2.id}")
+    await show_what_if(cb, db)
+
+    text = cb.message.answer.call_args.args[0]
+    assert "Bob" in text
+    assert "Выиграешь" in text and "Проиграешь" in text
+    assert "1000" in text and "1300" in text
 
 
 async def test_h2h_hides_challenge_when_viewer_busy(db):

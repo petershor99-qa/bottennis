@@ -16,6 +16,7 @@ from bot.keyboards.inline import (
     player_history_kb,
     player_profile_kb,
 )
+from bot.services.stats import _build_style_radar, _compute_player_stats
 from bot.utils import (
     HEATMAP_DAYS,
     _match_line,
@@ -26,9 +27,11 @@ from bot.utils import (
     compute_h2h,
     favor_icon,
     get_active_match,
+    get_career_matches,
     get_player,
     get_rec_signal,
     rating_chart_url,
+    style_radar_url,
 )
 
 router = Router()
@@ -200,6 +203,61 @@ async def show_activity_heatmap_club(callback: CallbackQuery, session: AsyncSess
         await callback.answer("Сначала напиши /start", show_alert=True)
         return
     await _send_activity_heatmap(session, callback, bot, player, club=True)
+
+
+# ── Радар личного стиля (v2.121.0) ──────────────────────────────────────────────
+# Тот же паттерн «шлём фото, удаляем предыдущее», что и у графика рейтинга и
+# карты активности — свой dict, чтобы не затирать message_id соседних картинок.
+
+_last_radar_msg: dict[int, int] = {}
+
+MIN_MATCHES_FOR_RADAR = 5
+
+
+@router.callback_query(F.data == "style_radar")
+async def show_style_radar(callback: CallbackQuery, session: AsyncSession, bot: Bot):
+    player = await get_player(session, callback.from_user.id)
+    if not player:
+        await callback.answer("Сначала напиши /start", show_alert=True)
+        return
+
+    all_matches = await get_career_matches(session, player.id, with_opponents=True)
+    if len(all_matches) < MIN_MATCHES_FOR_RADAR:
+        await callback.answer(
+            f"Нужно минимум {MIN_MATCHES_FOR_RADAR} матчей для радара стиля 🏓",
+            show_alert=True,
+        )
+        return
+
+    s = _compute_player_stats(player, all_matches)
+    radar = _build_style_radar(s)
+    if radar is None:
+        await callback.answer("Пока не сыграно ни одной партии.", show_alert=True)
+        return
+
+    url = style_radar_url(player.display_name, radar)
+    chat_id = callback.message.chat.id
+
+    prev_id = _last_radar_msg.get(chat_id)
+    if prev_id is not None:
+        try:
+            await bot.delete_message(chat_id, prev_id)
+        except Exception:
+            pass
+
+    axes_line = "  ·  ".join(f"{name}: {round(val)}%" for name, val in radar.items())
+    try:
+        sent = await bot.send_photo(
+            chat_id, url,
+            caption=(
+                f"🕸 <b>Стиль игры — {h(player.display_name)}</b>\n"
+                f"{axes_line}"
+            ),
+        )
+        _last_radar_msg[chat_id] = sent.message_id
+        await callback.answer()
+    except Exception:
+        await callback.answer("Не удалось построить радар, попробуй позже 🙁", show_alert=True)
 
 
 # ── Полная история матчей (своя) ──────────────────────────────────────────────

@@ -89,6 +89,7 @@ def stats_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🏅 Достижения", callback_data="my_achievements"),
         InlineKeyboardButton(text="📅 Сегодня", callback_data="menu_today"),
     )
+    b.row(InlineKeyboardButton(text="🕸 Стиль", callback_data="style_radar"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
 
@@ -171,6 +172,7 @@ def players_list_kb(
     champion_id: int | None = None,
     challenger_id: int | None = None,
     boss_fight_target: tuple[int, str] | None = None,
+    mvp_id: int | None = None,
 ) -> InlineKeyboardMarkup:
     """boss_fight_target — (champion_id, champion_name), передаётся только когда
     зритель сам является текущим претендентом: первой строкой добавляется
@@ -187,11 +189,14 @@ def players_list_kb(
         if p.telegram_id != exclude_telegram_id:
             rank_str = f"#{rank_map[p.id]}  " if rank_map and p.id in rank_map else ""
             icon = favor_icon(p.rating - my_rating) if my_rating is not None else ""
-            # 👑/🗡 приоритетнее ❄️/🔥 (босс-файт важнее формы), ❄️ приоритетнее 🔥
+            # 👑/🗡 приоритетнее 🌟 (босс-файт важнее звания месяца), 🌟
+            # приоритетнее ❄️/🔥 (MVP месяца заметнее формы недели)
             if champion_id is not None and p.id == champion_id:
                 badge = " 👑"
             elif challenger_id is not None and p.id == challenger_id:
                 badge = " 🗡"
+            elif mvp_id is not None and p.id == mvp_id:
+                badge = " 🌟"
             elif inactive_ids and p.id in inactive_ids:
                 badge = " ❄️"
             elif streak_map and streak_map.get(p.id, 0) >= 3:
@@ -285,7 +290,12 @@ def player_profile_kb(
     b = InlineKeyboardBuilder()
     if viewer_id is not None and viewer_id != player_id:
         if can_challenge:
-            b.row(InlineKeyboardButton(text="⚔️ Вызвать", callback_data=f"challenge_{player_id}"))
+            b.row(
+                InlineKeyboardButton(text="⚔️ Вызвать", callback_data=f"challenge_{player_id}"),
+                InlineKeyboardButton(text="🎲 Что если?", callback_data=f"what_if_{player_id}"),
+            )
+        else:
+            b.row(InlineKeyboardButton(text="🎲 Что если?", callback_data=f"what_if_{player_id}"))
         b.row(InlineKeyboardButton(text="🆚 Личные встречи", callback_data=f"h2h_{player_id}_0"))
     b.row(InlineKeyboardButton(
         text="📜 Вся история матчей",
