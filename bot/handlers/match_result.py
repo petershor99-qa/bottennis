@@ -493,7 +493,7 @@ async def _send_easter_eggs(
 
 def _restart_notice_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="🎮 Мои матчи", callback_data="menu_matches"))
+    b.row(InlineKeyboardButton(text="🎯 Рекомендации", callback_data="menu_matches"))
     return b.as_markup()
 
 
@@ -531,7 +531,7 @@ async def fsm_reset_notice(callback: CallbackQuery):
     await callback.answer()
     await callback.message.edit_text(
         "⚠️ Бот перезапускался, ввод результата сбросился.\n\n"
-        "Начни заново через «Внести результат» в 🎮 <b>Мои матчи</b>.",
+        "Начни заново через «Внести результат» в 🎯 <b>Рекомендации</b>.",
         reply_markup=_restart_notice_kb(),
     )
 
@@ -723,7 +723,7 @@ async def handle_direct_score(message: Message, session: AsyncSession, state: FS
         # Неоднозначно — у игрока несколько активных матчей
         await message.answer(
             "У тебя несколько активных матчей. "
-            "Выбери нужный через 🎮 <b>Мои матчи</b> → «📋 Внести результат».",
+            "Выбери нужный через 🎯 <b>Рекомендации</b> → «📋 Внести результат».",
             reply_markup=main_menu_kb(),
         )
         return
