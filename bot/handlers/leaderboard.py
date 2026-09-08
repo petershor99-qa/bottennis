@@ -851,14 +851,21 @@ async def show_hall_of_fame(callback: CallbackQuery, session: AsyncSession):
     players_r = await session.execute(select(Player))
     name_map = {p.id: p.display_name for p in players_r.scalars().all()}
 
-    total_pages = max(1, (len(reigns) + HALL_OF_FAME_PAGE_SIZE - 1) // HALL_OF_FAME_PAGE_SIZE)
-    page = max(0, min(page, total_pages - 1))
-    chunk = reigns[page * HALL_OF_FAME_PAGE_SIZE:(page + 1) * HALL_OF_FAME_PAGE_SIZE]
+    # Текущее (незакрытое) правление вынесено в свой блок сверху, отдельно от
+    # истории закрытых правлений (v2.123.0) — по прямой просьбе пользователя:
+    # раньше оно было просто первой строкой списка со словом «сейчас» вместо
+    # даты окончания, визуально не отличаясь от исторических записей. Не более
+    # одного незакрытого правления одновременно — бизнес-инвариант боссфайта.
+    current_reign = next((r for r in reigns if r.ended_at is None), None)
+    closed_reigns = [r for r in reigns if r.ended_at is not None]
 
-    # Шапка с яркими фактами — сколько всего было смен трона + самое короткое
-    # правление (та же метрика, что и в «Рекордах клуба», здесь — для контекста
-    # прямо над списком, чтобы не заставлять читателя листать список самому).
-    # Считается по ПОЛНОМУ списку правлений, не по странице.
+    total_pages = max(1, (len(closed_reigns) + HALL_OF_FAME_PAGE_SIZE - 1) // HALL_OF_FAME_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    chunk = closed_reigns[page * HALL_OF_FAME_PAGE_SIZE:(page + 1) * HALL_OF_FAME_PAGE_SIZE]
+
+    # Факты — сколько всего было смен трона + самое короткое правление (та же
+    # метрика, что и в «Рекордах клуба»). Считается по ПОЛНОМУ списку
+    # правлений (включая текущее), не по странице.
     header_facts = [f"Смен трона: <b>{len(reigns)}</b>"]
     short_reign = await shortest_champion_reign(session)
     if short_reign is not None:
@@ -868,16 +875,26 @@ async def show_hall_of_fame(callback: CallbackQuery, session: AsyncSession):
             f"Самое короткое правление: <b>{h(name_map.get(short_pid, '?'))}</b> ({short_str})"
         )
 
-    lines = [
-        f"🏛 <b>Зал славы</b>  <i>(стр. {page + 1}/{total_pages})</i>",
-        "  •  ".join(header_facts), "",
-    ]
-    for reign in chunk:
-        name = h(name_map.get(reign.player_id, "?"))
-        start_str = reign.started_at.strftime("%d.%m.%y")
-        if reign.ended_at is None:
-            lines.append(f"👑 <b>{name}</b> — сейчас  <i>(с {start_str})</i>")
-        else:
+    lines = ["🏛 <b>Зал славы</b>", ""]
+
+    if current_reign is not None:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        name = h(name_map.get(current_reign.player_id, "?"))
+        start_str = current_reign.started_at.strftime("%d.%m.%y")
+        days = (now - current_reign.started_at).days
+        days_str = "меньше дня" if days == 0 else pluralize_days(days)
+        lines.append(f"👑 Сейчас на троне: <b>{name}</b>")
+        lines.append(f"Правит уже {days_str}  <i>(с {start_str})</i>")
+        lines.append("")
+
+    lines.append("  •  ".join(header_facts))
+    lines.append(f"<i>(стр. {page + 1}/{total_pages})</i>\n")
+
+    if closed_reigns:
+        lines.append("📜 <b>Правления:</b>\n")
+        for reign in chunk:
+            name = h(name_map.get(reign.player_id, "?"))
+            start_str = reign.started_at.strftime("%d.%m.%y")
             end_str = reign.ended_at.strftime("%d.%m.%y")
             days = (reign.ended_at - reign.started_at).days
             days_str = "меньше дня" if days == 0 else pluralize_days(days)
@@ -885,7 +902,9 @@ async def show_hall_of_fame(callback: CallbackQuery, session: AsyncSession):
             narrative = await _reign_end_narrative(session, reign, name_map)
             if narrative:
                 lines.append(f"<i>{narrative}</i>")
-        lines.append("")
+            lines.append("")
+    elif current_reign is not None:
+        lines.append("<i>Прошлых правлений пока не было — это первое.</i>")
 
     await callback.message.edit_text(
         "\n".join(lines).rstrip(),

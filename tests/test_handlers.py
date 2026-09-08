@@ -1204,6 +1204,46 @@ def _radar(**overrides) -> dict:
     return base
 
 
+# ── _style_archetype ──────────────────────────────────────────────────────────
+
+def test_archetype_none_when_nothing_stands_out():
+    from bot.services.stats import _style_archetype
+    assert _style_archetype(_radar()) is None
+
+
+def test_archetype_terminator_high_win_rate():
+    from bot.services.stats import _style_archetype
+    assert _style_archetype(_radar(**{"Винрейт": 75.0})) == "Терминатор"
+
+
+def test_archetype_steel_nerves_high_deuce():
+    from bot.services.stats import _style_archetype
+    assert _style_archetype(_radar(**{"На дьюсе": 40.0})) == "Нервы стальные"
+
+
+def test_archetype_phoenix_high_comeback():
+    from bot.services.stats import _style_archetype
+    assert _style_archetype(_radar(**{"Камбэки": 30.0})) == "Феникс"
+
+
+def test_archetype_metronome_high_stability():
+    from bot.services.stats import _style_archetype
+    assert _style_archetype(_radar(**{"Стабильность": 95.0})) == "Метроном"
+
+
+def test_archetype_rollercoaster_low_stability():
+    from bot.services.stats import _style_archetype
+    assert _style_archetype(_radar(**{"Стабильность": 10.0})) == "🎢 Американские горки"
+
+
+def test_archetype_picks_most_extreme_axis():
+    """Если сработало несколько осей — побеждает та, что дальше всех за
+    порогом, а не первая по порядку правил."""
+    from bot.services.stats import _style_archetype
+    radar = _radar(**{"Винрейт": 65.0, "Камбэки": 50.0})  # +5 vs +30 за порогом
+    assert _style_archetype(radar) == "Феникс"
+
+
 def test_style_narrative_dominant_win_rate():
     from bot.services.stats import _build_style_narrative
     text = _build_style_narrative(_radar(**{"Винрейт": 70.0}))
@@ -1809,6 +1849,7 @@ async def test_style_radar_sends_photo_with_axes_caption(db):
     assert "Стиль игры" in caption
     assert "Винрейт" in caption
     assert "чаще побеждаешь" in caption  # 5/5 побед — репортаж должен это отразить
+    assert "Архетип" in caption and "Терминатор" in caption  # 100% винрейт
 
 
 async def test_activity_heatmap_club_sends_photo_with_personal_toggle(db):
@@ -2079,12 +2120,50 @@ async def test_hall_of_fame_lists_reigns_newest_first(db):
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Зал славы" in text
-    # шапка с фактами (шаг v2.108.0) может упомянуть Alice раньше по тексту
-    # (единственное закрытое правление — оно же и «самое короткое») — порядок
-    # проверяем только внутри списка правлений, после шапки
-    body = text.split("\n\n", 1)[1]
-    assert body.index("Bob") < body.index("Alice")  # свежее правление первым
-    assert "сейчас" in text  # незакрытое правление Bob
+    # Текущее правление (v2.123.0) вынесено в свой блок сверху, отдельно от
+    # истории закрытых правлений — Bob (незакрытое) должен быть раньше по
+    # тексту, чем Alice (закрытое, в разделе «Правления»)
+    assert text.index("Bob") < text.index("Alice")
+    assert "Сейчас на троне" in text  # незакрытое правление Bob — свой блок
+    # Правление Bob не должно дублироваться в разделе «Правления» ниже —
+    # только в верхнем блоке
+    assert text.count("Bob") == 1
+
+
+async def test_hall_of_fame_current_reign_shows_days_held(db):
+    from bot.handlers.leaderboard import show_hall_of_fame
+
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.flush()
+    started = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=12)
+    db.add(ChampionReign(player_id=p1.id, started_at=started, ended_at=None))
+    await db.commit()
+
+    cb = _callback(1, "hall_of_fame")
+    await show_hall_of_fame(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Сейчас на троне: <b>Alice</b>" in text
+    assert "12 дней" in text
+
+
+async def test_hall_of_fame_first_reign_ever_shows_no_history_note(db):
+    """Единственное правление ещё не закрыто — истории закрытых правлений нет,
+    показываем понятную заметку вместо пустого раздела."""
+    from bot.handlers.leaderboard import show_hall_of_fame
+
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.flush()
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=None))
+    await db.commit()
+
+    cb = _callback(1, "hall_of_fame")
+    await show_hall_of_fame(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "первое" in text.lower()
 
 
 async def test_hall_of_fame_empty_when_boss_fight_never_activated(db):
