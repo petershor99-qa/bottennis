@@ -6,6 +6,7 @@ from bot.services.rating import (
     SHORT_MATCH_MULT,
     calculate_draw_rating_change,
     calculate_rating_change,
+    what_if_range,
     win_probability,
 )
 
@@ -123,3 +124,38 @@ def test_draw_is_symmetric():
     """Дельты challenger'а и challenged'а симметричны."""
     delta = calculate_draw_rating_change(900, 1100)
     assert calculate_draw_rating_change(1100, 900) == -delta
+
+
+# ── what_if_range («Что если», v2.121.0) ─────────────────────────────────────
+
+def test_what_if_underdog_wins_more_than_it_loses():
+    """Сильный разрыв в пользу соперника: победа даёт больше очков, чем
+    стоит поражение (апсет ценится, ожидаемый исход — почти бесплатен)."""
+    (win_lo, win_hi), (lose_lo, lose_hi) = what_if_range(1000.0, 1300.0)
+    assert win_lo > lose_hi
+
+
+def test_what_if_favourite_loses_more_than_it_wins():
+    """Зеркальный случай — фаворит вызывает аутсайдера."""
+    (win_lo, win_hi), (lose_lo, lose_hi) = what_if_range(1300.0, 1000.0)
+    assert lose_lo > win_hi
+
+
+def test_what_if_range_ordered_low_to_high():
+    (win_lo, win_hi), (lose_lo, lose_hi) = what_if_range(1000.0, 1050.0)
+    assert win_lo <= win_hi
+    assert lose_lo <= lose_hi
+
+
+def test_what_if_equal_ratings_symmetric():
+    """Равные рейтинги — выигрыш и проигрыш примерно зеркальны."""
+    (win_lo, win_hi), (lose_lo, lose_hi) = what_if_range(1000.0, 1000.0)
+    assert win_lo == lose_lo
+    assert win_hi == lose_hi
+
+
+def test_what_if_newcomer_bonus_increases_win_range():
+    normal = what_if_range(1000.0, 1050.0, viewer_is_newcomer=False)
+    newcomer = what_if_range(1000.0, 1050.0, viewer_is_newcomer=True)
+    assert newcomer[0][0] > normal[0][0]  # win_lo больше с бонусом новичка
+    assert newcomer[0][1] > normal[0][1]  # win_hi тоже

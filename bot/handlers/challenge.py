@@ -24,6 +24,7 @@ from bot.utils import (
     compute_ranks,
     get_active_match,
     get_champion_and_challenger,
+    get_mvp_of_month,
     get_player,
     match_phrase,
     notify_all_players,
@@ -126,6 +127,7 @@ async def _build_challenge_screen(session: AsyncSession, telegram_id: int):
     champion, challenger_player = await get_champion_and_challenger(session)
     champion_id = champion.id if champion else None
     challenger_id = challenger_player.id if challenger_player else None
+    mvp_id = await get_mvp_of_month(session)
 
     # Ранг — единый для всех экранов: только среди игравших (как на лидерборде)
     rank_map = compute_ranks(players, match_count_map, champion_id=champion_id)
@@ -170,7 +172,7 @@ async def _build_challenge_screen(session: AsyncSession, telegram_id: int):
         my_rating=my_rating, rank_map=rank_map,
         streak_map=streak_map, inactive_ids=inactive_ids,
         champion_id=champion_id, challenger_id=challenger_id,
-        boss_fight_target=boss_fight_target,
+        boss_fight_target=boss_fight_target, mvp_id=mvp_id,
     )
 
 
