@@ -1196,6 +1196,74 @@ def test_build_style_radar_returns_four_axes():
     assert radar["Стабильность"] == 70.0
 
 
+# ── _build_style_narrative (репортаж радара стиля) ────────────────────────────
+
+def _radar(**overrides) -> dict:
+    base = {"Винрейт": 50.0, "На дьюсе": 15.0, "Камбэки": 5.0, "Стабильность": 60.0}
+    base.update(overrides)
+    return base
+
+
+def test_style_narrative_dominant_win_rate():
+    from bot.services.stats import _build_style_narrative
+    text = _build_style_narrative(_radar(**{"Винрейт": 70.0}))
+    assert "чаще побеждаешь" in text and "70%" in text
+
+
+def test_style_narrative_struggling_win_rate():
+    from bot.services.stats import _build_style_narrative
+    text = _build_style_narrative(_radar(**{"Винрейт": 30.0}))
+    assert "нелегко" in text and "30%" in text
+
+
+def test_style_narrative_even_win_rate():
+    from bot.services.stats import _build_style_narrative
+    text = _build_style_narrative(_radar(**{"Винрейт": 50.0}))
+    assert "на равных" in text
+
+
+def test_style_narrative_high_deuce_rate():
+    from bot.services.stats import _build_style_narrative
+    text = _build_style_narrative(_radar(**{"На дьюсе": 30.0}))
+    assert "дьюса" in text
+
+
+def test_style_narrative_low_deuce_rate():
+    from bot.services.stats import _build_style_narrative
+    text = _build_style_narrative(_radar(**{"На дьюсе": 5.0}))
+    assert "редко доходят до дьюса" in text
+
+
+def test_style_narrative_no_deuce_line_when_average():
+    from bot.services.stats import _build_style_narrative
+    text = _build_style_narrative(_radar(**{"На дьюсе": 15.0}))
+    assert "дьюс" not in text
+
+
+def test_style_narrative_high_comeback_rate():
+    from bot.services.stats import _build_style_narrative
+    text = _build_style_narrative(_radar(**{"Камбэки": 25.0}))
+    assert "камбэк" in text
+
+
+def test_style_narrative_zero_comebacks():
+    from bot.services.stats import _build_style_narrative
+    text = _build_style_narrative(_radar(**{"Камбэки": 0.0}))
+    assert "Камбэков пока не случалось" in text
+
+
+def test_style_narrative_high_stability():
+    from bot.services.stats import _build_style_narrative
+    text = _build_style_narrative(_radar(**{"Стабильность": 90.0}))
+    assert "ровно" in text
+
+
+def test_style_narrative_low_stability():
+    from bot.services.stats import _build_style_narrative
+    text = _build_style_narrative(_radar(**{"Стабильность": 20.0}))
+    assert "штормит" in text
+
+
 def test_render_stats_lines_shows_activity_streak():
     p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
     lines = _render_stats_lines(p, _full_stats(activity_streak_days=4))
@@ -1740,6 +1808,7 @@ async def test_style_radar_sends_photo_with_axes_caption(db):
     caption = bot.send_photo.call_args.kwargs["caption"]
     assert "Стиль игры" in caption
     assert "Винрейт" in caption
+    assert "чаще побеждаешь" in caption  # 5/5 побед — репортаж должен это отразить
 
 
 async def test_activity_heatmap_club_sends_photo_with_personal_toggle(db):
