@@ -12,6 +12,7 @@ from bot.keyboards.inline import (
     player_achievements_kb,
     player_profile_kb,
     stats_kb,
+    what_if_kb,
 )
 from bot.services.achievements import (
     ACHIEVEMENTS_LIST,
@@ -515,6 +516,14 @@ async def show_what_if(callback: CallbackQuery, session: AsyncSession):
 
     await callback.answer()
 
+    # Тот же расчёт, что и в show_player_profile/show_h2h — не ведём кнопкой
+    # «Вызвать» в тупик, если зритель или соперник уже заняты активным матчем.
+    can_challenge = not (
+        await get_active_match(session, viewer.id)
+        or await get_active_match(session, opponent.id)
+        or await boss_fight_rematch_blocked(session, viewer.id, opponent.id)
+    )
+
     match_counts = await get_match_counts(session)
     viewer_is_newcomer = match_counts.get(viewer.id, 0) < NEWCOMER_THRESHOLD
     (win_lo, win_hi), (lose_lo, lose_hi) = what_if_range(
@@ -527,7 +536,8 @@ async def show_what_if(callback: CallbackQuery, session: AsyncSession):
         f"Рейтинг соперника: <b>{round(opponent.rating)}</b> pts\n\n"
         f"🏆 Выиграешь — примерно <b>+{win_lo}…+{win_hi}</b> pts\n"
         f"💔 Проиграешь — примерно <b>−{lose_lo}…−{lose_hi}</b> pts\n\n"
-        f"<i>Точная цифра зависит от счёта партий</i>"
+        f"<i>Точная цифра зависит от счёта партий</i>",
+        reply_markup=what_if_kb(opponent.id, can_challenge=can_challenge),
     )
 
 
