@@ -487,6 +487,31 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
             f"<b>{h(name_map.get(vic_id, '?'))}</b>: {dom_w}–{vic_w}"
         )
 
+    # Равный бой — самое сбалансированное противостояние (антипод «Нагибатора»
+    # выше). Порог ≥4 очных матча — иначе случайный счёт 1:0/1:1 на паре игр
+    # выглядел бы «равным боем» без веса. Разница побед ≤1 — не обязательно
+    # идеальный 2:2, но близко. При нескольких подходящих парах выбираем ту,
+    # где разница минимальна, а при равной разнице — больше сыграно матчей
+    # (более убедительное равенство, не случайность на малой выборке).
+    best_even = None  # (diff, -total, a_id, a_w, b_id, b_w)
+    for (pa_id, pb_id), wd in pair_wins.items():
+        a_w, b_w = wd.get(pa_id, 0), wd.get(pb_id, 0)
+        total_wd = a_w + b_w
+        if total_wd < 4:
+            continue
+        diff = abs(a_w - b_w)
+        if diff > 1:
+            continue
+        cand = (diff, -total_wd, pa_id, a_w, pb_id, b_w)
+        if best_even is None or cand[:2] < best_even[:2]:
+            best_even = cand
+    if best_even:
+        _, _, a_id, a_w, b_id, b_w = best_even
+        rivalry_lines.append(
+            f"⚖️ Равный бой — <b>{h(name_map.get(a_id, '?'))}</b> vs "
+            f"<b>{h(name_map.get(b_id, '?'))}</b>: {a_w}–{b_w}"
+        )
+
     # Лучшая серия побед за всё время
     player_matches_asc: dict[int, list] = {}
     for m in all_matches:
