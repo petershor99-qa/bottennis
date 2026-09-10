@@ -2894,6 +2894,29 @@ async def test_what_if_shows_range_message(db):
     assert "Выиграешь" in text and "Проиграешь" in text
     assert "1000" in text and "1300" in text
 
+    kb = cb.message.answer.call_args.kwargs["reply_markup"]
+    buttons = [b for row in kb.inline_keyboard for b in row]
+    assert any(b.callback_data == f"challenge_{p2.id}" for b in buttons)
+    assert any(b.callback_data == f"player_profile_{p2.id}" for b in buttons)
+
+
+async def test_what_if_hides_challenge_when_viewer_busy(db):
+    from bot.handlers.profile import show_what_if
+
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    await _accepted_match(db, p1, p3)  # Alice занята матчем с Cara
+    await db.commit()
+
+    cb = _callback(1, f"what_if_{p2.id}")
+    await show_what_if(cb, db)
+
+    kb = cb.message.answer.call_args.kwargs["reply_markup"]
+    buttons = [b for row in kb.inline_keyboard for b in row]
+    assert not any(b.callback_data == f"challenge_{p2.id}" for b in buttons)
+    assert any(b.callback_data == f"player_profile_{p2.id}" for b in buttons)
+
 
 async def test_h2h_hides_challenge_when_viewer_busy(db):
     from bot.handlers.history import show_h2h
