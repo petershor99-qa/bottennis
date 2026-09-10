@@ -335,6 +335,20 @@ def h2h_kb(
     return b.as_markup()
 
 
+def what_if_kb(player_id: int, can_challenge: bool = True) -> InlineKeyboardMarkup:
+    """Клавиатура под калькулятором «Что если?» (v2.126.0 — раньше экран был
+    без единой кнопки, тупиковый: живая жалоба пользователя).
+
+    can_challenge=False — та же причина, что у h2h_kb выше: зритель или
+    соперник уже заняты другим активным матчем.
+    """
+    b = InlineKeyboardBuilder()
+    if can_challenge:
+        b.row(InlineKeyboardButton(text="⚔️ Вызвать", callback_data=f"challenge_{player_id}"))
+    b.row(InlineKeyboardButton(text="« К профилю", callback_data=f"player_profile_{player_id}"))
+    return b.as_markup()
+
+
 def player_history_kb(player_id: int, page: int, total_pages: int) -> InlineKeyboardMarkup:
     """Клавиатура для листания истории матчей другого игрока."""
     b = InlineKeyboardBuilder()
