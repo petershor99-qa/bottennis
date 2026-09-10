@@ -2,10 +2,10 @@ from html import escape as h
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import PersonalRecordEarned, Player
+from bot.db.models import Player
 from bot.keyboards.inline import (
     achievements_kb,
     back_to_stats_kb,
@@ -19,11 +19,13 @@ from bot.services.achievements import (
     CATEGORY_ORDER,
     get_achievements,
 )
+from bot.services.personal_records import get_personal_records_count
 from bot.services.rating import what_if_range
 from bot.services.stats import (
     _build_career_narrative,
     _compute_player_stats,
     _growth_area,
+    _legend_index_with_rank,
     _nearest_achievement_progress,
 )
 from bot.utils import (
@@ -298,6 +300,10 @@ async def _build_stats_screen(session: AsyncSession, player: Player):
 
     lines.extend(_render_stats_lines(player, s))
 
+    legend_index, legend_rank, legend_total = await _legend_index_with_rank(session, player, players_all)
+    lines.append("")
+    lines.append(f"🏵 Индекс легенды: <b>{legend_index}</b>  <i>(#{legend_rank} из {legend_total})</i>")
+
     rank_gap = _rank_gap_line(player, players_all, ranks)
     throne_line = _throne_distance_line(
         player, champion, challenger_player, s["wins"] + s["draws"] + s["losses"]
@@ -375,11 +381,7 @@ async def show_career_recap(callback: CallbackQuery, session: AsyncSession):
     earned_ids = get_achievements(player)
     achievements_line = f"🏅 Ачивок открыто: <b>{len(earned_ids)}/{len(ACHIEVEMENTS_LIST)}</b>"
 
-    pr_r = await session.execute(
-        select(func.count(func.distinct(PersonalRecordEarned.metric)))
-        .where(PersonalRecordEarned.player_id == player.id)
-    )
-    pr_count = pr_r.scalar() or 0
+    pr_count = await get_personal_records_count(session, player.id)
     pr_line = f"💎 Личных рекордов покорено: <b>{pr_count}/7</b>"
 
     draws_part = f" / <b>{s['draws']}</b> ничьих" if s["draws"] > 0 else ""
@@ -470,6 +472,10 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
     ]
 
     lines.extend(_render_stats_lines(player, s))
+
+    legend_index, legend_rank, legend_total = await _legend_index_with_rank(session, player, players_all)
+    lines.append("")
+    lines.append(f"🏵 Индекс легенды: <b>{legend_index}</b>  <i>(#{legend_rank} из {legend_total})</i>")
 
     rank_gap = _rank_gap_line(player, players_all, ranks)
     throne_line = _throne_distance_line(

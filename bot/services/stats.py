@@ -8,9 +8,13 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from html import escape as h
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from bot.services.achievements import ACHIEVEMENTS_MAP, get_achievements
+from bot.services.personal_records import get_personal_records_count
 from bot.utils import (
     activity_counts_by_day,
+    get_career_matches,
     match_rating_delta,
     pluralize_losses,
     pluralize_matches,
@@ -429,6 +433,53 @@ def _growth_area(s: dict) -> str | None:
     if not candidates:
         return None
     return max(candidates, key=lambda c: c[0])[1]
+
+
+# ── Индекс легенды (v2.127.0) ────────────────────────────────────────────────────
+# Композитный балл декорированности карьеры — НЕ мера силы игрока (та уже видна
+# отдельно как рейтинг): сколько трофеев накопил. Личные рекорды дороже всего
+# (их всего 7 на игрока, ачивок 52+ — дешевле поштучно). Серия считается только
+# от 2 побед подряд (max(0, best_streak-1)) — единичная «серия» не бонус.
+# Показывается и на личной статистике, и на публичном профиле — в отличие от
+# _growth_area (слабость показываем только себе), это чисто хвастовской стат,
+# показать другим не стыдно.
+
+def _legend_index(s: dict, achievements_count: int, personal_records_count: int, is_champion: bool) -> int:
+    return (
+        achievements_count * 3
+        + personal_records_count * 5
+        + s["boss_fights_won"] * 4
+        + max(0, s["best_streak"] - 1) * 2
+        + (10 if is_champion else 0)
+    )
+
+
+async def _legend_indices(session: AsyncSession, players: list) -> dict[int, int]:
+    """Индекс легенды для ВСЕХ переданных игроков разом — нужен для позиции в
+    клубе («#2 из 6») рядом с личным значением. Тот же класс стоимости, что у
+    «Матрицы доминирования»/«Индекса формы» (полный скан клуба на каждом
+    рендере) — на масштабе 5-7 игроков не проблема."""
+    result: dict[int, int] = {}
+    for p in players:
+        # with_opponents=True: _compute_player_stats читает m.challenger/m.challenged
+        # (opp.display_name для best_opp/nemesis) — без eager load это лишняя
+        # неявная зависимость от того, что игроки клуба уже в identity map.
+        matches = await get_career_matches(session, p.id, with_opponents=True)
+        s = _compute_player_stats(p, matches)
+        pr_count = await get_personal_records_count(session, p.id)
+        result[p.id] = _legend_index(s, len(get_achievements(p)), pr_count, p.is_champion)
+    return result
+
+
+async def _legend_index_with_rank(session: AsyncSession, player, players_all: list) -> tuple[int, int, int]:
+    """(индекс, место в клубе, всего игроков) для ОДНОГО игрока — обёртка над
+    _legend_indices(), чтобы вызывающему (profile.py) не считать ранжирование
+    самому."""
+    indices = await _legend_indices(session, players_all)
+    my_index = indices[player.id]
+    ranked = sorted(indices.items(), key=lambda kv: -kv[1])
+    my_rank = next(i for i, (pid, _) in enumerate(ranked, start=1) if pid == player.id)
+    return my_index, my_rank, len(players_all)
 
 
 # ── Career narrative (v2.112.0) ─────────────────────────────────────────────────

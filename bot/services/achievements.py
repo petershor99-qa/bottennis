@@ -54,7 +54,7 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("im_on_fire",     "💀", "Я горяч нахуй!",            "Выиграть 5 матчей подряд", category=CAT_STREAKS),
     Achievement("god_mode",       "😤", "Ахуджел. Дай другим выиграть!", "Выиграть 10 матчей подряд", category=CAT_STREAKS),
     Achievement("phoenix",        "💪", "Восставший из зада",        "Победить после серии 3+ поражений подряд", category=CAT_STREAKS, hidden=True),
-    Achievement("highlander",     "👑", "Останется только один",     "Стать чемпионом — победить в босс-файте или получить трон", category=CAT_THRONE),
+    Achievement("highlander",     "👑", "Останется только один",     "Победить в боссфайте или получить трон", category=CAT_THRONE),
     Achievement("david_goliath",  "🎯", "Ебнул четырёхпалубку",     "Победить игрока с рейтингом выше на 100+ pts", category=CAT_SPECIAL, hidden=True),
     Achievement("marathon",       "🕰", "Совсем абанулись",          "Сыграть матч из 5 и более партий", category=CAT_SPECIAL),
     Achievement("fatality",       "💥", "Фаталити",                  "Победить, не отдав сопернику ни одной партии", category=CAT_SPECIAL, hidden=True),
@@ -80,23 +80,28 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("anchorage_spirit", "🏳️", "Дух Анкориджа",          "Отменить матч", category=CAT_CLUB),
     Achievement("comeback",       "🔄", "CumБэк",                    "Выиграть матч, проигрывая 0:2 по партиям", category=CAT_SPECIAL, hidden=True),
     Achievement("fk_tyumen",      "🥊", "ФК Тюмень",                 "Проиграть 5 матчей подряд", category=CAT_STREAKS),
+    Achievement("first_pancake",  "🫠", "Первый блин комом",         "Продул дебют", category=CAT_START),
+    Achievement("blown_lead",     "🫗", "Слил 2:0",                  "Проиграть с 2:0", category=CAT_SPECIAL, hidden=True),
+    Achievement("valley_of_tears", "🪦", "Долина слёз",              "10 подряд", category=CAT_STREAKS),
+    Achievement("punching_bag",   "🤕", "Груша",                     "50 поражений", category=CAT_MILESTONES),
+    Achievement("personal_prey",  "🦌", "Дичь",                      "10 подряд одному", category=CAT_STREAKS, hidden=True),
     Achievement("relentless",     "☀️", "Неистого",                  "Выиграть все свои матчи за день (от 3)", category=CAT_MILESTONES),
     Achievement("deuce_maker",    "🎢", "Дьюсмейкер",                "Выиграть партию на дьюсе (12:10 и выше)", category=CAT_SPECIAL),
     Achievement("titans",         "🥋", "Битва такеши титанов",      "Победить в матче, где оба были 1100+ pts", category=CAT_SPECIAL, hidden=True),
     Achievement("takova_zhis",    "🎭", "Такова жись",               "6 матчей подряд с чередованием побед и поражений", category=CAT_STREAKS, hidden=True),
-    Achievement("terminator_slain", "🦾", "Вынес терминатора",       "Победить соперника, шедшего с серией 5+ побед подряд", category=CAT_SPECIAL, hidden=True),
+    Achievement("terminator_slain", "🦾", "Вынес терминатора",       "Победить соперника с серией 5+ побед подряд", category=CAT_SPECIAL, hidden=True),
     Achievement("night_king",     "🌙", "Король ночи",               "Обыграть всех игроков клуба за один день", category=CAT_MILESTONES, hidden=True),
     Achievement("throne_defended", "🛡", "Трон удержан",             "Отбиться от претендента в босс-файте", category=CAT_THRONE, hidden=True),
     Achievement("throne_denied",  "🚪", "Мимо трона",                "Проиграть босс-файт за трон, оставшись претендентом", category=CAT_THRONE, hidden=True),
-    Achievement("chance_blown",   "💸", "Просран шанс",              "Потерять статус претендента на трон, не дойдя до босс-файта", category=CAT_THRONE, hidden=True),
+    Achievement("chance_blown",   "💸", "Просран шанс",              "Потерять статус претендента, не дойдя до боссфайта", category=CAT_THRONE, hidden=True),
     Achievement("night_owl",      "🦉", "Полуночник",                "Выиграть матч, завершённый ночью (0:00–6:00 МСК)", category=CAT_SPECIAL, hidden=True),
     Achievement("deuce_storm",    "🌪", "Дьюсопад",                  "Выиграть матч, где каждая партия закончилась на дьюсе", category=CAT_SPECIAL, hidden=True),
-    Achievement("no_rest_win",    "🔁", "Добивашка",                 "Выиграть матч, начатый в течение 10 минут после предыдущего с тем же соперником", category=CAT_SPECIAL, hidden=True),
+    Achievement("no_rest_win",    "🔁", "Добивашка",                 "Выиграть матч, начатый за 10 мин после предыдущего с ним же", category=CAT_SPECIAL, hidden=True),
     Achievement("round_hundred",  "💯", "Круглая цифра",             "Рейтинг стал ровно кратен 100", category=CAT_MILESTONES, hidden=True),
     Achievement("absolute_zero",  "🥶", "Абсолютный ноль",           "Выиграть матч, где КАЖДАЯ партия закончилась 11:0", category=CAT_SPECIAL, hidden=True),
     Achievement("weekend_warrior", "🏖", "Выходного дня",            "Выиграть матч, сыгранный в субботу или воскресенье", category=CAT_SPECIAL, hidden=True),
     Achievement("rock_bottom",    "🕳", "Дно",                       "Рейтинг упал ровно до 900.0 (пол ветерана)", category=CAT_MILESTONES, hidden=True),
-    Achievement("full_circle_week", "🌐", "Полный круг за неделю",   "Обыграть каждого игрока клуба минимум раз за 7 дней", category=CAT_CLUB, hidden=True),
+    Achievement("full_circle_week", "🌐", "Полный круг за неделю",   "Обыграть весь клуб минимум раз за 7 дней", category=CAT_CLUB, hidden=True),
     Achievement("draw_double",    "🕊", "Дубль мира",                "Сыграть 2 ничьи подряд", category=CAT_CLUB, hidden=True),
     Achievement("first_crown",    "🎉", "Первая корона",             "Выиграть свой самый первый босс-файт в карьере", category=CAT_THRONE, hidden=True),
 ]
@@ -105,7 +110,7 @@ ACHIEVEMENTS_MAP: dict[str, Achievement] = {a.id: a for a in ACHIEVEMENTS_LIST}
 
 # Увеличивай при добавлении новых ачивок, требующих бэкфилл.
 # Игроки с player.backfill_version < BACKFILL_VERSION будут обработаны один раз при старте.
-BACKFILL_VERSION = 11
+BACKFILL_VERSION = 12
 
 TERMINATOR_STREAK_LEN = 5  # активная серия соперника для «Вынес терминатора»
 
@@ -483,6 +488,8 @@ async def check_loss_achievements(
     session: AsyncSession,
     loser: Player,
     sets_data: list[dict],      # winner perspective: [{"w": winner_pts, "l": loser_pts}, ...]
+    winner_id: int,
+    h2h_matches: list[Match],
 ) -> list[str]:
     """
     Проверяет достижения для проигравшего.
@@ -490,6 +497,11 @@ async def check_loss_achievements(
 
     Применимые ачивки: press_start, marathon, no_sweat (выиграл партию 11:0 в проигранном матче),
     veteran, legend.
+
+    winner_id/h2h_matches (v2.127.0) — тот же соперник и та же h2h-история
+    (desc completed_at, БЕЗ текущего матча), что уже загружены вызывающим для
+    check_win_achievements — переиспользуются для «Личной дичи» (серия
+    поражений подряд от ОДНОГО соперника), не второй отдельный запрос.
     """
     earned = get_achievements(loser)
     new_ids: list[str] = []
@@ -512,6 +524,17 @@ async def check_loss_achievements(
     # Первый матч
     if total == 1:
         maybe("press_start")
+        maybe("first_pancake")
+
+    # ── Слил уверенную победу: вёл 2:0 по партиям и всё равно проиграл ───────
+    # sets_data в перспективе победителя — "l" это очки проигравшего, поэтому
+    # sets_data[i]["l"] > sets_data[i]["w"] значит проигравший выиграл партию i.
+    if (
+        len(sets_data) >= 2
+        and sets_data[0]["l"] > sets_data[0]["w"]
+        and sets_data[1]["l"] > sets_data[1]["w"]
+    ):
+        maybe("blown_lead")
 
     # Совсем абанулись: 5+ партий
     if len(sets_data) >= 5:
@@ -563,7 +586,7 @@ async def check_loss_achievements(
     if today_r.scalar() >= 10:
         maybe("maniac")
 
-    # ── ФК Тюмень: 5 поражений подряд ───────────────────────────────────────
+    # ── ФК Тюмень / Долина слёз: 5 / 10 поражений подряд ─────────────────────
     loss_streak = 0
     for m in reversed(all_matches):
         if m.winner_id is not None and m.winner_id != loser.id:
@@ -572,6 +595,26 @@ async def check_loss_achievements(
             break
     if loss_streak >= 5:
         maybe("fk_tyumen")
+    if loss_streak >= 10:
+        maybe("valley_of_tears")
+
+    # ── Мешок для битья: 50 поражений за карьеру ─────────────────────────────
+    total_losses = sum(1 for m in all_matches if m.winner_id is not None and m.winner_id != loser.id)
+    if total_losses >= 50:
+        maybe("punching_bag")
+
+    # ── Личная дичь: 10+ поражений подряд от ОДНОГО соперника — зеркало
+    # «То что мертво» (dominator) с позиции проигравшего. h2h_matches — desc
+    # completed_at, БЕЗ текущего матча (переиспользован от вызывающего),
+    # поэтому счёт стартует с 1 (сам текущий матч уже поражение от winner_id).
+    prey_streak = 1
+    for m in h2h_matches:
+        if m.winner_id == winner_id:
+            prey_streak += 1
+        else:
+            break
+    if prey_streak >= 10:
+        maybe("personal_prey")
 
     # ── Дьюсмейкер: проигравший всё же выиграл партию на дьюсе ───────────────
     # sets_data в перспективе победителя: очки проигравшего — s["l"]
@@ -856,6 +899,8 @@ async def backfill_achievements(session: AsyncSession) -> None:
 
         # Первый матч
         mark("press_start", matches[0].completed_at)
+        if matches[0].winner_id is not None and matches[0].winner_id != player.id:
+            mark("first_pancake", matches[0].completed_at)
 
         # Вынес терминатора (из глобального прохода выше)
         if player.id in terminator_dates:
@@ -866,6 +911,7 @@ async def backfill_achievements(session: AsyncSession) -> None:
         loss_streak = 0
         total_wins = 0
         total_draws = 0
+        total_losses = 0
         beaten_opponents: set[int] = set()
         first_win_at: datetime | None = None
         alt_window: list[bool] = []  # для «Такова жись» — скользящее окно исходов
@@ -1020,8 +1066,13 @@ async def backfill_achievements(session: AsyncSession) -> None:
             else:  # поражение
                 win_streak = 0
                 loss_streak += 1
+                total_losses += 1
                 if loss_streak == 5:
                     mark("fk_tyumen", m.completed_at)
+                if loss_streak == 10:
+                    mark("valley_of_tears", m.completed_at)
+                if total_losses == 50:
+                    mark("punching_bag", m.completed_at)
 
                 # no_sweat: проигравший мог выиграть партию 11:0
                 if m.sets_data:
@@ -1030,6 +1081,14 @@ async def backfill_achievements(session: AsyncSession) -> None:
                     # Дьюсмейкер: проигравший выиграл партию на дьюсе (проигравший = l)
                     if any(s["l"] >= 12 and s["l"] > s["w"] for s in m.sets_data):
                         mark("deuce_maker", m.completed_at)
+                    # Слил уверенную победу: вёл 2:0 по партиям (l > w в первых
+                    # двух — sets_data в перспективе победителя) и всё же проиграл
+                    if (
+                        len(m.sets_data) >= 2
+                        and m.sets_data[0]["l"] > m.sets_data[0]["w"]
+                        and m.sets_data[1]["l"] > m.sets_data[1]["w"]
+                    ):
+                        mark("blown_lead", m.completed_at)
                 # marathon: 5+ партий независимо от результата
                 if m.sets_data and len(m.sets_data) >= 5:
                     mark("marathon", m.completed_at)
@@ -1083,6 +1142,18 @@ async def backfill_achievements(session: AsyncSession) -> None:
                     mark("dominator", m.completed_at)
             else:
                 opp_win_streaks[opp_id] = 0
+
+        # Личная дичь: 10+ поражений подряд от ОДНОГО соперника — зеркало
+        # «То что мертво» выше с позиции проигравшего.
+        prey_streaks: dict[int, int] = {}
+        for m in matches:
+            opp_id = m.challenged_id if m.challenger_id == player.id else m.challenger_id
+            if m.winner_id == opp_id:
+                prey_streaks[opp_id] = prey_streaks.get(opp_id, 0) + 1
+                if prey_streaks[opp_id] == 10:
+                    mark("personal_prey", m.completed_at)
+            else:
+                prey_streaks[opp_id] = 0
 
         # Рейтинг 1200 (по peak_rating — текущее значение, не снапшот на момент
         # исторического матча, поэтому дата принципиально недоступна)

@@ -32,6 +32,19 @@ async def _get_matches_asc(session: AsyncSession, player_id: int) -> list[Match]
     return list(reversed(await get_career_matches(session, player_id)))
 
 
+async def get_personal_records_count(session: AsyncSession, player_id: int) -> int:
+    """Число УНИКАЛЬНЫХ покорённых личных рекордов (DISTINCT по metric —
+    метрику можно бить многократно за карьеру, а здесь интересно «сколько из
+    7», не «сколько раз»). Общий хелпер — раньше этот же запрос дублировался
+    в career_recap (profile.py) отдельно, теперь используется и для «Индекса
+    легенды» (v2.127.0)."""
+    r = await session.execute(
+        select(func.count(func.distinct(PersonalRecordEarned.metric)))
+        .where(PersonalRecordEarned.player_id == player_id)
+    )
+    return r.scalar() or 0
+
+
 def _sets_count(match: Match) -> int:
     return len(match.sets_data) if match.sets_data else 0
 
