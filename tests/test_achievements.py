@@ -108,6 +108,17 @@ async def _do_win(
     )
 
 
+async def _do_loss(
+    session, winner: Player, loser: Player,
+    sets=None, dt: datetime = None, created_at: datetime = None,
+) -> list[str]:
+    """Добавить проигранный матч в БД и вызвать check_loss_achievements."""
+    sets = sets or _DEFAULT_SETS
+    m = await _add_win(session, winner, loser, sets=sets, dt=dt or _ts(), created_at=created_at)
+    h2h_matches = await get_h2h_matches(session, winner.id, loser.id, exclude_match_id=m.id)
+    return await check_loss_achievements(session, loser, sets, winner.id, h2h_matches)
+
+
 # ── press_start ────────────────────────────────────────────────────────────────
 
 async def test_press_start_on_first_win(db):
@@ -124,8 +135,7 @@ async def test_press_start_on_first_loss(db):
     db.add_all([p1, p2])
     await db.flush()
 
-    await _add_win(db, p2, p1)
-    new = await check_loss_achievements(db, p1, _DEFAULT_SETS)
+    new = await _do_loss(db, p2, p1)
     assert "press_start" in new
 
 
@@ -304,8 +314,7 @@ async def test_marathon_5_sets_loss(db):
 
     sets5 = [{"w": 11, "l": 9}, {"w": 9, "l": 11}, {"w": 11, "l": 9},
              {"w": 9, "l": 11}, {"w": 11, "l": 7}]
-    await _add_win(db, p2, p1, sets=sets5)
-    new = await check_loss_achievements(db, p1, sets5)
+    new = await _do_loss(db, p2, p1, sets=sets5)
     assert "marathon" in new
 
 
@@ -373,8 +382,7 @@ async def test_no_sweat_loser_wins_set_11_0(db):
     # p2 выигрывает матч; p1 выигрывает одну партию 11:0
     # sets_data с позиции победителя (p2): {"w": 0, "l": 11} = p1 выиграл эту партию
     sets = [{"w": 11, "l": 7}, {"w": 11, "l": 7}, {"w": 0, "l": 11}]
-    await _add_win(db, p2, p1, sets=sets)
-    new = await check_loss_achievements(db, p1, sets)
+    new = await _do_loss(db, p2, p1, sets=sets)
     assert "no_sweat" in new
 
 
@@ -585,8 +593,7 @@ async def test_points_and_sets_milestones_awarded_on_loss(db):
 
     big_sets = [{"w": 11, "l": 9}]  # проигравший (l=9) набирает почти столько же
     await _bulk_wins(db, p2, p1, 449, sets=big_sets)  # p1 проигрывает 449 раз, 9 pts/матч = 4041
-    await _add_win(db, p2, p1, sets=big_sets, dt=_ts(449))
-    new = await check_loss_achievements(db, p1, big_sets)
+    new = await _do_loss(db, p2, p1, sets=big_sets, dt=_ts(449))
     assert "point_saver" in new
 
 
@@ -676,8 +683,7 @@ async def test_takova_zhis_after_6_alternating_matches(db):
         if p1_wins:
             new = await _do_win(db, p1, p2, dt=_ts(i))
         else:
-            await _add_win(db, p2, p1, dt=_ts(i))
-            new = await check_loss_achievements(db, p1, _DEFAULT_SETS)
+            new = await _do_loss(db, p2, p1, dt=_ts(i))
 
     assert "takova_zhis" in new
 
@@ -693,8 +699,7 @@ async def test_no_takova_zhis_after_5_alternating_matches(db):
         if p1_wins:
             new = await _do_win(db, p1, p2, dt=_ts(i))
         else:
-            await _add_win(db, p2, p1, dt=_ts(i))
-            new = await check_loss_achievements(db, p1, _DEFAULT_SETS)
+            new = await _do_loss(db, p2, p1, dt=_ts(i))
 
     assert "takova_zhis" not in new
 
@@ -710,8 +715,7 @@ async def test_no_takova_zhis_when_draw_breaks_chain(db):
         if p1_wins:
             await _do_win(db, p1, p2, dt=_ts(i))
         else:
-            await _add_win(db, p2, p1, dt=_ts(i))
-            await check_loss_achievements(db, p1, _DEFAULT_SETS)
+            await _do_loss(db, p2, p1, dt=_ts(i))
 
     # 6-й матч — ничья, разрывает цепочку вместо её завершения
     await _add_draw(db, p1, p2, dt=_ts(5))
@@ -732,8 +736,7 @@ async def test_takova_zhis_not_given_for_2_wins_in_a_row(db):
         if p1_wins:
             new = await _do_win(db, p1, p2, dt=_ts(i))
         else:
-            await _add_win(db, p2, p1, dt=_ts(i))
-            new = await check_loss_achievements(db, p1, _DEFAULT_SETS)
+            new = await _do_loss(db, p2, p1, dt=_ts(i))
 
     assert "takova_zhis" not in new
 
@@ -1053,8 +1056,7 @@ async def test_deuce_maker_loser_wins_deuce_set(db):
 
     # p2 выиграл матч; p1 (проигравший) взял партию 12:10
     sets = [{"w": 11, "l": 7}, {"w": 10, "l": 12}, {"w": 11, "l": 7}]
-    await _add_win(db, p2, p1, sets=sets)
-    new = await check_loss_achievements(db, p1, sets)
+    new = await _do_loss(db, p2, p1, sets=sets)
     assert "deuce_maker" in new
 
 
@@ -1065,9 +1067,9 @@ async def test_fk_tyumen_after_5_losses(db):
     db.add_all([p1, p2])
     await db.flush()
 
+    new = None
     for i in range(5):
-        await _add_win(db, p2, p1, dt=_ts(i))  # p1 проигрывает 5 раз
-    new = await check_loss_achievements(db, p1, _DEFAULT_SETS)
+        new = await _do_loss(db, p2, p1, dt=_ts(i))  # p1 проигрывает 5 раз
     assert "fk_tyumen" in new
 
 
@@ -1076,10 +1078,177 @@ async def test_no_fk_tyumen_after_4_losses(db):
     db.add_all([p1, p2])
     await db.flush()
 
+    new = None
     for i in range(4):
-        await _add_win(db, p2, p1, dt=_ts(i))
-    new = await check_loss_achievements(db, p1, _DEFAULT_SETS)
+        new = await _do_loss(db, p2, p1, dt=_ts(i))
     assert "fk_tyumen" not in new
+
+
+# ── first_pancake (Первый блин комом — поражение в первом матче) ────────────────
+
+async def test_first_pancake_on_first_loss(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = await _do_loss(db, p2, p1)
+    assert "first_pancake" in new
+
+
+async def test_no_first_pancake_when_second_match_lost(db):
+    """Проиграл не первый, а второй матч в карьере — не считается."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _do_win(db, p1, p2, dt=_ts(0))
+    new = await _do_loss(db, p2, p1, dt=_ts(1))
+    assert "first_pancake" not in new
+
+
+async def test_no_first_pancake_alongside_win(db):
+    """Победитель первого матча получает «Новичкам везёт», не «Первый блин комом»."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = await _do_win(db, p1, p2)
+    assert "beginners_luck" in new
+    assert "first_pancake" not in new
+
+
+# ── blown_lead (Слил 2:0 — вёл 2:0 по партиям и проиграл матч) ──────────────────
+
+async def test_blown_lead_when_led_2_0_and_lost(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    # p2 выигрывает матч, но p1 (проигравший) взял первые 2 партии
+    sets = [{"w": 9, "l": 11}, {"w": 9, "l": 11}, {"w": 11, "l": 9}, {"w": 11, "l": 8}, {"w": 11, "l": 6}]
+    new = await _do_loss(db, p2, p1, sets=sets)
+    assert "blown_lead" in new
+
+
+async def test_blown_lead_mirrors_winner_comeback(db):
+    """Тот же матч — у победителя это «CumБэк» (comeback), у проигравшего
+    «Слил 2:0» (blown_lead): два взгляда на одно и то же событие."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    sets = [{"w": 9, "l": 11}, {"w": 9, "l": 11}, {"w": 11, "l": 9}, {"w": 11, "l": 8}, {"w": 11, "l": 6}]
+    win_new = await _do_win(db, p2, p1, sets=sets)
+    assert "comeback" in win_new
+
+
+async def test_no_blown_lead_on_normal_loss(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = await _do_loss(db, p2, p1)
+    assert "blown_lead" not in new
+
+
+async def test_no_blown_lead_when_only_first_set_led(db):
+    """Проигравший вёл только ПЕРВУЮ партию, не первые две — не считается."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    sets = [{"w": 9, "l": 11}, {"w": 11, "l": 9}, {"w": 11, "l": 9}]
+    new = await _do_loss(db, p2, p1, sets=sets)
+    assert "blown_lead" not in new
+
+
+# ── valley_of_tears (Долина слёз — 10 поражений подряд) ─────────────────────────
+
+async def test_valley_of_tears_after_10_losses(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = None
+    for i in range(10):
+        new = await _do_loss(db, p2, p1, dt=_ts(i))
+    assert "valley_of_tears" in new
+
+
+async def test_no_valley_of_tears_after_9_losses(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = None
+    for i in range(9):
+        new = await _do_loss(db, p2, p1, dt=_ts(i))
+    assert "valley_of_tears" not in new
+
+
+# ── punching_bag (Груша — 50 поражений за карьеру) ───────────────────────────────
+
+async def test_punching_bag_after_50_losses(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _bulk_wins(db, p2, p1, 49)  # p1 проигрывает 49 раз
+    new = await _do_loss(db, p2, p1, dt=_ts(49))
+    assert "punching_bag" in new
+
+
+async def test_no_punching_bag_after_49_losses(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _bulk_wins(db, p2, p1, 48)
+    new = await _do_loss(db, p2, p1, dt=_ts(48))
+    assert "punching_bag" not in new
+
+
+# ── personal_prey (Дичь — 10 поражений подряд от ОДНОГО соперника) ──────────────
+
+async def test_personal_prey_after_10_losses_to_same_opponent(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = None
+    for i in range(10):
+        new = await _do_loss(db, p2, p1, dt=_ts(i))
+    assert "personal_prey" in new
+
+
+async def test_no_personal_prey_when_streak_broken_by_other_opponent(db):
+    """9 поражений подряд от Bob, потом матч с Кэрол — счётчик Bob не растёт
+    дальше, но и не обнуляется (это не ЕГО матч) — 10-я подряд от Bob так и не
+    случается в этом тесте."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    for i in range(9):
+        await _do_loss(db, p2, p1, dt=_ts(i))
+    new = await _do_loss(db, p3, p1, dt=_ts(9))
+    assert "personal_prey" not in new
+
+
+async def test_no_personal_prey_when_win_breaks_streak(db):
+    """9 поражений подряд от Bob, потом победа над Bob — серия обнуляется."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    for i in range(9):
+        await _do_loss(db, p2, p1, dt=_ts(i))
+    await _do_win(db, p1, p2, dt=_ts(9))
+
+    new = None
+    for i in range(10):
+        new = await _do_loss(db, p2, p1, dt=_ts(10 + i))
+    assert "personal_prey" in new  # новая серия из 10 подряд после сброса
 
 
 # relentless (Неистого — все матчи за день победы, от 3)
@@ -1183,6 +1352,91 @@ async def test_backfill_fk_tyumen(db):
 
     await backfill_achievements(db)
     assert "fk_tyumen" in get_achievements(p1)
+
+
+async def test_backfill_first_pancake(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    db.add(Match(
+        challenger_id=p2.id, challenged_id=p1.id,
+        status=MatchStatus.completed, winner_id=p2.id,
+        sets_data=_DEFAULT_SETS, completed_at=_ts(0),
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "first_pancake" in get_achievements(p1)
+
+
+async def test_backfill_blown_lead(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    sets = [{"w": 9, "l": 11}, {"w": 9, "l": 11}, {"w": 11, "l": 9}, {"w": 11, "l": 8}, {"w": 11, "l": 6}]
+    db.add(Match(
+        challenger_id=p2.id, challenged_id=p1.id,
+        status=MatchStatus.completed, winner_id=p2.id,
+        sets_data=sets, completed_at=_ts(0),
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "blown_lead" in get_achievements(p1)
+    assert "comeback" in get_achievements(p2)
+
+
+async def test_backfill_valley_of_tears(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    for i in range(10):
+        db.add(Match(
+            challenger_id=p2.id, challenged_id=p1.id,
+            status=MatchStatus.completed, winner_id=p2.id,
+            sets_data=_DEFAULT_SETS, completed_at=_ts(i),
+        ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "valley_of_tears" in get_achievements(p1)
+
+
+async def test_backfill_punching_bag(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    for i in range(50):
+        db.add(Match(
+            challenger_id=p2.id, challenged_id=p1.id,
+            status=MatchStatus.completed, winner_id=p2.id,
+            sets_data=_DEFAULT_SETS, completed_at=_ts(i),
+        ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "punching_bag" in get_achievements(p1)
+
+
+async def test_backfill_personal_prey(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    for i in range(10):
+        db.add(Match(
+            challenger_id=p2.id, challenged_id=p1.id,
+            status=MatchStatus.completed, winner_id=p2.id,
+            sets_data=_DEFAULT_SETS, completed_at=_ts(i),
+        ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "personal_prey" in get_achievements(p1)
 
 
 async def test_backfill_assigns_night_king(db):
@@ -1574,10 +1828,8 @@ async def test_rock_bottom_fires_when_loser_hits_exactly_900(db):
     db.add_all([p1, p2])
     await db.flush()
 
-    m = await _add_win(db, p1, p2)
-    new = await check_loss_achievements(db, p2, _DEFAULT_SETS)
+    new = await _do_loss(db, p1, p2)
     assert "rock_bottom" in new
-    assert m is not None
 
 
 async def test_no_rock_bottom_when_not_exactly_900(db):
@@ -1585,8 +1837,7 @@ async def test_no_rock_bottom_when_not_exactly_900(db):
     db.add_all([p1, p2])
     await db.flush()
 
-    await _add_win(db, p1, p2)
-    new = await check_loss_achievements(db, p2, _DEFAULT_SETS)
+    new = await _do_loss(db, p1, p2)
     assert "rock_bottom" not in new
 
 

@@ -1316,6 +1316,47 @@ def test_style_narrative_even_win_rate():
     assert "на равных" in text
 
 
+# ── _legend_index («Индекс легенды», v2.127.0) ───────────────────────────────────
+
+def test_legend_index_zero_for_blank_career():
+    from bot.services.stats import _legend_index
+    assert _legend_index(_full_stats(), 0, 0, False) == 0
+
+
+def test_legend_index_counts_achievements():
+    from bot.services.stats import _legend_index
+    assert _legend_index(_full_stats(), achievements_count=2, personal_records_count=0, is_champion=False) == 6
+
+
+def test_legend_index_counts_personal_records_heavier():
+    from bot.services.stats import _legend_index
+    assert _legend_index(_full_stats(), 0, personal_records_count=1, is_champion=False) == 5
+
+
+def test_legend_index_counts_boss_fight_wins():
+    from bot.services.stats import _legend_index
+    s = _full_stats(boss_fights_won=2)
+    assert _legend_index(s, 0, 0, False) == 8
+
+
+def test_legend_index_streak_of_one_gives_no_bonus():
+    """Серия из 1 победы — это просто «выиграл матч», не серия. Бонус только от 2+."""
+    from bot.services.stats import _legend_index
+    s = _full_stats(best_streak=1)
+    assert _legend_index(s, 0, 0, False) == 0
+
+
+def test_legend_index_streak_bonus_from_two():
+    from bot.services.stats import _legend_index
+    s = _full_stats(best_streak=4)
+    assert _legend_index(s, 0, 0, False) == 6  # (4-1) * 2
+
+
+def test_legend_index_champion_bonus():
+    from bot.services.stats import _legend_index
+    assert _legend_index(_full_stats(), 0, 0, True) == 10
+
+
 def test_style_narrative_high_deuce_rate():
     from bot.services.stats import _build_style_narrative
     text = _build_style_narrative(_radar(**{"На дьюсе": 30.0}))
@@ -1797,6 +1838,40 @@ async def test_my_stats_shows_growth_area_when_stability_is_low(db):
 
     text = cb.message.edit_text.call_args[0][0]
     assert "скачет" in text
+
+
+async def test_my_stats_shows_legend_index_with_rank(db):
+    from bot.handlers.profile import show_my_stats
+
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 1, 1, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "menu_stats")
+    await show_my_stats(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Индекс легенды" in text
+    assert "из 3" in text
+
+
+async def test_player_profile_shows_legend_index(db):
+    from bot.handlers.profile import show_player_profile
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 1, 1, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, f"player_profile_{p2.id}")
+    await show_player_profile(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Индекс легенды" in text
+    assert "из 2" in text
 
 
 async def test_player_chart_invalid_id(db):
@@ -2516,6 +2591,63 @@ async def test_club_records_shows_nagibator(db):
     text = cb.message.edit_text.call_args[0][0]
     assert "Нагибатор клуба" in text
     assert "4–0" in text
+
+
+async def test_club_records_shows_equal_rivalry(db):
+    """Равный бой — самое сбалансированное противостояние (≥4 матча, разница ≤1)."""
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    # 4–3 — почти поровну, но достаточно матчей, чтобы не выглядеть случайностью
+    winners = [p1, p2, p1, p2, p1, p2, p1]
+    for i, w in enumerate(winners):
+        db.add(_completed(p1, p2, w.id, 10.0, datetime(2026, 6, 1 + i, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Равный бой" in text
+    assert "4–3" in text
+
+
+async def test_club_records_no_equal_rivalry_below_threshold(db):
+    """Меньше 4 очных матчей — «Равный бой» не показывается, даже если счёт 1:1."""
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p2.id, 10.0, datetime(2026, 6, 2, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Равный бой" not in text
+
+
+async def test_club_records_no_equal_rivalry_when_lopsided(db):
+    """Нагибатор (4–0) не должен одновременно засчитываться как «Равный бой»."""
+    from bot.handlers.leaderboard import show_club_records
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(4):
+        db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1 + i, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "club_records")
+    await show_club_records(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Равный бой" not in text
 
 
 async def test_club_records_shows_current_streak(db):

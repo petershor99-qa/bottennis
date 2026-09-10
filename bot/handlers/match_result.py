@@ -999,7 +999,7 @@ async def _award_win_achievements_and_eggs(
     new_ach_winner = await check_win_achievements(
         session, winner, loser, match, old_winner_rating, old_loser_rating, h2h_matches,
     )
-    new_ach_loser = await check_loss_achievements(session, loser, final_sets)
+    new_ach_loser = await check_loss_achievements(session, loser, final_sets, winner.id, h2h_matches)
     record_achievements_earned(session, winner.id, new_ach_winner, match.completed_at)
     record_achievements_earned(session, loser.id, new_ach_loser, match.completed_at)
     await session.commit()
