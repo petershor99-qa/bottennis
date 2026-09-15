@@ -4,12 +4,9 @@
 """
 from datetime import datetime, timedelta, timezone
 
-import pytest_asyncio
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
 
-from bot.db.models import AchievementEarned, Base, Match, MatchStatus, Player
+from bot.db.models import AchievementEarned, Match, MatchStatus, Player
 from bot.services.achievements import (
     BACKFILL_VERSION,
     backfill_achievements,
@@ -30,17 +27,6 @@ _BASE_DT = datetime(2024, 1, 1, 12, 0, 0)
 def _ts(i: int = 0) -> datetime:
     """Детерминированная метка времени: base + i секунд."""
     return _BASE_DT + timedelta(seconds=i)
-
-
-@pytest_asyncio.fixture
-async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with factory() as s:
-        yield s
-    await engine.dispose()
 
 
 def _player(tid: int, name: str, rating: float = 1000.0) -> Player:

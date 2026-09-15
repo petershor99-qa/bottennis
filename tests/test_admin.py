@@ -3,12 +3,8 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
-
 import bot.handlers.admin as admin_module
-from bot.db.models import Base, Match, MatchStatus, Player
+from bot.db.models import Match, MatchStatus, Player
 from bot.handlers.admin import _SEND_CHUNK, _send, cmd_backup, cmd_dbstats
 
 
@@ -18,17 +14,6 @@ def _message(user_id: int = 1) -> AsyncMock:
     m.chat = SimpleNamespace(id=user_id)
     m.answer = AsyncMock()
     return m
-
-
-@pytest_asyncio.fixture
-async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with factory() as s:
-        yield s
-    await engine.dispose()
 
 
 def _player(tid: int, name: str, rating: float = 1000.0) -> Player:

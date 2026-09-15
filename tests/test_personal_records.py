@@ -4,12 +4,9 @@
 """
 from datetime import datetime, timedelta
 
-import pytest_asyncio
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
 
-from bot.db.models import Base, Match, MatchStatus, PersonalRecordEarned, Player
+from bot.db.models import Match, MatchStatus, PersonalRecordEarned, Player
 from bot.services.personal_records import (
     backfill_personal_records,
     check_personal_records_on_draw,
@@ -43,16 +40,6 @@ def _add_match(
     )
     session.add(m)
     return m
-
-
-@pytest_asyncio.fixture
-async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with factory() as s:
-        yield s
 
 
 # ── Общий барьер: первый матч в карьере — сравнивать не с чем ────────────────

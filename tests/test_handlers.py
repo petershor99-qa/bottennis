@@ -10,15 +10,13 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-import pytest_asyncio
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
 from sqlalchemy import or_, select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import selectinload, sessionmaker
+from sqlalchemy.orm import selectinload
 
-from bot.db.models import Base, ChampionReign, Match, MatchStatus, PersonalRecordEarned, Player
+from bot.db.models import ChampionReign, Match, MatchStatus, PersonalRecordEarned, Player
 from bot.handlers.challenge import do_cancel_match, send_challenge, show_players_for_challenge
 from bot.handlers.match_result import (
     _send_h2h_milestone_egg,
@@ -59,17 +57,6 @@ from bot.utils import (
 )
 
 # ── Фикстуры и хелперы ──────────────────────────────────────────────────────────
-
-@pytest_asyncio.fixture
-async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with factory() as s:
-        yield s
-    await engine.dispose()
-
 
 def _player(tid: int, name: str, rating: float = 1000.0) -> Player:
     return Player(
@@ -3447,14 +3434,11 @@ def test_pluralize_losses():
 
 # ── Итоги дня: новые секции ─────────────────────────────────────────────────────
 
-async def test_daily_summary_new_sections(monkeypatch):
+async def test_daily_summary_new_sections(monkeypatch, db_factory):
     """Итоги дня содержат полоску формы, Нагибателя дня и Дерби дня."""
     import bot.scheduler as sched
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -3468,7 +3452,6 @@ async def test_daily_summary_new_sections(monkeypatch):
 
     bot = AsyncMock()
     await sched.send_daily_summary(bot)
-    await engine.dispose()
 
     text = bot.send_message.call_args_list[0][0][1]
     assert "🟩" in text                    # полоска формы
@@ -3480,15 +3463,12 @@ async def test_daily_summary_new_sections(monkeypatch):
     assert "Все матчи:" in text             # общий лог матчей со счётом
 
 
-async def test_daily_summary_duel_score_ignores_third_party_matches(monkeypatch):
+async def test_daily_summary_duel_score_ignores_third_party_matches(monkeypatch, db_factory):
     """Взаимный счёт в «Дуэли дня» считается ТОЛЬКО между самой играющей парой,
     не задет матчами с третьими игроками в тот же день."""
     import bot.scheduler as sched
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -3503,21 +3483,17 @@ async def test_daily_summary_duel_score_ignores_third_party_matches(monkeypatch)
 
     bot = AsyncMock()
     await sched.send_daily_summary(bot)
-    await engine.dispose()
 
     text = bot.send_message.call_args_list[0][0][1]
     assert "Дуэль дня" in text
     assert "(1:1)" in text
 
 
-async def test_weekly_digest_standings_and_heroes(monkeypatch):
+async def test_weekly_digest_standings_and_heroes(monkeypatch, db_factory):
     """Итоги недели: компактный «Топ недели» вместо списка матчей + новые герои."""
     import bot.scheduler as sched
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -3538,7 +3514,6 @@ async def test_weekly_digest_standings_and_heroes(monkeypatch):
 
     bot = AsyncMock()
     await sched.send_weekly_digest(bot)
-    await engine.dispose()
 
     text = bot.send_message.call_args_list[0][0][1]
     assert "Топ недели" in text                # стендинг вместо списка матчей
@@ -3550,16 +3525,13 @@ async def test_weekly_digest_standings_and_heroes(monkeypatch):
     assert "🟩" in text                         # полоска формы в топе (v2.104.0)
 
 
-async def test_weekly_digest_club_pulse_vs_4week_average(monkeypatch):
+async def test_weekly_digest_club_pulse_vs_4week_average(monkeypatch, db_factory):
     """«Клубный пульс» (v2.128.0) — сравнение со СРЕДНИМ за 4 предыдущие
     недели, не с одной прошлой (та была слишком шумной: одна случайно тихая
     неделя искажала сравнение)."""
     import bot.scheduler as sched
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -3577,7 +3549,6 @@ async def test_weekly_digest_club_pulse_vs_4week_average(monkeypatch):
 
     bot = AsyncMock()
     await sched.send_weekly_digest(bot)
-    await engine.dispose()
 
     text = bot.send_message.call_args_list[0][0][1]
     # 2 матча в эту неделю vs среднее 1/неделю за 4 недели = +100%
@@ -3587,14 +3558,11 @@ async def test_weekly_digest_club_pulse_vs_4week_average(monkeypatch):
 
 # ── send_match_reminders (напоминание про незавершённый матч, от 24ч) ──────────
 
-async def test_reminder_sent_for_stale_match(monkeypatch):
+async def test_reminder_sent_for_stale_match(monkeypatch, db_factory):
     """Матч старше 24 часов без reminder_sent — оба участника получают напоминание."""
     import bot.scheduler as sched
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     old = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=25)
@@ -3610,7 +3578,6 @@ async def test_reminder_sent_for_stale_match(monkeypatch):
 
     bot = AsyncMock()
     await sched.send_match_reminders(bot)
-    await engine.dispose()
 
     assert bot.send_message.call_count == 2  # оба участника
     texts = [c.args[1] for c in bot.send_message.call_args_list]
@@ -3620,14 +3587,11 @@ async def test_reminder_sent_for_stale_match(monkeypatch):
         assert c.kwargs.get("reply_markup") is not None  # busy_with_match_kb с кнопками
 
 
-async def test_reminder_not_sent_for_fresh_match(monkeypatch):
+async def test_reminder_not_sent_for_fresh_match(monkeypatch, db_factory):
     """Матч моложе 24 часов — напоминание не шлётся."""
     import bot.scheduler as sched
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     recent = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=2)
@@ -3643,19 +3607,15 @@ async def test_reminder_not_sent_for_fresh_match(monkeypatch):
 
     bot = AsyncMock()
     await sched.send_match_reminders(bot)
-    await engine.dispose()
 
     bot.send_message.assert_not_called()
 
 
-async def test_reminder_not_sent_twice(monkeypatch):
+async def test_reminder_not_sent_twice(monkeypatch, db_factory):
     """Идемпотентность: повторный запуск не шлёт напоминание уже отмеченному матчу."""
     import bot.scheduler as sched
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     old = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=25)
@@ -3672,19 +3632,15 @@ async def test_reminder_not_sent_twice(monkeypatch):
     bot = AsyncMock()
     await sched.send_match_reminders(bot)
     await sched.send_match_reminders(bot)
-    await engine.dispose()
 
     assert bot.send_message.call_count == 2  # не 4 — второй прогон ничего не шлёт
 
 
-async def test_monthly_summary_renamed_and_heroes(monkeypatch):
+async def test_monthly_summary_renamed_and_heroes(monkeypatch, db_factory):
     """Итоги месяца: «Тяжелее всех» → «Отрицательный рост» + дерби/нагибатель."""
     import bot.scheduler as sched
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     # Окно прошлого месяца вычисляем так же, как функция — чтобы тест не зависел от даты
@@ -3704,7 +3660,6 @@ async def test_monthly_summary_renamed_and_heroes(monkeypatch):
 
     bot = AsyncMock()
     await sched.send_monthly_summary(bot)
-    await engine.dispose()
 
     text = bot.send_message.call_args_list[0][0][1]
     assert "Отрицательный рост" in text
@@ -3713,17 +3668,14 @@ async def test_monthly_summary_renamed_and_heroes(monkeypatch):
     assert "Нагибатель месяца" in text
 
 
-async def test_monthly_summary_personalized_form_and_slacker(monkeypatch):
+async def test_monthly_summary_personalized_form_and_slacker(monkeypatch, db_factory):
     """Итоги месяца (v2.104.0): персональная шапка у каждого своя (не единый
     для всех бродкаст, как раньше), полоска формы в топе, «Халявщик месяца»
     для игрока с историей, не сыгравшего в этом месяце, идущего игроку без
     матчей — фирменная цитата про «занят жизнью или умиранием»."""
     import bot.scheduler as sched
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     msk_now = datetime.now(timezone.utc).replace(tzinfo=None) + sched.MSK_OFFSET
@@ -3745,7 +3697,6 @@ async def test_monthly_summary_personalized_form_and_slacker(monkeypatch):
 
     bot = AsyncMock()
     await sched.send_monthly_summary(bot)
-    await engine.dispose()
 
     texts = {c.args[0]: c.args[1] for c in bot.send_message.call_args_list}
     alice_text, bob_text, cara_text = texts[1], texts[2], texts[3]
@@ -3797,15 +3748,12 @@ def test_quarter_bounds_oct_1_covers_jul_sep():
     assert end == datetime(2026, 10, 1, 0, 0, 0)
 
 
-async def test_quarterly_summary_content_and_labels(monkeypatch):
+async def test_quarterly_summary_content_and_labels(monkeypatch, db_factory):
     """Итоги квартала: заголовок-диапазон месяцев, топ, без-суффиксные метрики
     (переиспользуют _longest_no_loss_streak/_biggest_swing), топ-матч квартала."""
     import bot.scheduler as sched
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     msk_now = datetime.now(timezone.utc).replace(tzinfo=None) + sched.MSK_OFFSET
@@ -3822,7 +3770,6 @@ async def test_quarterly_summary_content_and_labels(monkeypatch):
 
     bot = AsyncMock()
     await sched.send_quarterly_summary(bot)
-    await engine.dispose()
 
     assert bot.send_message.await_count == 2  # обоим игрокам
     text = bot.send_message.call_args_list[0][0][1]
@@ -3836,13 +3783,10 @@ async def test_quarterly_summary_content_and_labels(monkeypatch):
     # test_monthly_summary_renamed_and_heroes выше, та же синтетика).
 
 
-async def test_quarterly_summary_skipped_when_no_matches(monkeypatch):
+async def test_quarterly_summary_skipped_when_no_matches(monkeypatch, db_factory):
     import bot.scheduler as sched
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     async with factory() as s:
@@ -3851,7 +3795,6 @@ async def test_quarterly_summary_skipped_when_no_matches(monkeypatch):
 
     bot = AsyncMock()
     await sched.send_quarterly_summary(bot)
-    await engine.dispose()
 
     bot.send_message.assert_not_called()
 
@@ -3865,15 +3808,12 @@ def test_year_bounds_dec_31_covers_whole_year_so_far():
     assert end == now
 
 
-async def test_yearly_summary_content_and_labels(monkeypatch):
+async def test_yearly_summary_content_and_labels(monkeypatch, db_factory):
     """Итоги года: заголовок с годом, полный табель, взлёт/падение с
     зафиксированными фразами-отсылками, «Главный теннисист года»."""
     import bot.scheduler as sched
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     msk_now = datetime.now(timezone.utc).replace(tzinfo=None) + sched.MSK_OFFSET
@@ -3890,7 +3830,6 @@ async def test_yearly_summary_content_and_labels(monkeypatch):
 
     bot = AsyncMock()
     await sched.send_yearly_summary(bot)
-    await engine.dispose()
 
     assert bot.send_message.await_count == 2  # обоим игрокам
     text = bot.send_message.call_args_list[0][0][1]
@@ -3905,13 +3844,10 @@ async def test_yearly_summary_content_and_labels(monkeypatch):
     assert "Главный теннисист года" in text
 
 
-async def test_yearly_summary_skipped_when_no_matches(monkeypatch):
+async def test_yearly_summary_skipped_when_no_matches(monkeypatch, db_factory):
     import bot.scheduler as sched
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     async with factory() as s:
@@ -3920,7 +3856,6 @@ async def test_yearly_summary_skipped_when_no_matches(monkeypatch):
 
     bot = AsyncMock()
     await sched.send_yearly_summary(bot)
-    await engine.dispose()
 
     bot.send_message.assert_not_called()
 
