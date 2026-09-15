@@ -335,7 +335,10 @@ async def send_weekly_digest(bot: Bot) -> None:
     """Каждый понедельник в 9:00 МСК отправляет игрокам итоги недели."""
     async with async_session() as session:
         week_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
-        two_weeks_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=14)
+        # «Клубный пульс» (v2.128.0) — было сравнение только с ОДНОЙ прошлой
+        # неделей, апгрейд на среднее за 4 недели: одна случайно тихая/бурная
+        # неделя больше не искажает "+N к прошлой" в шум.
+        baseline_start = week_ago - timedelta(days=28)
 
         players_result = await session.execute(select(Player))
         players = players_result.scalars().all()
@@ -363,16 +366,16 @@ async def send_weekly_digest(bot: Bot) -> None:
             logger.info("Еженедельный дайджест: за неделю матчей не было, пропускаем")
             return
 
-        # Матчи за позапрошлую неделю — для сравнения активности
-        prev_week_r = await session.execute(
+        # Матчи за предыдущие 4 недели — среднее для «пульса» клуба
+        baseline_r = await session.execute(
             select(func.count()).select_from(Match)
             .where(
                 Match.status == MatchStatus.completed,
-                Match.completed_at >= two_weeks_ago,
+                Match.completed_at >= baseline_start,
                 Match.completed_at < week_ago,
             )
         )
-        prev_week_count = prev_week_r.scalar()
+        baseline_avg = (baseline_r.scalar() or 0) / 4
 
         # ── Клубные агрегаты за неделю ─────────────────────────────────────────
         match_count: dict[int, int] = {}
@@ -420,13 +423,13 @@ async def send_weekly_digest(bot: Bot) -> None:
             )
 
         # ── Герои недели ───────────────────────────────────────────────────────
-        if prev_week_count > 0:
-            diff = cur_count - prev_week_count
-            diff_str = f"+{diff}" if diff >= 0 else str(diff)
+        if baseline_avg > 0:
+            diff_pct = round((cur_count - baseline_avg) / baseline_avg * 100)
+            diff_str = f"+{diff_pct}%" if diff_pct >= 0 else f"{diff_pct}%"
             activity_line = (
                 f"⚡ Сыграно за неделю: <b>{pluralize_matches(cur_count)}</b>, "
                 f"<b>{pluralize_sets(total_sets)}</b>, <b>{pluralize_points(total_points)}</b>"
-                f"  <i>({diff_str} к прошлой)</i>"
+                f"  <i>({diff_str} к среднему за 4 недели)</i>"
             )
         else:
             activity_line = (
@@ -662,7 +665,9 @@ async def send_daily_summary(bot: Bot) -> None:
                 f"{pluralize_wins(run_best)} подряд"
             )
 
-        # Чаще всего самбовались — пара, сыгравшая больше всех за день
+        # «Дуэль дня» (v2.128.0) — было просто «Чаще всего самбовались» с числом
+        # матчей, без счёта между ними; добавлен взаимный счёт за день (тот же
+        # массив matches уже отфильтрован по дню, отдельного запроса не нужно).
         pair_today: dict[tuple[int, int], int] = {}
         for m in matches:
             key = (min(m.challenger_id, m.challenged_id), max(m.challenger_id, m.challenged_id))
@@ -670,9 +675,18 @@ async def send_daily_summary(bot: Bot) -> None:
         if pair_today:
             (pa, pb), pn = max(pair_today.items(), key=lambda kv: kv[1])
             if pn >= 2:
+                pa_wins = sum(
+                    1 for m in matches
+                    if {m.challenger_id, m.challenged_id} == {pa, pb} and m.winner_id == pa
+                )
+                pb_wins = sum(
+                    1 for m in matches
+                    if {m.challenger_id, m.challenged_id} == {pa, pb} and m.winner_id == pb
+                )
+                score_str = f" ({pa_wins}:{pb_wins})" if pa_wins + pb_wins > 0 else ""
                 lines.append(
-                    f"🤼 Чаще всего самбовались — <b>{h(name_map.get(pa, '?'))}</b> vs "
-                    f"<b>{h(name_map.get(pb, '?'))}</b>: {pluralize_matches(pn)}"
+                    f"🥊 Дуэль дня — <b>{h(name_map.get(pa, '?'))}</b> vs "
+                    f"<b>{h(name_map.get(pb, '?'))}</b>: {pluralize_matches(pn)}{score_str}"
                 )
 
         no_loss = _longest_no_loss_streak(matches, name_map)

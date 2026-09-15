@@ -85,6 +85,7 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("valley_of_tears", "🪦", "Долина слёз",              "10 подряд", category=CAT_STREAKS),
     Achievement("punching_bag",   "🤕", "Груша",                     "50 поражений", category=CAT_MILESTONES),
     Achievement("personal_prey",  "🦌", "Дичь",                      "10 подряд одному", category=CAT_STREAKS, hidden=True),
+    Achievement("loser_full_set", "🏆", "Полный комплект неудачника", "Все 5 ачивок про поражения", category=CAT_SPECIAL, hidden=True),
     Achievement("relentless",     "☀️", "Неистого",                  "Выиграть все свои матчи за день (от 3)", category=CAT_MILESTONES),
     Achievement("deuce_maker",    "🎢", "Дьюсмейкер",                "Выиграть партию на дьюсе (12:10 и выше)", category=CAT_SPECIAL),
     Achievement("titans",         "🥋", "Битва такеши титанов",      "Победить в матче, где оба были 1100+ pts", category=CAT_SPECIAL, hidden=True),
@@ -95,11 +96,11 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("throne_denied",  "🚪", "Мимо трона",                "Проиграть босс-файт за трон, оставшись претендентом", category=CAT_THRONE, hidden=True),
     Achievement("chance_blown",   "💸", "Просран шанс",              "Потерять статус претендента, не дойдя до боссфайта", category=CAT_THRONE, hidden=True),
     Achievement("night_owl",      "🦉", "Полуночник",                "Выиграть матч, завершённый ночью (0:00–6:00 МСК)", category=CAT_SPECIAL, hidden=True),
-    Achievement("deuce_storm",    "🌪", "Дьюсопад",                  "Выиграть матч, где каждая партия закончилась на дьюсе", category=CAT_SPECIAL, hidden=True),
-    Achievement("no_rest_win",    "🔁", "Добивашка",                 "Выиграть матч, начатый за 10 мин после предыдущего с ним же", category=CAT_SPECIAL, hidden=True),
+    Achievement("deuce_storm",    "🌪", "Дьюсопад",                  "Все партии матча — на дьюсе", category=CAT_SPECIAL, hidden=True),
+    Achievement("no_rest_win",    "🔁", "Добивашка",                 "Реванш меньше чем через 10 минут", category=CAT_SPECIAL, hidden=True),
     Achievement("round_hundred",  "💯", "Круглая цифра",             "Рейтинг стал ровно кратен 100", category=CAT_MILESTONES, hidden=True),
     Achievement("absolute_zero",  "🥶", "Абсолютный ноль",           "Выиграть матч, где КАЖДАЯ партия закончилась 11:0", category=CAT_SPECIAL, hidden=True),
-    Achievement("weekend_warrior", "🏖", "Выходного дня",            "Выиграть матч, сыгранный в субботу или воскресенье", category=CAT_SPECIAL, hidden=True),
+    Achievement("weekend_warrior", "🏖", "Выходного дня",            "Выиграть матч в выходной", category=CAT_SPECIAL, hidden=True),
     Achievement("rock_bottom",    "🕳", "Дно",                       "Рейтинг упал ровно до 900.0 (пол ветерана)", category=CAT_MILESTONES, hidden=True),
     Achievement("full_circle_week", "🌐", "Полный круг за неделю",   "Обыграть весь клуб минимум раз за 7 дней", category=CAT_CLUB, hidden=True),
     Achievement("draw_double",    "🕊", "Дубль мира",                "Сыграть 2 ничьи подряд", category=CAT_CLUB, hidden=True),
@@ -110,7 +111,7 @@ ACHIEVEMENTS_MAP: dict[str, Achievement] = {a.id: a for a in ACHIEVEMENTS_LIST}
 
 # Увеличивай при добавлении новых ачивок, требующих бэкфилл.
 # Игроки с player.backfill_version < BACKFILL_VERSION будут обработаны один раз при старте.
-BACKFILL_VERSION = 12
+BACKFILL_VERSION = 13
 
 TERMINATOR_STREAK_LEN = 5  # активная серия соперника для «Вынес терминатора»
 
@@ -628,6 +629,14 @@ async def check_loss_achievements(
     # ── Дно: рейтинг упал ровно до пола ветерана (900.0) ─────────────────────
     if rating_tenths(loser.rating) == 9000:
         maybe("rock_bottom")
+
+    # ── Полный комплект неудачника: все 5 «поражённых» ачивок разом (v2.128.0)
+    # ─ проверяется ПОСЛЕДНЕЙ в функции: earned уже содержит те из пяти, что
+    # только что разблокировались этим же матчем (maybe() мутирует earned
+    # на месте через _add_new). Первый в проекте метa-ачивка-от-других-ачивок.
+    loser_set_ids = {"first_pancake", "blown_lead", "valley_of_tears", "punching_bag", "personal_prey"}
+    if loser_set_ids.issubset(earned):
+        maybe("loser_full_set")
 
     if new_ids:
         loser.achievements = json.dumps(earned)
@@ -1154,6 +1163,15 @@ async def backfill_achievements(session: AsyncSession) -> None:
                     mark("personal_prey", m.completed_at)
             else:
                 prey_streaks[opp_id] = 0
+
+        # Полный комплект неудачника: все 5 «поражённых» ачивок разом (v2.128.0).
+        # Без даты (как и rating_1200 ниже) — 5 условий определяются в РАЗНЫХ
+        # проходах по matches выше, точный исторический момент "когда собрались
+        # все 5" пришлось бы восстанавливать по 5 независимым таймлайнам, не
+        # стоит того ради одной мета-ачивки.
+        loser_set_ids = {"first_pancake", "blown_lead", "valley_of_tears", "punching_bag", "personal_prey"}
+        if loser_set_ids.issubset(earned):
+            mark("loser_full_set")
 
         # Рейтинг 1200 (по peak_rating — текущее значение, не снапшот на момент
         # исторического матча, поэтому дата принципиально недоступна)
