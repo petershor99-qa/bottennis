@@ -88,8 +88,12 @@ def _compute_player_stats(player, all_matches: list) -> dict:
     # игрока был поражением (и с тех пор реванша не было). all_matches уже
     # отсортирован desc(completed_at), поэтому первое попадание каждого
     # соперника в цикле — это и есть его самый недавний матч с игроком.
+    # «У тебя в долгу» (v2.128.0) — зеркало «Незакрытых долгов»: соперники,
+    # чей самый последний матч против игрока БЫЛ выигран игроком (реванша с
+    # ИХ стороны ещё не было). Тот же проход, та же логика в обратную сторону.
     opp_stats: dict[int, dict] = {}
     unresolved_debts: list[str] = []
+    debtors: list[str] = []
     seen_recent: set[int] = set()
     for m in all_matches:
         opp = m.challenged if m.challenger_id == player.id else m.challenger
@@ -106,6 +110,8 @@ def _compute_player_stats(player, all_matches: list) -> dict:
             seen_recent.add(opp.id)
             if m.winner_id is not None and m.winner_id != player.id:
                 unresolved_debts.append(opp.display_name)
+            elif m.winner_id == player.id:
+                debtors.append(opp.display_name)
 
     rated = [m for m in all_matches if m.rating_change is not None]
     avg_delta = best_win = None
@@ -306,7 +312,7 @@ def _compute_player_stats(player, all_matches: list) -> dict:
         "sets_won": sets_won, "career_points": career_points,
         "lucky_day": lucky_day, "post_loss": post_loss,
         "favorite_score": favorite_score, "style_insight": style_insight,
-        "comeback_wins": comeback_wins, "unresolved_debts": unresolved_debts,
+        "comeback_wins": comeback_wins, "unresolved_debts": unresolved_debts, "debtors": debtors,
         "stability_score": round(stability_score), "activity_streak_days": activity_streak_days,
     }
 

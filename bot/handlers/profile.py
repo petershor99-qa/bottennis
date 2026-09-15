@@ -124,6 +124,12 @@ def _render_stats_lines(player, s: dict) -> list[str]:
         if len(debts) > 3:
             names_str += f" +{len(debts) - 3}"
         opponent_lines.append(f"📌 Незакрытые долги: <b>{names_str}</b>")
+    if s["debtors"]:
+        debtors = s["debtors"]
+        names_str = ", ".join(h(n) for n in debtors[:3])
+        if len(debtors) > 3:
+            names_str += f" +{len(debtors) - 3}"
+        opponent_lines.append(f"💸 У тебя в долгу: <b>{names_str}</b>")
 
     if player.peak_rating and player.peak_rating > player.rating:
         rating_lines.append(f"📈 Пик рейтинга: <b>{round(player.peak_rating, 1)}</b> pts")

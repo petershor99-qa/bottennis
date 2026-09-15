@@ -1251,6 +1251,42 @@ async def test_no_personal_prey_when_win_breaks_streak(db):
     assert "personal_prey" in new  # новая серия из 10 подряд после сброса
 
 
+# ── loser_full_set (Полный комплект неудачника — мета-ачивка) ──────────────────
+
+async def test_loser_full_set_after_all_five_loss_achievements(db):
+    """Собирает все 5 «поражённых» ачивок по очереди на одном сопернике:
+    1-й матч — first_pancake, 2-й — blown_lead (спец. счёт), 10-й подряд —
+    valley_of_tears + personal_prey, 50-й — punching_bag. loser_full_set
+    должна появиться в new ТОЛЬКО на 50-м матче, когда закрыта последняя из пяти."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    blown_lead_sets = [
+        {"w": 9, "l": 11}, {"w": 9, "l": 11},
+        {"w": 11, "l": 9}, {"w": 11, "l": 8}, {"w": 11, "l": 6},
+    ]
+
+    new = await _do_loss(db, p2, p1, dt=_ts(0))
+    assert "first_pancake" in new
+
+    new = await _do_loss(db, p2, p1, sets=blown_lead_sets, dt=_ts(1))
+    assert "blown_lead" in new
+
+    await _bulk_wins(db, p2, p1, 7, start=2)  # поражения 3..9 (быстро, без проверки ачивок)
+
+    new = await _do_loss(db, p2, p1, dt=_ts(9))  # 10-е подряд
+    assert "valley_of_tears" in new
+    assert "personal_prey" in new
+    assert "loser_full_set" not in new  # не хватает punching_bag (4 из 5)
+
+    await _bulk_wins(db, p2, p1, 39, start=10)  # поражения 11..49
+
+    new = await _do_loss(db, p2, p1, dt=_ts(49))  # 50-е — последнее из пяти
+    assert "punching_bag" in new
+    assert "loser_full_set" in new
+
+
 # relentless (Неистого — все матчи за день победы, от 3)
 
 async def test_relentless_three_wins_same_day(db):
@@ -1437,6 +1473,32 @@ async def test_backfill_personal_prey(db):
 
     await backfill_achievements(db)
     assert "personal_prey" in get_achievements(p1)
+
+
+async def test_backfill_loser_full_set(db):
+    """50 поражений подряд от одного соперника, второй матч — с blown_lead
+    счётом: по ходу набираются все 5 условий, backfill должен закрыть мета-ачивку."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    blown_lead_sets = [
+        {"w": 9, "l": 11}, {"w": 9, "l": 11},
+        {"w": 11, "l": 9}, {"w": 11, "l": 8}, {"w": 11, "l": 6},
+    ]
+    for i in range(50):
+        db.add(Match(
+            challenger_id=p2.id, challenged_id=p1.id,
+            status=MatchStatus.completed, winner_id=p2.id,
+            sets_data=blown_lead_sets if i == 1 else _DEFAULT_SETS,
+            completed_at=_ts(i),
+        ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    earned = get_achievements(p1)
+    assert "loser_full_set" in earned
+    assert {"first_pancake", "blown_lead", "valley_of_tears", "punching_bag", "personal_prey"} <= set(earned)
 
 
 async def test_backfill_assigns_night_king(db):

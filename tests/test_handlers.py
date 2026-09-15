@@ -755,7 +755,7 @@ def _full_stats(**overrides) -> dict:
         "deuce_total": 0, "deuce_won": 0,
         "lucky_day": None, "post_loss": None,
         "favorite_score": None, "style_insight": None,
-        "comeback_wins": 0, "unresolved_debts": [],
+        "comeback_wins": 0, "unresolved_debts": [], "debtors": [],
         "stability_score": 100, "activity_streak_days": 0,
         "first_set_wins": 0,
     }
@@ -1130,6 +1130,48 @@ async def test_compute_stats_no_debt_after_revenge(db):
     )
     s = _compute_player_stats(p1, all_r.scalars().all())
     assert s["unresolved_debts"] == []
+
+
+async def test_compute_stats_debtor_when_last_match_won(db):
+    """«У тебя в долгу» (v2.128.0) — зеркало «Незакрытых долгов»: самый
+    недавний матч против Bob выигран игроком — Bob ещё не отомстил."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p2.id, 5.0, datetime(2026, 1, 1, 12, 0, 0)))  # проиграла
+    db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 1, 5, 12, 0, 0)))  # выиграла (последний)
+    await db.commit()
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+        .order_by(Match.completed_at.desc())
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["debtors"] == ["Bob"]
+    assert s["unresolved_debts"] == []
+
+
+async def test_compute_stats_no_debtor_after_opponent_revenge(db):
+    """Bob отомстил — долга больше нет, в списке быть не должно."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 1, 1, 12, 0, 0)))  # выиграла
+    db.add(_completed(p1, p2, p2.id, 5.0, datetime(2026, 1, 5, 12, 0, 0)))  # Bob отомстил (последний)
+    await db.commit()
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+        .order_by(Match.completed_at.desc())
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["debtors"] == []
+
+
+def test_render_stats_lines_shows_debtors():
+    p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
+    lines = _render_stats_lines(p, _full_stats(debtors=["Bob", "Cara"]))
+    assert any("У тебя в долгу" in ln and "Bob" in ln and "Cara" in ln for ln in lines)
 
 
 async def test_compute_stats_activity_streak_counts_consecutive_days(db):
@@ -3067,6 +3109,66 @@ async def test_h2h_hides_challenge_when_viewer_busy(db):
     assert not any("Вызвать" in t for t in buttons)
 
 
+async def test_h2h_shows_even_fight_badge_when_balanced(db):
+    """Равный бой (v2.128.0) — локальная пометка на личном экране H2H: ≥4 встречи,
+    разница побед ≤1 (тот же критерий, что и клубный рекорд в leaderboard.py)."""
+    from bot.handlers.history import show_h2h
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    db.add(_completed(p1, p2, p1.id, 5.0, base))
+    db.add(_completed(p1, p2, p1.id, 5.0, base + timedelta(days=1)))
+    db.add(_completed(p1, p2, p2.id, -5.0, base + timedelta(days=2)))
+    db.add(_completed(p1, p2, p2.id, -5.0, base + timedelta(days=3)))
+    await db.commit()
+
+    cb = _callback(1, f"h2h_{p2.id}_0")
+    await show_h2h(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Равный бой" in text
+
+
+async def test_h2h_no_even_fight_badge_when_lopsided(db):
+    """4+ встречи, но разница побед больше 1 — «Равный бой» не показывается."""
+    from bot.handlers.history import show_h2h
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    for i in range(4):
+        db.add(_completed(p1, p2, p1.id, 5.0, base + timedelta(days=i)))
+    await db.commit()
+
+    cb = _callback(1, f"h2h_{p2.id}_0")
+    await show_h2h(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Равный бой" not in text
+
+
+async def test_h2h_no_even_fight_badge_under_four_matches(db):
+    """Разница побед ≤1, но меньше 4 встреч — порог не набран."""
+    from bot.handlers.history import show_h2h
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    db.add(_completed(p1, p2, p1.id, 5.0, base))
+    db.add(_completed(p1, p2, p2.id, -5.0, base + timedelta(days=1)))
+    await db.commit()
+
+    cb = _callback(1, f"h2h_{p2.id}_0")
+    await show_h2h(cb, db)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "Равный бой" not in text
+
+
 async def test_my_matches_no_challenge_buttons_when_viewer_busy(db):
     """Если зритель занят, кнопки «Вызвать X» не показываются вообще —
     раньше показывались для всех, кто индивидуально свободен."""
@@ -3371,10 +3473,41 @@ async def test_daily_summary_new_sections(monkeypatch):
     text = bot.send_message.call_args_list[0][0][1]
     assert "🟩" in text                    # полоска формы
     assert "Нагибатель дня" in text
-    assert "Чаще всего самбовались" in text
+    assert "Дуэль дня" in text              # было «Чаще всего самбовались», v2.128.0
+    assert "(3:0)" in text                  # взаимный счёт за день
     assert "3 победы подряд" in text       # текущая серия Alice
     assert "Отрицательный рост" in text     # Bob ушёл в минус
     assert "Все матчи:" in text             # общий лог матчей со счётом
+
+
+async def test_daily_summary_duel_score_ignores_third_party_matches(monkeypatch):
+    """Взаимный счёт в «Дуэли дня» считается ТОЛЬКО между самой играющей парой,
+    не задет матчами с третьими игроками в тот же день."""
+    import bot.scheduler as sched
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    async with factory() as s:
+        p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+        s.add_all([p1, p2, p3])
+        await s.flush()
+        s.add(_completed(p1, p2, p1.id, 10.0, now))   # Alice-Bob 1:0
+        s.add(_completed(p1, p2, p2.id, 10.0, now))   # Alice-Bob 1:1
+        s.add(_completed(p1, p3, p1.id, 10.0, now))   # третий игрок, не должен влиять
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.send_daily_summary(bot)
+    await engine.dispose()
+
+    text = bot.send_message.call_args_list[0][0][1]
+    assert "Дуэль дня" in text
+    assert "(1:1)" in text
 
 
 async def test_weekly_digest_standings_and_heroes(monkeypatch):
@@ -3415,6 +3548,41 @@ async def test_weekly_digest_standings_and_heroes(monkeypatch):
     assert "Матч недели" in text
     assert "Отрицательный рост" in text
     assert "🟩" in text                         # полоска формы в топе (v2.104.0)
+
+
+async def test_weekly_digest_club_pulse_vs_4week_average(monkeypatch):
+    """«Клубный пульс» (v2.128.0) — сравнение со СРЕДНИМ за 4 предыдущие
+    недели, не с одной прошлой (та была слишком шумной: одна случайно тихая
+    неделя искажала сравнение)."""
+    import bot.scheduler as sched
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    async with factory() as s:
+        p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+        s.add_all([p1, p2])
+        await s.flush()
+        # Эта неделя: 2 матча
+        for i in range(2):
+            s.add(_completed(p1, p2, p1.id, 10.0, now - timedelta(hours=5 - i)))
+        # Предыдущие 4 недели: 1 матч на каждую (среднее = 1/неделю)
+        for week in range(1, 5):
+            s.add(_completed(p1, p2, p1.id, 10.0, now - timedelta(days=7 * week + 1)))
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.send_weekly_digest(bot)
+    await engine.dispose()
+
+    text = bot.send_message.call_args_list[0][0][1]
+    # 2 матча в эту неделю vs среднее 1/неделю за 4 недели = +100%
+    assert "+100%" in text
+    assert "к среднему за 4 недели" in text
 
 
 # ── send_match_reminders (напоминание про незавершённый матч, от 24ч) ──────────
