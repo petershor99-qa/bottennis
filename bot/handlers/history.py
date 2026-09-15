@@ -445,9 +445,16 @@ async def show_h2h(callback: CallbackQuery, session: AsyncSession):
     delta = s["rating_delta"]
     delta_sign = "+" if delta >= 0 else ""
 
+    # Равный бой (v2.128.0) — локальная версия клубного рекорда из leaderboard.py
+    # (тот же критерий: ≥4 встречи, разница побед ≤1), но для конкретной пары,
+    # показывается прямо на личном экране, а не только в общей сводке клуба.
+    even_str = ""
+    if s["wins"] + s["losses"] >= 4 and abs(s["wins"] - s["losses"]) <= 1:
+        even_str = "  ⚖️ Равный бой"
+
     lines = [
         title,
-        f"📊 Счёт встреч: <b>{s['wins']}–{s['losses']}</b>{draws_str}",
+        f"📊 Счёт встреч: <b>{s['wins']}–{s['losses']}</b>{draws_str}{even_str}",
         f"🏓 По партиям: <b>{s['my_sets']}–{s['opp_sets']}</b>",
     ]
     if s["streak_desc"]:
