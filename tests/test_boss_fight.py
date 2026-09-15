@@ -6,12 +6,9 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import pytest_asyncio
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
 
-from bot.db.models import Base, ChampionReign, Match, MatchStatus, Player
+from bot.db.models import ChampionReign, Match, MatchStatus, Player
 from bot.handlers.challenge import send_challenge, show_players_for_challenge
 from bot.handlers.history import show_h2h
 from bot.handlers.leaderboard import show_club_records, show_hall_of_fame, show_leaderboard
@@ -38,17 +35,6 @@ from bot.utils import (
 )
 
 # ── Фикстуры и хелперы ────────────────────────────────────────────────────────
-
-
-@pytest_asyncio.fixture
-async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with factory() as s:
-        yield s
-    await engine.dispose()
 
 
 def _player(tid: int, name: str, rating: float = 1000.0) -> Player:
@@ -672,18 +658,10 @@ async def test_confirm_result_hides_rematch_button_after_boss_fight(db):
 
 # ── E. Авто-освобождение трона ────────────────────────────────────────────────
 
-async def _sched_db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    return engine, factory
-
-
-async def test_champion_auto_release_transfers_after_7_days_inactive(monkeypatch):
+async def test_champion_auto_release_transfers_after_7_days_inactive(monkeypatch, db_factory):
     import bot.scheduler as sched
 
-    engine, factory = await _sched_db()
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     old_completed = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=8)
@@ -706,21 +684,19 @@ async def test_champion_auto_release_transfers_after_7_days_inactive(monkeypatch
         r2 = await s.execute(select(Player).where(Player.id == 2))
         heir_after = r2.scalar_one()
 
-    await engine.dispose()
-
     assert champion_after.is_champion is False
     assert heir_after.is_champion is True
     texts = [c.args[1] for c in bot.send_message.await_args_list]
     assert any("Трон освободился" in t for t in texts)
 
 
-async def test_throne_cracking_notifies_champion_when_chaser_close(monkeypatch):
+async def test_throne_cracking_notifies_champion_when_chaser_close(monkeypatch, db_factory):
     """Chaser рейтингом НИЖЕ чемпиона (не официальный претендент — тот был бы
     строго выше), разрыв 15 < THRONE_CRACKING_GAP=20 — уведомление уходит
     только чемпиону."""
     import bot.scheduler as sched
 
-    engine, factory = await _sched_db()
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     base = datetime(2026, 6, 1, 12, 0, 0)
@@ -735,7 +711,6 @@ async def test_throne_cracking_notifies_champion_when_chaser_close(monkeypatch):
 
     bot = AsyncMock()
     await sched.check_throne_cracking(bot)
-    await engine.dispose()
 
     calls = bot.send_message.await_args_list
     assert len(calls) == 1
@@ -744,10 +719,10 @@ async def test_throne_cracking_notifies_champion_when_chaser_close(monkeypatch):
     assert "Chaser" in calls[0].args[1]
 
 
-async def test_throne_cracking_no_notification_when_gap_large(monkeypatch):
+async def test_throne_cracking_no_notification_when_gap_large(monkeypatch, db_factory):
     import bot.scheduler as sched
 
-    engine, factory = await _sched_db()
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     base = datetime(2026, 6, 1, 12, 0, 0)
@@ -762,17 +737,16 @@ async def test_throne_cracking_no_notification_when_gap_large(monkeypatch):
 
     bot = AsyncMock()
     await sched.check_throne_cracking(bot)
-    await engine.dispose()
 
     bot.send_message.assert_not_awaited()
 
 
-async def test_throne_cracking_ignores_player_already_above_champion(monkeypatch):
+async def test_throne_cracking_ignores_player_already_above_champion(monkeypatch, db_factory):
     """Игрок с рейтингом ВЫШЕ чемпиона — уже официальный претендент
     (get_challenger()), не «подкрадывается снизу», это другой сценарий."""
     import bot.scheduler as sched
 
-    engine, factory = await _sched_db()
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     base = datetime(2026, 6, 1, 12, 0, 0)
@@ -787,15 +761,14 @@ async def test_throne_cracking_ignores_player_already_above_champion(monkeypatch
 
     bot = AsyncMock()
     await sched.check_throne_cracking(bot)
-    await engine.dispose()
 
     bot.send_message.assert_not_awaited()
 
 
-async def test_throne_cracking_ignores_candidate_below_match_threshold(monkeypatch):
+async def test_throne_cracking_ignores_candidate_below_match_threshold(monkeypatch, db_factory):
     import bot.scheduler as sched
 
-    engine, factory = await _sched_db()
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     base = datetime(2026, 6, 1, 12, 0, 0)
@@ -810,15 +783,14 @@ async def test_throne_cracking_ignores_candidate_below_match_threshold(monkeypat
 
     bot = AsyncMock()
     await sched.check_throne_cracking(bot)
-    await engine.dispose()
 
     bot.send_message.assert_not_awaited()
 
 
-async def test_throne_cracking_none_when_no_champion(monkeypatch):
+async def test_throne_cracking_none_when_no_champion(monkeypatch, db_factory):
     import bot.scheduler as sched
 
-    engine, factory = await _sched_db()
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     async with factory() as s:
@@ -827,15 +799,14 @@ async def test_throne_cracking_none_when_no_champion(monkeypatch):
 
     bot = AsyncMock()
     await sched.check_throne_cracking(bot)  # не должно упасть
-    await engine.dispose()
 
     bot.send_message.assert_not_awaited()
 
 
-async def test_throne_cracking_picks_closest_chaser_among_several(monkeypatch):
+async def test_throne_cracking_picks_closest_chaser_among_several(monkeypatch, db_factory):
     import bot.scheduler as sched
 
-    engine, factory = await _sched_db()
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     base = datetime(2026, 6, 1, 12, 0, 0)
@@ -852,7 +823,6 @@ async def test_throne_cracking_picks_closest_chaser_among_several(monkeypatch):
 
     bot = AsyncMock()
     await sched.check_throne_cracking(bot)
-    await engine.dispose()
 
     calls = bot.send_message.await_args_list
     assert len(calls) == 1
@@ -860,10 +830,10 @@ async def test_throne_cracking_picks_closest_chaser_among_several(monkeypatch):
     assert "Far" not in calls[0].args[1]
 
 
-async def test_champion_auto_release_no_candidates_keeps_throne(monkeypatch):
+async def test_champion_auto_release_no_candidates_keeps_throne(monkeypatch, db_factory):
     import bot.scheduler as sched
 
-    engine, factory = await _sched_db()
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     old_completed = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=8)
@@ -884,16 +854,15 @@ async def test_champion_auto_release_no_candidates_keeps_throne(monkeypatch):
     async with factory() as s:
         r = await s.execute(select(Player).where(Player.id == 1))
         champion_after = r.scalar_one()
-    await engine.dispose()
 
     assert champion_after.is_champion is True   # трон остался
     bot.send_message.assert_not_called()
 
 
-async def test_champion_auto_release_not_triggered_within_7_days(monkeypatch):
+async def test_champion_auto_release_not_triggered_within_7_days(monkeypatch, db_factory):
     import bot.scheduler as sched
 
-    engine, factory = await _sched_db()
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     recent = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=2)
@@ -913,7 +882,6 @@ async def test_champion_auto_release_not_triggered_within_7_days(monkeypatch):
     async with factory() as s:
         r = await s.execute(select(Player).where(Player.id == 1))
         champion_after = r.scalar_one()
-    await engine.dispose()
 
     assert champion_after.is_champion is True
     bot.send_message.assert_not_called()
@@ -1198,10 +1166,10 @@ async def test_try_transfer_champion_fails_when_from_not_champion(db):
 
 # -- Гонка авто-освобождения vs идущий боссфайт --
 
-async def test_auto_release_skipped_when_champion_has_active_match(monkeypatch):
+async def test_auto_release_skipped_when_champion_has_active_match(monkeypatch, db_factory):
     import bot.scheduler as sched
 
-    engine, factory = await _sched_db()
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
     old_completed = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=8)
@@ -1228,16 +1196,15 @@ async def test_auto_release_skipped_when_champion_has_active_match(monkeypatch):
     async with factory() as s:
         r = await s.execute(select(Player).where(Player.id == 1))
         champion_after = r.scalar_one()
-    await engine.dispose()
 
     assert champion_after.is_champion is True
     bot.send_message.assert_not_called()
 
 
-async def test_auto_release_quiet_when_cas_fails(monkeypatch):
+async def test_auto_release_quiet_when_cas_fails(monkeypatch, db_factory):
     import bot.scheduler as sched
 
-    engine, factory = await _sched_db()
+    factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
     monkeypatch.setattr(sched, "try_transfer_champion", AsyncMock(return_value=False))
 
@@ -1256,7 +1223,6 @@ async def test_auto_release_quiet_when_cas_fails(monkeypatch):
     await sched.check_champion_auto_release(bot)  # не должно упасть
 
     bot.send_message.assert_not_called()
-    await engine.dispose()
 
 
 async def test_confirm_result_skips_transfer_when_cas_fails(db, monkeypatch):
