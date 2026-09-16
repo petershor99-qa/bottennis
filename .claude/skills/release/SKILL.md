@@ -118,12 +118,25 @@ half-do and the one CLAUDE.md explicitly calls out as mandatory):
    No emoji anywhere in this file — that's a hard project rule, not a style
    preference (see `feedback_release_notes_style` memory note if loaded).
 
-2. **README.md** and **TESTING.md** — find every place the *old* total test count
-   appears (grep for it) and replace with the new count. There are usually 4-5
-   occurrences in README.md (intro paragraph, a code comment, a bullet, the repo
-   tree diagram) and 1 in TESTING.md. Also skim README's feature bullet list — if
-   the release added a new user-facing screen or mechanic, it probably deserves a
-   one-line bullet there too, in the same terse style as its neighbors.
+2. **README.md** and **TESTING.md** — run the bundled sync script instead of
+   grepping by hand:
+   ```bash
+   py -3.13 .claude/skills/release/scripts/sync_test_count.py
+   ```
+   It reads the real test count from pytest and the real achievement count/
+   hidden-count from `ACHIEVEMENTS_LIST`, then rewrites every known phrasing of
+   both numbers in README.md/TESTING.md — anchored to the exact surrounding
+   phrase each time (never a bare `\bN\b` sweep: an early version of this
+   script did that and it silently mangled an unrelated "через 24 часа" into
+   "через 27 часа" while syncing the hidden-achievement count — small numbers
+   collide with unrelated prose far more often than the three-digit test
+   count does). If a release adds a NEW phrasing of either number, or a
+   genuinely new number worth tracking, add a pattern to the script rather
+   than reverting to manual grep — that's the whole point of having it.
+   Also skim README's feature bullet list — if the release added a new
+   user-facing screen or mechanic, it probably deserves a one-line bullet
+   there too, in the same terse style as its neighbors (the script only
+   syncs numbers, not prose).
 
 3. **CLAUDE.md** — this is the one that needs judgment, not just find-replace:
    - Update the "Текущий статус" block's version numbers and test count.

@@ -23,6 +23,30 @@ jobs:
       - name: Lint (ruff)
         run: ruff check .
 
+  mypy:
+    runs-on: ubuntu-latest
+    # Советующая проверка, НЕ блокирующая (continue-on-error) — на момент
+    # подключения (2026-09-16) codebase не аннотирован, прогон даёт ~850
+    # ошибок в 12 файлах (в основном трение SQLAlchemy Column[X] vs обычных
+    # типов + непроверенный User | None). Включать как gate имеет смысл
+    # только после реальной типизации моделей/хендлеров — см. заметку в
+    # CLAUDE.md "Известные ограничения". Пока просто держит отчёт видимым в
+    # каждом прогоне CI, не мешая мержу.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Type check (mypy, informational only)
+        continue-on-error: true
+        run: mypy bot/ --ignore-missing-imports
+
   pytest:
     runs-on: ubuntu-latest
 
@@ -61,6 +85,10 @@ jobs:
             cd /opt/bottennis
             if ! git pull --ff-only; then
               echo "::error::git pull --ff-only упал — деплой остановлен, на проде осталась предыдущая версия"
+              exit 1
+            fi
+            if ! /opt/bottennis/.venv/bin/pip install -r requirements.txt; then
+              echo "::error::pip install упал — деплой остановлен, зависимости не обновлены, сервис не перезапущен"
               exit 1
             fi
             systemctl restart bottennis
