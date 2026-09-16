@@ -87,6 +87,10 @@ jobs:
               echo "::error::git pull --ff-only упал — деплой остановлен, на проде осталась предыдущая версия"
               exit 1
             fi
+            if ! /opt/bottennis/.venv/bin/pip install -r requirements.txt; then
+              echo "::error::pip install упал — деплой остановлен, зависимости не обновлены, сервис не перезапущен"
+              exit 1
+            fi
             systemctl restart bottennis
             sleep 10
             if ! systemctl is-active --quiet bottennis; then
