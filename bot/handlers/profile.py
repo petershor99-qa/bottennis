@@ -108,9 +108,11 @@ def _render_stats_lines(player, s: dict) -> list[str]:
         form_lines.append(f"📆 Играешь <b>{pluralize_days(s['activity_streak_days'])}</b> подряд")
 
     if s["best_opp"]:
-        opponent_lines.append(f"🎁 Подарок: <b>{h(s['best_opp']['name'])}</b> ({s['best_opp']['wins']} побед)")
+        bo = s["best_opp"]
+        opponent_lines.append(f"🎁 Подарок: <b>{h(bo['name'])}</b> ({bo['wins']}–{bo['losses']}, {bo['rate']}% побед)")
     if s["nemesis"]:
-        opponent_lines.append(f"😱 Кошмар: <b>{h(s['nemesis']['name'])}</b> ({s['nemesis']['losses']} поражений)")
+        ne = s["nemesis"]
+        opponent_lines.append(f"😱 Кошмар: <b>{h(ne['name'])}</b> ({ne['wins']}–{ne['losses']}, {ne['rate']}% поражений)")
     top_opp = s["top_opp"]
     if top_opp and top_opp["total"] >= 2:
         top_draws_str = f" 🤝{top_opp['draws']}" if top_opp["draws"] else ""
@@ -412,9 +414,11 @@ async def show_career_recap(callback: CallbackQuery, session: AsyncSession):
     if s["best_streak"] >= 2:
         lines.append(f"🔥 Лучшая серия: <b>{s['best_streak']} побед подряд</b>")
     if s["best_opp"]:
-        lines.append(f"🎁 Подарок: <b>{h(s['best_opp']['name'])}</b> ({s['best_opp']['wins']} побед)")
+        bo = s["best_opp"]
+        lines.append(f"🎁 Подарок: <b>{h(bo['name'])}</b> ({bo['wins']}–{bo['losses']}, {bo['rate']}% побед)")
     if s["nemesis"]:
-        lines.append(f"😱 Кошмар: <b>{h(s['nemesis']['name'])}</b> ({s['nemesis']['losses']} поражений)")
+        ne = s["nemesis"]
+        lines.append(f"😱 Кошмар: <b>{h(ne['name'])}</b> ({ne['wins']}–{ne['losses']}, {ne['rate']}% поражений)")
     if s["boss_fights_played"] > 0:
         lines.append(f"⚔️ Боссфайты: <b>{s['boss_fights_won']}/{s['boss_fights_played']}</b>")
     if player.is_champion:

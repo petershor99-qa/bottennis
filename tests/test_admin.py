@@ -4,8 +4,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import bot.handlers.admin as admin_module
-from bot.db.models import Match, MatchStatus, Player
+from bot.db.models import Match, MatchStatus
 from bot.handlers.admin import _SEND_CHUNK, _send, cmd_backup, cmd_dbstats
+from tests.conftest import _player
 
 
 def _message(user_id: int = 1) -> AsyncMock:
@@ -14,13 +15,6 @@ def _message(user_id: int = 1) -> AsyncMock:
     m.chat = SimpleNamespace(id=user_id)
     m.answer = AsyncMock()
     return m
-
-
-def _player(tid: int, name: str, rating: float = 1000.0) -> Player:
-    return Player(
-        telegram_id=tid, display_name=name, rating=rating,
-        achievements="[]", backfill_version=0,
-    )
 
 
 async def test_send_short_text_is_one_message():

@@ -288,13 +288,37 @@ def _compute_player_stats(player, all_matches: list) -> dict:
                 else ("marathoner", round(long_wr), round(short_wr))
             )
 
+    # «Подарок»/«Кошмар» — по проценту побед/поражений в очных встречах, не по
+    # сырому счётчику (v2.129.0): при частой игре с одним соперником оба
+    # счётчика растут одновременно, и один и тот же человек мог оказаться разом
+    # и «подарком», и «кошмаром» — бессмысленно. Порог ≥3 встреч — тот же, что
+    # и у других процентных инсайтов в этой функции (см. выше), иначе один
+    # выигрыш уже давал бы «100% подарок». При равном проценте — у кого больше
+    # сыграно встреч (тот же принцип, что у «Равного боя» в рекордах клуба —
+    # больше сыгранных матчей убедительнее случайности на малой выборке).
+    # Процент считается один раз здесь и кладётся в сам словарь ("rate") —
+    # чтобы рендер на экранах статистики/профиля не пересчитывал его повторно.
+    best_opp = max(
+        (v for v in opp_stats.values() if v["total"] >= 3 and v["wins"] > 0),
+        key=lambda x: (x["wins"] / x["total"], x["total"]), default=None,
+    )
+    if best_opp:
+        best_opp = {**best_opp, "rate": round(best_opp["wins"] / best_opp["total"] * 100)}
+
+    nemesis = max(
+        (v for v in opp_stats.values() if v["total"] >= 3 and v["losses"] > 0),
+        key=lambda x: (x["losses"] / x["total"], x["total"]), default=None,
+    )
+    if nemesis:
+        nemesis = {**nemesis, "rate": round(nemesis["losses"] / nemesis["total"] * 100)}
+
     return {
         "wins": wins, "draws": draws, "losses": losses,
         "win_rate": int(wins / len(all_matches) * 100) if all_matches else 0,
         "streak": streak, "loss_streak": loss_streak,
         "sets_win_rate": int(sets_won / sets_total * 100) if sets_total else 0,
-        "best_opp": max((v for v in opp_stats.values() if v["wins"] > 0), key=lambda x: x["wins"], default=None),
-        "nemesis": max((v for v in opp_stats.values() if v["losses"] > 0), key=lambda x: x["losses"], default=None),
+        "best_opp": best_opp,
+        "nemesis": nemesis,
         "top_opp": max(opp_stats.values(), key=lambda x: x["total"], default=None),
         "avg_delta": avg_delta, "best_win": best_win,
         "total_earned": total_earned, "total_lost": total_lost,

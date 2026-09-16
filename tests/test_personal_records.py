@@ -13,16 +13,13 @@ from bot.services.personal_records import (
     check_personal_records_on_loss,
     check_personal_records_on_win,
 )
+from tests.conftest import _player
 
 _BASE_DT = datetime(2024, 1, 1, 12, 0, 0)
 
 
 def _ts(days: int = 0, seconds: int = 0) -> datetime:
     return _BASE_DT + timedelta(days=days, seconds=seconds)
-
-
-def _player(tid: int, name: str) -> Player:
-    return Player(telegram_id=tid, display_name=name, rating=1000.0, achievements="[]", backfill_version=0)
 
 
 def _add_match(

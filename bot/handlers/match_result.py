@@ -41,6 +41,7 @@ from bot.utils import (
     msk_day_start,
     msk_hour_and_weekday,
     notify_all_players,
+    pluralize_days,
     previous_h2h_line,
     rating_tenths,
     try_transfer_champion,
@@ -389,6 +390,39 @@ async def _send_time_based_eggs(bot: Bot, players: list[Player], completed_at: d
             pass
 
 
+async def _send_welcome_back_egg(
+    bot: Bot, session: AsyncSession, players: list[Player], completed_at: datetime, match_id: int,
+) -> None:
+    """«Восстал из мёртвых» (v2.129.0) — если у игрока был перерыв 14+ дней
+    перед ЭТИМ матчем. Сравниваем не с матчем соперника, а с СОБСТВЕННЫМ
+    предыдущим завершённым матчем игрока (Match.id != match_id, чтобы не
+    сравнить только что сохранённый матч сам с собой) — так пасхалка бьёт
+    только тому, кто реально долго отсутствовал, а не обоим участникам сразу."""
+    for p in players:
+        prev_r = await session.execute(
+            select(Match.completed_at)
+            .where(
+                or_(Match.challenger_id == p.id, Match.challenged_id == p.id),
+                Match.status == MatchStatus.completed,
+                Match.id != match_id,
+            )
+            .order_by(desc(Match.completed_at))
+            .limit(1)
+        )
+        prev_completed_at = prev_r.scalar_one_or_none()
+        if prev_completed_at is None:
+            continue
+        gap_days = (completed_at - prev_completed_at).days
+        if gap_days >= 14:
+            try:
+                await bot.send_message(
+                    p.telegram_id,
+                    f"🧟 Восстал из мёртвых. Рейтинг за {pluralize_days(gap_days)} успел заскучать без тебя.",
+                )
+            except Exception:
+                pass
+
+
 async def _send_h2h_milestone_egg(bot: Bot, session: AsyncSession, p1: Player, p2: Player) -> None:
     """Пасхалка на круглую цифру личных встреч между этой парой (эта — включительно)."""
     r = await session.execute(
@@ -487,6 +521,7 @@ async def _send_easter_eggs(
     if completed_at is not None:
         await _send_time_based_eggs(bot, [winner, loser], completed_at)
         await _send_h2h_milestone_egg(bot, session, winner, loser)
+        await _send_welcome_back_egg(bot, session, [winner, loser], completed_at, match_id)
     if created_at is not None:
         await _send_quick_rematch_egg(bot, winner, loser, created_at, h2h_matches)
 
