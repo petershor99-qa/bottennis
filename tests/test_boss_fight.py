@@ -3,7 +3,6 @@
 Запуск: pytest tests/test_boss_fight.py -v
 """
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from sqlalchemy import select
@@ -33,36 +32,9 @@ from bot.utils import (
     steadiest_career,
     try_transfer_champion,
 )
+from tests.conftest import _callback, _player, _state
 
 # ── Фикстуры и хелперы ────────────────────────────────────────────────────────
-
-
-def _player(tid: int, name: str, rating: float = 1000.0) -> Player:
-    return Player(
-        telegram_id=tid, display_name=name, rating=rating,
-        achievements="[]", backfill_version=0,
-    )
-
-
-def _state(user_id: int = 1, chat_id: int = 1):
-    from aiogram.fsm.context import FSMContext
-    from aiogram.fsm.storage.base import StorageKey
-    from aiogram.fsm.storage.memory import MemoryStorage
-
-    key = StorageKey(bot_id=1, chat_id=chat_id, user_id=user_id)
-    return FSMContext(storage=MemoryStorage(), key=key)
-
-
-def _callback(user_id: int, data: str) -> AsyncMock:
-    cb = AsyncMock()
-    cb.from_user = SimpleNamespace(id=user_id)
-    cb.data = data
-    cb.message = AsyncMock()
-    cb.message.chat = SimpleNamespace(id=user_id)
-    cb.message.message_id = 555
-    cb.message.edit_text = AsyncMock()
-    cb.answer = AsyncMock()
-    return cb
 
 
 def _completed(challenger: Player, challenged: Player, winner_id: int, when: datetime) -> Match:

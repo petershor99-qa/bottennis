@@ -11,8 +11,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.storage.base import StorageKey
-from aiogram.fsm.storage.memory import MemoryStorage
 from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
@@ -22,6 +20,7 @@ from bot.handlers.match_result import (
     _send_h2h_milestone_egg,
     _send_quick_rematch_egg,
     _send_time_based_eggs,
+    _send_welcome_back_egg,
     _send_winner_eggs,
     confirm_result,
     fsm_reset_notice,
@@ -55,21 +54,9 @@ from bot.utils import (
     rank_title,
     rating_tenths,
 )
+from tests.conftest import _callback, _player, _state
 
 # ── Фикстуры и хелперы ──────────────────────────────────────────────────────────
-
-def _player(tid: int, name: str, rating: float = 1000.0) -> Player:
-    return Player(
-        telegram_id=tid, display_name=name, rating=rating,
-        achievements="[]", backfill_version=0,
-    )
-
-
-def _state(user_id: int = 1, chat_id: int = 1) -> FSMContext:
-    """Настоящий FSMContext на MemoryStorage."""
-    key = StorageKey(bot_id=1, chat_id=chat_id, user_id=user_id)
-    return FSMContext(storage=MemoryStorage(), key=key)
-
 
 def _message(user_id: int, text: str) -> AsyncMock:
     m = AsyncMock()
@@ -79,18 +66,6 @@ def _message(user_id: int, text: str) -> AsyncMock:
     # message.answer(...) возвращает объект с .message_id
     m.answer = AsyncMock(return_value=SimpleNamespace(message_id=999))
     return m
-
-
-def _callback(user_id: int, data: str) -> AsyncMock:
-    cb = AsyncMock()
-    cb.from_user = SimpleNamespace(id=user_id)
-    cb.data = data
-    cb.message = AsyncMock()
-    cb.message.chat = SimpleNamespace(id=user_id)
-    cb.message.message_id = 555
-    cb.message.edit_text = AsyncMock()
-    cb.answer = AsyncMock()
-    return cb
 
 
 async def _accepted_match(db, challenger: Player, challenged: Player) -> Match:
@@ -761,7 +736,7 @@ def test_render_stats_lines_groups_separated_by_single_blank_line():
     p = SimpleNamespace(id=1, rating=1050.0, peak_rating=1080.0)
     s = _full_stats(
         streak=3,
-        best_opp={"name": "Bob", "wins": 4},
+        best_opp={"name": "Bob", "wins": 4, "losses": 1, "total": 5, "rate": 80},
         avg_delta=2.5,
         total_sets_played=42,
     )
@@ -791,7 +766,7 @@ def test_render_stats_lines_order_form_then_opponents_then_rating_then_misc():
     p = SimpleNamespace(id=1, rating=1000.0, peak_rating=None)
     s = _full_stats(
         streak=2,
-        nemesis={"name": "Cara", "losses": 3},
+        nemesis={"name": "Cara", "losses": 3, "wins": 1, "total": 4, "rate": 75},
         best_win=15.0,
         fav_format=(3, 10),
     )
@@ -1153,6 +1128,95 @@ async def test_compute_stats_no_debtor_after_opponent_revenge(db):
     )
     s = _compute_player_stats(p1, all_r.scalars().all())
     assert s["debtors"] == []
+
+
+async def test_compute_stats_gift_picks_higher_win_rate_over_higher_raw_wins(db):
+    """«Подарок» (v2.129.0) — по проценту побед, не по сырому счётчику: у Боба
+    больше побед по счёту (6 против 3), но Кэрол обыгрывается стабильнее
+    (75% против 60% у Боба) — должна победить Кэрол."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    base = datetime(2026, 1, 1, 12, 0, 0)
+    for i in range(10):  # Alice-Bob: 10 матчей, 6 побед (60%)
+        winner = p1 if i < 6 else p2
+        db.add(_completed(p1, p2, winner.id, 5.0, base + timedelta(days=i)))
+    for i in range(4):  # Alice-Cara: 4 матча, 3 победы (75%)
+        winner = p1 if i < 3 else p3
+        db.add(_completed(p1, p3, winner.id, 5.0, base + timedelta(days=20 + i)))
+    await db.commit()
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+        .order_by(Match.completed_at.desc())
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["best_opp"]["name"] == "Cara"
+    assert s["best_opp"]["rate"] == 75
+
+
+async def test_compute_stats_no_gift_below_three_matches(db):
+    """Меньше 3 очных встреч — соперник не учитывается, даже при 100% побед
+    (иначе один выигрыш уже давал бы «100% подарок»)."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 1, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 1, 2, 12, 0, 0)))
+    await db.commit()
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+        .order_by(Match.completed_at.desc())
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["best_opp"] is None
+
+
+async def test_compute_stats_nemesis_picks_higher_loss_rate(db):
+    """«Кошмар» — зеркально «Подарку», по проценту поражений."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    base = datetime(2026, 1, 1, 12, 0, 0)
+    for i in range(10):  # Alice-Bob: 10 матчей, 6 поражений (60%)
+        winner = p2 if i < 6 else p1
+        db.add(_completed(p1, p2, winner.id, 5.0, base + timedelta(days=i)))
+    for i in range(4):  # Alice-Cara: 4 матча, 3 поражения (75%)
+        winner = p3 if i < 3 else p1
+        db.add(_completed(p1, p3, winner.id, 5.0, base + timedelta(days=20 + i)))
+    await db.commit()
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+        .order_by(Match.completed_at.desc())
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["nemesis"]["name"] == "Cara"
+    assert s["nemesis"]["rate"] == 75
+
+
+async def test_compute_stats_gift_tie_break_prefers_more_matches(db):
+    """При равном проценте побед — соперник с бОльшим числом встреч (тот же
+    принцип, что у «Равного боя»: больше выборка убедительнее случайности)."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    base = datetime(2026, 1, 1, 12, 0, 0)
+    for i in range(3):  # Alice-Bob: 3 матча, 2 победы (66.7%)
+        winner = p1 if i < 2 else p2
+        db.add(_completed(p1, p2, winner.id, 5.0, base + timedelta(days=i)))
+    for i in range(6):  # Alice-Cara: 6 матчей, 4 победы (66.7%, но выборка больше)
+        winner = p1 if i < 4 else p3
+        db.add(_completed(p1, p3, winner.id, 5.0, base + timedelta(days=20 + i)))
+    await db.commit()
+    all_r = await db.execute(
+        select(Match).where(Match.status == MatchStatus.completed)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+        .order_by(Match.completed_at.desc())
+    )
+    s = _compute_player_stats(p1, all_r.scalars().all())
+    assert s["best_opp"]["name"] == "Cara"
 
 
 def test_render_stats_lines_shows_debtors():
@@ -4307,6 +4371,82 @@ async def test_h2h_milestone_egg_silent_on_non_round_count(db):
 
     bot = AsyncMock()
     await _send_h2h_milestone_egg(bot, db, p1, p2)
+    bot.send_message.assert_not_called()
+
+
+# -- восстал из мёртвых (возвращение после перерыва) --
+
+async def test_welcome_back_egg_fires_only_for_absent_player(db):
+    """Гэп меряется от СОБСТВЕННОГО предыдущего матча игрока, не от матча
+    соперника — Боб играл недавно (с Кэрол), поэтому пасхалка должна прийти
+    только Алисе."""
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    db.add(_completed(p1, p2, p1.id, 5.0, base))                        # последний матч Алисы
+    db.add(_completed(p2, p3, p2.id, 5.0, base + timedelta(days=14)))   # Боб играл за день до текущего
+    await db.commit()
+
+    current = _completed(p1, p2, p2.id, 5.0, base + timedelta(days=15))
+    db.add(current)
+    await db.flush()
+
+    bot = AsyncMock()
+    await _send_welcome_back_egg(bot, db, [p1, p2], current.completed_at, current.id)
+    texts = _texts(bot)
+    assert len(texts) == 1
+    assert "Восстал из мёртвых" in texts[0]
+    assert "15 дней" in texts[0]
+
+
+async def test_welcome_back_egg_fires_at_exactly_14_days(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    db.add(_completed(p1, p2, p1.id, 5.0, base))
+    await db.commit()
+
+    current = _completed(p1, p2, p2.id, 5.0, base + timedelta(days=14))
+    db.add(current)
+    await db.flush()
+
+    bot = AsyncMock()
+    await _send_welcome_back_egg(bot, db, [p1, p2], current.completed_at, current.id)
+    assert any("Восстал из мёртвых" in t for t in _texts(bot))
+
+
+async def test_welcome_back_egg_silent_below_14_days(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    db.add(_completed(p1, p2, p1.id, 5.0, base))
+    await db.commit()
+
+    current = _completed(p1, p2, p2.id, 5.0, base + timedelta(days=13))
+    db.add(current)
+    await db.flush()
+
+    bot = AsyncMock()
+    await _send_welcome_back_egg(bot, db, [p1, p2], current.completed_at, current.id)
+    bot.send_message.assert_not_called()
+
+
+async def test_welcome_back_egg_silent_on_very_first_match(db):
+    """У игрока ещё нет предыдущего матча (это первый в карьере) — нечего
+    сравнивать, пасхалка молчит, а не падает."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    current = _completed(p1, p2, p1.id, 5.0, datetime(2026, 6, 1, 12, 0, 0))
+    db.add(current)
+    await db.flush()
+
+    bot = AsyncMock()
+    await _send_welcome_back_egg(bot, db, [p1, p2], current.completed_at, current.id)
     bot.send_message.assert_not_called()
 
 
