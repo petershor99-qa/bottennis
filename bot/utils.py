@@ -1430,9 +1430,12 @@ def rating_chart_url(name: str, labels: list[str], values: list[float]) -> str:
 
 
 # ── Радар личного стиля (quickchart.io, v2.121.0) ──────────────────────────────
-# type: radar — нативная поддержка Chart.js, в отличие от heatmap выше не нужен
-# bubble-chart хак. Конфиг v2 (radial-шкала — ключ "scale", не "scales"), тот
-# же диалект, что уже используют rating_chart_url/activity_heatmap_url.
+# quickchart-тип "radar" — нативная поддержка Chart.js, в отличие от heatmap выше
+# не нужен bubble-chart хак. Конфиг v2 (radial-шкала — ключ "scale", не "scales"),
+# тот же диалект, что уже используют rating_chart_url/activity_heatmap_url.
+# (Формулировка комментария НЕ должна начинаться с "# type: " — mypy трактует
+# это как type-comment Python 2 и падает с syntax error на не-Python тексте
+# после двоеточия; живой пример был здесь до правки.)
 
 def style_radar_url(name: str, radar: dict[str, float]) -> str:
     """Формирует URL картинки радар-графика личного стиля через quickchart.io.
