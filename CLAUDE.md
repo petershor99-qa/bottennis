@@ -320,6 +320,7 @@ ssh root@НОВЫЙ_IP "cd /opt/bottennis && git pull && systemctl restart botte
 **Автодеплой:** ✅ с v2.55.0 — job `deploy` в `.github/workflows/tests.yml`. Мерж PR `develop→main` → при зелёных `lint`+`pytest` job по SSH делает `git pull --ff-only` + `systemctl restart bottennis`. Секреты репозитория: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` (выделенный ed25519 deploy-ключ — доступ GitHub Actions → VPS). С 2026-09-02 `git pull --ff-only` явно проверяется на ошибку (`set -e` + `if ! git pull...; then exit 1`) — раньше при падении команды скрипт молча ехал дальше и рестартовал сервис со старым кодом, а джоба всё равно светилась зелёной (см. «Устранено» в конце файла).
 **Авторелиз:** ✅ — job `release` в том же workflow при мерже в `main` создаёт GitHub Release из верхней секции `RELEASE_NOTES.md` (идемпотентно, по тегу).
 **Не реализовано:** PostgreSQL (при миграции учесть: `telegram_id` сейчас `Integer` — для PG нужен `BigInteger`).
+**Dev-тулинг v2.128.1 подтверждён на втором компьютере** (2026-09-17, `git pull` в `D:\claude\bottennis`) — pre-commit хук и `sync_test_count.py` заявлены как переносимые «без ручной настройки на месте»; sync-скрипт отработал (0 реальных изменений — README/TESTING уже были в синхроне с прошлого раза), `mypy bot/ --ignore-missing-imports` дал те же 850 ошибок в 12 файлах, что и на первой машине — детерминировано, не зависит от окружения.
 
 # Запланировано на будущее
 
