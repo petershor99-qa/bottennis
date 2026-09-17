@@ -1326,7 +1326,14 @@ def test_archetype_steel_nerves_high_clutch():
 
 def test_archetype_finisher_high_conversion():
     from bot.services.stats import _style_archetype
-    assert _style_archetype(_radar(**{"Дожимание": 80.0})) == "Финишер"
+    assert _style_archetype(_radar(**{"Дожимание": 90.0})) == "Финишер"
+
+
+def test_archetype_finisher_not_triggered_below_raised_threshold():
+    """Порог поднят с 70 до 85 в v2.130.0 — 80% конверсии больше не архетип,
+    это близко к структурной базе для любого игрока в формате до 2 побед."""
+    from bot.services.stats import _style_archetype
+    assert _style_archetype(_radar(**{"Дожимание": 80.0})) is None
 
 
 def test_archetype_steamroller_high_dominance():
@@ -1355,6 +1362,16 @@ def test_archetype_picks_most_extreme_axis():
     from bot.services.stats import _style_archetype
     radar = _radar(**{"Винрейт": 65.0, "Камбэки": 50.0})  # +5 vs +30 за порогом
     assert _style_archetype(radar) == "Феникс"
+
+
+def test_archetype_description_known_label():
+    from bot.services.stats import _archetype_description
+    assert "перевесом" in _archetype_description("Каток")
+
+
+def test_archetype_description_unknown_label_returns_none():
+    from bot.services.stats import _archetype_description
+    assert _archetype_description("Неизвестный") is None
 
 
 # ── _growth_area («есть над чем поработать», v2.125.0) ──────────────────────────
@@ -2136,6 +2153,9 @@ async def test_style_radar_sends_photo_with_axes_caption(db):
     assert "Винрейт" in caption
     assert "чаще побеждаешь" in caption  # 5/5 побед — репортаж должен это отразить
     assert "Архетип" in caption and "Терминатор" in caption  # 100% винрейт
+    assert "солидным отрывом" in caption  # расшифровка архетипа (v2.130.0)
+    assert "доля побед" in caption  # расшифровка оси «Винрейт» (v2.130.0)
+    assert "перевес по очкам в победах" in caption  # расшифровка «Доминирование»
 
 
 async def test_player_style_radar_invalid_id(db):
