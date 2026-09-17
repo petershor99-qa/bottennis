@@ -53,10 +53,12 @@ def _compute_player_stats(player, all_matches: list) -> dict:
     deuce_total = deuce_won = 0
     career_points = 0
     comeback_wins = 0
+    win_pts_ratios: list[float] = []
     for m in all_matches:
         if m.sets_data:
             i_am_ch = m.challenger_id == player.id
             i_am_winner = m.winner_id == player.id
+            my_match_pts = opp_match_pts = 0
             for s in m.sets_data:
                 sets_total += 1
                 won_this_set = (
@@ -75,6 +77,12 @@ def _compute_player_stats(player, all_matches: list) -> dict:
                     deuce_total += 1
                     if won_this_set:
                         deuce_won += 1
+                # Доминирование (для радара стиля, v2.130.0) — очки победителя
+                # в этом матче, sets_data уже в перспективе победителя, поэтому
+                # тот же прямой s["w"]/s["l"] без инверсии, что и у камбэка ниже.
+                if i_am_winner:
+                    my_match_pts += s["w"]
+                    opp_match_pts += s["l"]
             # Камбэк (для радара стиля, v2.121.0) — победил, проиграв первые
             # ДВЕ партии. sets_data уже в перспективе победителя, а победитель
             # тут — сам игрок, поэтому s["w"]/s["l"] читаются напрямую, без
@@ -83,6 +91,10 @@ def _compute_player_stats(player, all_matches: list) -> dict:
                 s0, s1 = m.sets_data[0], m.sets_data[1]
                 if s0["w"] < s0["l"] and s1["w"] < s1["l"]:
                     comeback_wins += 1
+            if i_am_winner and (my_match_pts + opp_match_pts) > 0:
+                win_pts_ratios.append(my_match_pts / (my_match_pts + opp_match_pts))
+
+    dominance_score = round(sum(win_pts_ratios) / len(win_pts_ratios) * 100) if win_pts_ratios else 0
 
     # Незакрытые долги (v2.121.0) — соперники, чей САМЫЙ ПОСЛЕДНИЙ матч против
     # игрока был поражением (и с тех пор реванша не было). all_matches уже
@@ -338,33 +350,46 @@ def _compute_player_stats(player, all_matches: list) -> dict:
         "favorite_score": favorite_score, "style_insight": style_insight,
         "comeback_wins": comeback_wins, "unresolved_debts": unresolved_debts, "debtors": debtors,
         "stability_score": round(stability_score), "activity_streak_days": activity_streak_days,
+        "dominance_score": dominance_score, "dominance_matches": len(win_pts_ratios),
     }
 
 
-# ── Радар личного стиля (v2.121.0) ──────────────────────────────────────────────
+# ── Радар личного стиля (v2.121.0, редизайн v2.130.0) ────────────────────────────
+# 6 осей вместо исходных 4 — «На дьюсе» (частота дьюсов, ничего не говорила про
+# мастерство) заменена на «Клатч» (винрейт именно НА дьюсе), добавлены
+# «Дожимание» (конвертация после выигранной первой партии) и «Доминирование»
+# (насколько уверенно даются победы по очкам) — из живой жалобы пользователя,
+# что радар с 4 осями почти всегда рисовал тощую, невыразительную фигуру.
 
 def _build_style_radar(s: dict) -> dict[str, float] | None:
-    """4 оси личного стиля для радар-графика: винрейт, доля партий на дьюсе,
-    доля побед-камбэков среди всех побед, стабильность. None, если ещё не
-    сыграно ни одной партии — рисовать радар не из чего."""
+    """6 осей личного стиля для радар-графика: винрейт, клатч на дьюсе,
+    дожимание матча после 1-й партии, доля побед-камбэков, доминирование по
+    очкам в победах, стабильность. None, если ещё не сыграно ни одной партии —
+    рисовать радар не из чего."""
     if s["total_sets_played"] == 0:
         return None
-    deuce_rate = round(s["deuce_total"] / s["total_sets_played"] * 100)
+    clutch_rate = round(s["deuce_won"] / s["deuce_total"] * 100) if s["deuce_total"] else 0
     comeback_rate = round(s["comeback_wins"] / s["wins"] * 100) if s["wins"] else 0
+    conversion = s["first_set_conv"] if s["first_set_conv"] is not None else 0
     return {
         "Винрейт": float(s["win_rate"]),
-        "На дьюсе": float(deuce_rate),
+        "Клатч": float(clutch_rate),
+        "Дожимание": float(conversion),
         "Камбэки": float(comeback_rate),
+        "Доминирование": float(s["dominance_score"]),
         "Стабильность": float(s["stability_score"]),
     }
 
 
-def _build_style_narrative(radar: dict[str, float]) -> str | None:
-    """Абзац-репортаж, переводящий 4 сухих процента радара в понятный текст —
+def _build_style_narrative(radar: dict[str, float], s: dict) -> str | None:
+    """Абзац-репортаж, переводящий сухие проценты радара в понятный текст —
     по прямой просьбе пользователя после живого скриншота (проценты сами по
     себе ничего не объясняют, особенно «Стабильность» — не доля чего-то
     конкретного, а синтетический балл). Показывает только заметные сигналы,
-    как «Моя история» — не все 4 оси разом, если нечего сказать."""
+    как «Моя история» — не все оси разом, если нечего сказать. Клатч/дожимание/
+    доминирование дополнительно гейтятся размером выборки (те же пороги, что
+    у _growth_area) — иначе один случайный дьюс или одна победа рисовали бы
+    вывод из выборки в один матч."""
     parts = []
 
     wr = radar["Винрейт"]
@@ -375,17 +400,32 @@ def _build_style_narrative(radar: dict[str, float]) -> str | None:
     else:
         parts.append(f"Играешь примерно на равных — винрейт {round(wr)}%.")
 
-    deuce = radar["На дьюсе"]
-    if deuce >= 25:
-        parts.append("Почти каждая четвёртая партия — на нервах, до дьюса.")
-    elif deuce < 10:
-        parts.append("Партии редко доходят до дьюса — либо разгром, либо тебя разгромили.")
+    if s["deuce_total"] >= 3:
+        clutch = radar["Клатч"]
+        if clutch >= 60:
+            parts.append(f"На дьюсе почти не дрогнешь — выигрываешь {round(clutch)}% таких партий.")
+        elif clutch < 35:
+            parts.append(f"Дьюс — слабое место: выигрываешь только {round(clutch)}% таких партий.")
+
+    if s["first_set_wins"] >= 3:
+        conv = radar["Дожимание"]
+        if conv >= 70:
+            parts.append(f"Выиграв первую партию, почти всегда дожимаешь матч — {round(conv)}%.")
+        elif conv < 40:
+            parts.append(f"Выиграв первую партию, часто упускаешь матч — дожимаешь лишь {round(conv)}% раз.")
 
     comeback = radar["Камбэки"]
     if comeback >= 20:
         parts.append("Каждая пятая победа — камбэк с 0:2, характер не подводит.")
     elif comeback == 0:
         parts.append("Камбэков пока не случалось — если ведут 0:2, обычно так и остаётся.")
+
+    if s["dominance_matches"] >= 3:
+        dom = radar["Доминирование"]
+        if dom >= 65:
+            parts.append("Побеждаешь уверенно, с явным перевесом по очкам.")
+        elif dom < 52:
+            parts.append("Победы даются на тоненького — по очкам почти вровень с соперником.")
 
     stability = radar["Стабильность"]
     if stability >= 80:
@@ -401,12 +441,16 @@ def _build_style_narrative(radar: dict[str, float]) -> str | None:
 # (сейчас только «Американские горки» — низкая стабильность), иначе выше.
 # Название взято от игрока, эмодзи не добавлены намеренно: у «Американские
 # горки» уже есть устоявшийся 🎢 в дайджестах (bot/scheduler.py) — используем
-# тот же термин для узнаваемости; у остальных четырёх готового эмодзи в
-# проекте нет, придумывать новый не стали, чтобы не плодить несогласованные
-# иконки.
+# тот же термин для узнаваемости; у остальных готового эмодзи в проекте нет,
+# придумывать новый не стали, чтобы не плодить несогласованные иконки.
+# «Нервы стальные» перевешена с v2.130.0 на «Клатч» (винрейт на дьюсе) — с
+# исходной «На дьюсе» (частота дьюсов) название плохо совпадало по смыслу:
+# частые дьюсы говорят о ровной игре, а не о крепких нервах.
 _ARCHETYPE_RULES: list[tuple[str, float, bool, str]] = [
     ("Винрейт", 60.0, False, "Терминатор"),
-    ("На дьюсе", 25.0, False, "Нервы стальные"),
+    ("Клатч", 60.0, False, "Нервы стальные"),
+    ("Дожимание", 70.0, False, "Финишер"),
+    ("Доминирование", 65.0, False, "Каток"),
     ("Камбэки", 20.0, False, "Феникс"),
     ("Стабильность", 80.0, False, "Метроном"),
     ("Стабильность", 40.0, True, "🎢 Американские горки"),
