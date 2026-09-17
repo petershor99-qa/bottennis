@@ -18,6 +18,7 @@ from bot.services.achievements import (
     record_achievements_earned,
 )
 from bot.utils import get_h2h_matches, msk_day_start
+from tests.conftest import _player
 
 # ── Fixtures & helpers ─────────────────────────────────────────────────────────
 
@@ -27,16 +28,6 @@ _BASE_DT = datetime(2024, 1, 1, 12, 0, 0)
 def _ts(i: int = 0) -> datetime:
     """Детерминированная метка времени: base + i секунд."""
     return _BASE_DT + timedelta(seconds=i)
-
-
-def _player(tid: int, name: str, rating: float = 1000.0) -> Player:
-    return Player(
-        telegram_id=tid,
-        display_name=name,
-        rating=rating,
-        achievements="[]",
-        backfill_version=0,
-    )
 
 
 _DEFAULT_SETS = [{"w": 11, "l": 7}, {"w": 11, "l": 7}]
@@ -1297,6 +1288,50 @@ async def test_no_relentless_with_a_loss_today(db):
     await _add_win(db, p2, p1, dt=today + timedelta(minutes=1))  # поражение p1
     new = await _do_win(db, p1, p2, dt=today + timedelta(minutes=2))
     assert "relentless" not in new
+
+
+# groundhog_day (День сурка — зеркало «Неистого»: все матчи за день — поражения, от 3)
+
+async def test_groundhog_day_three_losses_same_day(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    today = msk_day_start() + timedelta(hours=9)
+    await _do_loss(db, p2, p1, dt=today)
+    await _do_loss(db, p2, p1, dt=today + timedelta(minutes=1))
+    new = await _do_loss(db, p2, p1, dt=today + timedelta(minutes=2))
+    assert "groundhog_day" in new
+
+
+async def test_no_groundhog_day_with_a_win_today(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    today = msk_day_start() + timedelta(hours=9)
+    await _do_loss(db, p2, p1, dt=today)
+    await _do_win(db, p1, p2, dt=today + timedelta(minutes=1))  # победа p1
+    new = await _do_loss(db, p2, p1, dt=today + timedelta(minutes=2))
+    assert "groundhog_day" not in new
+
+
+async def test_backfill_groundhog_day(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    today = msk_day_start() + timedelta(hours=9)
+    for i in range(3):
+        db.add(Match(
+            challenger_id=p2.id, challenged_id=p1.id,
+            status=MatchStatus.completed, winner_id=p2.id,
+            sets_data=_DEFAULT_SETS, completed_at=today + timedelta(minutes=i),
+        ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "groundhog_day" in get_achievements(p1)
 
 
 # night_king (Король ночи — обыграть всех игроков клуба за один день)
