@@ -1341,6 +1341,33 @@ def test_archetype_steamroller_high_dominance():
     assert _style_archetype(_radar(**{"Доминирование": 75.0})) == "Каток"
 
 
+# ── Архетипы-«лузеры» (v2.130.0) ────────────────────────────────────────────────
+
+def test_archetype_rating_donor_low_win_rate():
+    from bot.services.stats import _style_archetype
+    assert _style_archetype(_radar(**{"Винрейт": 25.0})) == "Донор рейтинга"
+
+
+def test_archetype_jitters_low_clutch():
+    from bot.services.stats import _style_archetype
+    assert _style_archetype(_radar(**{"Клатч": 10.0})) == "Мандраж"
+
+
+def test_archetype_fizzles_out_low_conversion():
+    from bot.services.stats import _style_archetype
+    assert _style_archetype(_radar(**{"Дожимание": 10.0})) == "Сдувается"
+
+
+def test_archetype_point_of_no_return_zero_comebacks():
+    from bot.services.stats import _style_archetype
+    assert _style_archetype(_radar(**{"Камбэки": 0.0})) == "Точка невозврата"
+
+
+def test_archetype_point_of_no_return_not_triggered_above_zero():
+    from bot.services.stats import _style_archetype
+    assert _style_archetype(_radar(**{"Камбэки": 5.0})) is None
+
+
 def test_archetype_phoenix_high_comeback():
     from bot.services.stats import _style_archetype
     assert _style_archetype(_radar(**{"Камбэки": 30.0})) == "Феникс"
