@@ -17,6 +17,8 @@ from bot.keyboards.inline import (
     player_profile_kb,
 )
 from bot.services.stats import (
+    AXIS_GLOSSARY,
+    _archetype_description,
     _build_style_narrative,
     _build_style_radar,
     _compute_player_stats,
@@ -251,14 +253,22 @@ async def _send_style_radar(
 
     archetype = _style_archetype(radar)
     narrative = _build_style_narrative(radar, s)
-    axes_line = "  ·  ".join(f"{name}: {round(val)}%" for name, val in radar.items())
+    # Расшифровка каждой оси прямо под цифрами (v2.130.0, жалоба пользователя —
+    # «Клатч 56%» ничего не объясняет без контекста) — построчно, в том же
+    # порядке, что и оси на самом графике.
+    axes_lines = "\n".join(
+        f"{name}: {round(val)}% — {AXIS_GLOSSARY[name]}" for name, val in radar.items()
+    )
     header = f"🕸 <b>Стиль игры — {h(target.display_name)}</b>"
     if archetype:
         header += f"\n🏷 Архетип: <b>{archetype}</b>"
+        desc = _archetype_description(archetype)
+        if desc:
+            header += f" — {desc}"
     caption_lines = [header]
     if narrative:
         caption_lines.append(narrative)
-    caption_lines.append(f"<i>{axes_line}</i>")
+    caption_lines.append(f"<i>{axes_lines}</i>")
     try:
         sent = await bot.send_photo(
             chat_id, url,
