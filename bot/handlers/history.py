@@ -219,14 +219,13 @@ _last_radar_msg: dict[int, int] = {}
 MIN_MATCHES_FOR_RADAR = 5
 
 
-@router.callback_query(F.data == "style_radar")
-async def show_style_radar(callback: CallbackQuery, session: AsyncSession, bot: Bot):
-    player = await get_player(session, callback.from_user.id)
-    if not player:
-        await callback.answer("Сначала напиши /start", show_alert=True)
-        return
-
-    all_matches = await get_career_matches(session, player.id, with_opponents=True)
+async def _send_style_radar(
+    target: Player, session: AsyncSession, callback: CallbackQuery, bot: Bot
+) -> None:
+    """Строит и отправляет радар личного стиля для указанного игрока — общий
+    хелпер для «своего» экрана и просмотра стиля другого игрока (v2.130.0),
+    тот же паттерн, что у _send_rating_chart."""
+    all_matches = await get_career_matches(session, target.id, with_opponents=True)
     if len(all_matches) < MIN_MATCHES_FOR_RADAR:
         await callback.answer(
             f"Нужно минимум {MIN_MATCHES_FOR_RADAR} матчей для радара стиля 🏓",
@@ -234,13 +233,13 @@ async def show_style_radar(callback: CallbackQuery, session: AsyncSession, bot: 
         )
         return
 
-    s = _compute_player_stats(player, all_matches)
+    s = _compute_player_stats(target, all_matches)
     radar = _build_style_radar(s)
     if radar is None:
         await callback.answer("Пока не сыграно ни одной партии.", show_alert=True)
         return
 
-    url = style_radar_url(player.display_name, radar)
+    url = style_radar_url(target.display_name, radar)
     chat_id = callback.message.chat.id
 
     prev_id = _last_radar_msg.get(chat_id)
@@ -251,9 +250,9 @@ async def show_style_radar(callback: CallbackQuery, session: AsyncSession, bot: 
             pass
 
     archetype = _style_archetype(radar)
-    narrative = _build_style_narrative(radar)
+    narrative = _build_style_narrative(radar, s)
     axes_line = "  ·  ".join(f"{name}: {round(val)}%" for name, val in radar.items())
-    header = f"🕸 <b>Стиль игры — {h(player.display_name)}</b>"
+    header = f"🕸 <b>Стиль игры — {h(target.display_name)}</b>"
     if archetype:
         header += f"\n🏷 Архетип: <b>{archetype}</b>"
     caption_lines = [header]
@@ -269,6 +268,31 @@ async def show_style_radar(callback: CallbackQuery, session: AsyncSession, bot: 
         await callback.answer()
     except Exception:
         await callback.answer("Не удалось построить радар, попробуй позже 🙁", show_alert=True)
+
+
+@router.callback_query(F.data == "style_radar")
+async def show_style_radar(callback: CallbackQuery, session: AsyncSession, bot: Bot):
+    player = await get_player(session, callback.from_user.id)
+    if not player:
+        await callback.answer("Сначала напиши /start", show_alert=True)
+        return
+    await _send_style_radar(player, session, callback, bot)
+
+
+@router.callback_query(F.data.startswith("player_style_radar_"))
+async def show_player_style_radar(callback: CallbackQuery, session: AsyncSession, bot: Bot):
+    try:
+        target_id = int(callback.data.rsplit("_", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
+
+    tp_r = await session.execute(select(Player).where(Player.id == target_id))
+    target = tp_r.scalar_one_or_none()
+    if not target:
+        await callback.answer("Игрок не найден.", show_alert=True)
+        return
+    await _send_style_radar(target, session, callback, bot)
 
 
 # ── Полная история матчей (своя) ──────────────────────────────────────────────

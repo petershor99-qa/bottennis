@@ -720,6 +720,7 @@ def _full_stats(**overrides) -> dict:
         "comeback_wins": 0, "unresolved_debts": [], "debtors": [],
         "stability_score": 100, "activity_streak_days": 0,
         "first_set_wins": 0,
+        "dominance_score": 0, "dominance_matches": 0,
     }
     base.update(overrides)
     return base
@@ -1277,23 +1278,31 @@ def test_build_style_radar_none_when_no_sets():
     assert _build_style_radar(_full_stats(total_sets_played=0)) is None
 
 
-def test_build_style_radar_returns_four_axes():
+def test_build_style_radar_returns_six_axes():
     from bot.services.stats import _build_style_radar
     radar = _build_style_radar(_full_stats(
-        win_rate=60, total_sets_played=20, deuce_total=5,
+        win_rate=60, total_sets_played=20, deuce_total=5, deuce_won=3,
         comeback_wins=2, wins=6, stability_score=70,
+        first_set_conv=55, dominance_score=68,
     ))
-    assert set(radar.keys()) == {"Винрейт", "На дьюсе", "Камбэки", "Стабильность"}
+    assert set(radar.keys()) == {
+        "Винрейт", "Клатч", "Дожимание", "Камбэки", "Доминирование", "Стабильность",
+    }
     assert radar["Винрейт"] == 60.0
-    assert radar["На дьюсе"] == 25.0  # 5/20*100
+    assert radar["Клатч"] == 60.0  # 3/5*100
+    assert radar["Дожимание"] == 55.0
     assert radar["Камбэки"] == round(2 / 6 * 100)
+    assert radar["Доминирование"] == 68.0
     assert radar["Стабильность"] == 70.0
 
 
 # ── _build_style_narrative (репортаж радара стиля) ────────────────────────────
 
 def _radar(**overrides) -> dict:
-    base = {"Винрейт": 50.0, "На дьюсе": 15.0, "Камбэки": 5.0, "Стабильность": 60.0}
+    base = {
+        "Винрейт": 50.0, "Клатч": 45.0, "Дожимание": 50.0,
+        "Камбэки": 5.0, "Доминирование": 58.0, "Стабильность": 60.0,
+    }
     base.update(overrides)
     return base
 
@@ -1310,9 +1319,19 @@ def test_archetype_terminator_high_win_rate():
     assert _style_archetype(_radar(**{"Винрейт": 75.0})) == "Терминатор"
 
 
-def test_archetype_steel_nerves_high_deuce():
+def test_archetype_steel_nerves_high_clutch():
     from bot.services.stats import _style_archetype
-    assert _style_archetype(_radar(**{"На дьюсе": 40.0})) == "Нервы стальные"
+    assert _style_archetype(_radar(**{"Клатч": 70.0})) == "Нервы стальные"
+
+
+def test_archetype_finisher_high_conversion():
+    from bot.services.stats import _style_archetype
+    assert _style_archetype(_radar(**{"Дожимание": 80.0})) == "Финишер"
+
+
+def test_archetype_steamroller_high_dominance():
+    from bot.services.stats import _style_archetype
+    assert _style_archetype(_radar(**{"Доминирование": 75.0})) == "Каток"
 
 
 def test_archetype_phoenix_high_comeback():
@@ -1393,19 +1412,19 @@ def test_growth_area_picks_most_extreme_candidate():
 
 def test_style_narrative_dominant_win_rate():
     from bot.services.stats import _build_style_narrative
-    text = _build_style_narrative(_radar(**{"Винрейт": 70.0}))
+    text = _build_style_narrative(_radar(**{"Винрейт": 70.0}), _full_stats())
     assert "чаще побеждаешь" in text and "70%" in text
 
 
 def test_style_narrative_struggling_win_rate():
     from bot.services.stats import _build_style_narrative
-    text = _build_style_narrative(_radar(**{"Винрейт": 30.0}))
+    text = _build_style_narrative(_radar(**{"Винрейт": 30.0}), _full_stats())
     assert "нелегко" in text and "30%" in text
 
 
 def test_style_narrative_even_win_rate():
     from bot.services.stats import _build_style_narrative
-    text = _build_style_narrative(_radar(**{"Винрейт": 50.0}))
+    text = _build_style_narrative(_radar(**{"Винрейт": 50.0}), _full_stats())
     assert "на равных" in text
 
 
@@ -1450,45 +1469,70 @@ def test_legend_index_champion_bonus():
     assert _legend_index(_full_stats(), 0, 0, True) == 10
 
 
-def test_style_narrative_high_deuce_rate():
+def test_style_narrative_high_clutch():
     from bot.services.stats import _build_style_narrative
-    text = _build_style_narrative(_radar(**{"На дьюсе": 30.0}))
-    assert "дьюса" in text
+    text = _build_style_narrative(_radar(**{"Клатч": 70.0}), _full_stats(deuce_total=5))
+    assert "не дрогнешь" in text and "70%" in text
 
 
-def test_style_narrative_low_deuce_rate():
+def test_style_narrative_low_clutch():
     from bot.services.stats import _build_style_narrative
-    text = _build_style_narrative(_radar(**{"На дьюсе": 5.0}))
-    assert "редко доходят до дьюса" in text
+    text = _build_style_narrative(_radar(**{"Клатч": 20.0}), _full_stats(deuce_total=5))
+    assert "слабое место" in text
 
 
-def test_style_narrative_no_deuce_line_when_average():
+def test_style_narrative_clutch_ignored_below_sample_threshold():
+    """Меньше 3 партий на дьюсе — недостаточно данных, клатч не комментируем."""
     from bot.services.stats import _build_style_narrative
-    text = _build_style_narrative(_radar(**{"На дьюсе": 15.0}))
-    assert "дьюс" not in text
+    text = _build_style_narrative(_radar(**{"Клатч": 100.0}), _full_stats(deuce_total=2))
+    assert "дьюс" not in text.lower()
+
+
+def test_style_narrative_high_conversion():
+    from bot.services.stats import _build_style_narrative
+    text = _build_style_narrative(_radar(**{"Дожимание": 80.0}), _full_stats(first_set_wins=4))
+    assert "дожимаешь матч" in text and "80%" in text
+
+
+def test_style_narrative_low_conversion():
+    from bot.services.stats import _build_style_narrative
+    text = _build_style_narrative(_radar(**{"Дожимание": 25.0}), _full_stats(first_set_wins=4))
+    assert "упускаешь матч" in text
+
+
+def test_style_narrative_high_dominance():
+    from bot.services.stats import _build_style_narrative
+    text = _build_style_narrative(_radar(**{"Доминирование": 75.0}), _full_stats(dominance_matches=4))
+    assert "перевесом" in text
+
+
+def test_style_narrative_low_dominance():
+    from bot.services.stats import _build_style_narrative
+    text = _build_style_narrative(_radar(**{"Доминирование": 48.0}), _full_stats(dominance_matches=4))
+    assert "на тоненького" in text
 
 
 def test_style_narrative_high_comeback_rate():
     from bot.services.stats import _build_style_narrative
-    text = _build_style_narrative(_radar(**{"Камбэки": 25.0}))
+    text = _build_style_narrative(_radar(**{"Камбэки": 25.0}), _full_stats())
     assert "камбэк" in text
 
 
 def test_style_narrative_zero_comebacks():
     from bot.services.stats import _build_style_narrative
-    text = _build_style_narrative(_radar(**{"Камбэки": 0.0}))
+    text = _build_style_narrative(_radar(**{"Камбэки": 0.0}), _full_stats())
     assert "Камбэков пока не случалось" in text
 
 
 def test_style_narrative_high_stability():
     from bot.services.stats import _build_style_narrative
-    text = _build_style_narrative(_radar(**{"Стабильность": 90.0}))
+    text = _build_style_narrative(_radar(**{"Стабильность": 90.0}), _full_stats())
     assert "ровно" in text
 
 
 def test_style_narrative_low_stability():
     from bot.services.stats import _build_style_narrative
-    text = _build_style_narrative(_radar(**{"Стабильность": 20.0}))
+    text = _build_style_narrative(_radar(**{"Стабильность": 20.0}), _full_stats())
     assert "штормит" in text
 
 
@@ -2092,6 +2136,58 @@ async def test_style_radar_sends_photo_with_axes_caption(db):
     assert "Винрейт" in caption
     assert "чаще побеждаешь" in caption  # 5/5 побед — репортаж должен это отразить
     assert "Архетип" in caption and "Терминатор" in caption  # 100% винрейт
+
+
+async def test_player_style_radar_invalid_id(db):
+    from bot.handlers.history import show_player_style_radar
+
+    cb, bot = _callback(1, "player_style_radar_abc"), AsyncMock()
+    await show_player_style_radar(cb, db, bot)
+    cb.answer.assert_awaited()
+    bot.send_photo.assert_not_called()
+
+
+async def test_player_style_radar_not_found(db):
+    from bot.handlers.history import show_player_style_radar
+
+    cb, bot = _callback(1, "player_style_radar_999"), AsyncMock()
+    await show_player_style_radar(cb, db, bot)
+    cb.answer.assert_awaited_with("Игрок не найден.", show_alert=True)
+    bot.send_photo.assert_not_called()
+
+
+async def test_player_style_radar_too_few_matches(db):
+    from bot.handlers.history import MIN_MATCHES_FOR_RADAR, show_player_style_radar
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(MIN_MATCHES_FOR_RADAR - 1):
+        db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 1, 1 + i, 12, 0, 0)))
+    await db.commit()
+
+    cb, bot = _callback(9, f"player_style_radar_{p1.id}"), AsyncMock()
+    await show_player_style_radar(cb, db, bot)
+    bot.send_photo.assert_not_called()
+
+
+async def test_player_style_radar_sends_photo_for_another_player(db):
+    """Зритель (не сам игрок) может посмотреть чужой радар стиля (v2.130.0)."""
+    from bot.handlers.history import MIN_MATCHES_FOR_RADAR, show_player_style_radar
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    for i in range(MIN_MATCHES_FOR_RADAR):
+        db.add(_completed(p1, p2, p1.id, 5.0, datetime(2026, 1, 1 + i, 12, 0, 0)))
+    await db.commit()
+
+    cb, bot = _callback(9, f"player_style_radar_{p1.id}"), AsyncMock()
+    await show_player_style_radar(cb, db, bot)
+
+    bot.send_photo.assert_awaited()
+    caption = bot.send_photo.call_args.kwargs["caption"]
+    assert "Alice" in caption
 
 
 async def test_activity_heatmap_club_sends_photo_with_personal_toggle(db):
