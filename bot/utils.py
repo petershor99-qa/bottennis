@@ -871,6 +871,48 @@ UPSET_FRAGMENT_TEMPLATES = [
     "и +{delta} pts, которые никто не закладывал в прогноз",
 ]
 
+# «Мягкие» факторы обычного матча из 3 партий (v2.131.0) — у клуба типичный
+# формат до 2 побед, где 0:2-камбэк и марафон на 5 партий физически не бывают,
+# поэтому топ-матчем дня чаще всего становится матч с проигранной первой
+# партией, дьюсом в НЕ решающей партии или счётом 2:1 впритык. Строгие 4 фактора
+# match_report() их не ловят, и репортаж откатывался на сухие строки
+# match_drama_reason() («Дьюс на тоненького», «Решилось в последней партии») —
+# живая жалоба пользователя «опять скучные репорты». Теперь у каждого мягкого
+# фактора свой пул, тот же принцип сборки, что у строгих (открывающая фраза +
+# хвостовые фрагменты через запятую).
+SOFT_COMEBACK_OPENERS = [
+    "{name} проиграл первую партию, но быстро взял себя в руки. ",
+    "Старт не задался — первая партия ушла сопернику, но {name} перестроился. ",
+    "{name} споткнулся на первой партии, зато остальные забрал. ",
+    "Первая партия мимо, но {name} не из тех, кто сдаётся на старте. ",
+    "{name} отдал первую партию и решил, что этого достаточно. ",
+    "После проигранной первой {name} включил вторую передачу. ",
+    "{name} начал с поражения в партии, а закончил победой в матче. ",
+    "Первая партия — разведка боем, а дальше {name} показал, кто здесь главный. ",
+]
+
+CLOSE_DECIDER_FRAGMENTS = [
+    "развязка наступила лишь в решающей партии",
+    "всё решилось в последней партии — ни шагу назад",
+    "до победы пришлось идти до последней партии",
+    "решающая партия расставила всё по местам",
+    "счёт по партиям 2:1 — тонкая грань между героем и неудачником",
+    "вся интрига держалась на последней партии",
+    "и в решающей партии никто не хотел уступать",
+    "победа отыгрывалась до самого конца",
+]
+
+MID_DEUCE_FRAGMENTS = [
+    "не обошлось без дьюса в одной из партий",
+    "одна из партий ушла на дьюс — нервы на пределе",
+    "одна партия тянулась на дьюсе до последнего очка",
+    "в одной из партий пришлось побороться на дьюсе",
+    "дьюс посреди матча добавил перца",
+    "дьюс в одной из партий — без него было бы скучно",
+    "на дьюсе одной из партий ставки заметно выросли",
+    "одну из партий пришлось вытягивать на дьюсе",
+]
+
 
 def _stable_pool_index(seed: int, salt: str, pool_len: int) -> int:
     """Детерминированный, но НЕ линейный индекс в пул фраз.
@@ -934,10 +976,31 @@ def match_report(m: Match, winner_name: str) -> str:
     upset = (m.rating_change or 0) >= 20
 
     if not any((comeback, marathon, deuce_decider, upset)):
+        w_sets = sum(1 for s in sets if s["w"] > s["l"])
+        l_sets = len(sets) - w_sets
+        soft_comeback = sets[0]["w"] < sets[0]["l"]
+        mid_deuce = any(min(s["w"], s["l"]) >= 10 for s in sets)
+        close_decider = len(sets) >= 3 and abs(w_sets - l_sets) == 1
+        if soft_comeback or mid_deuce or close_decider:
+            soft_opener = ""
+            if soft_comeback:
+                idx = _stable_pool_index(m.id, "soft_comeback", len(SOFT_COMEBACK_OPENERS))
+                soft_opener = SOFT_COMEBACK_OPENERS[idx].format(name=h(winner_name))
+            soft_tail = []
+            if close_decider:
+                idx = _stable_pool_index(m.id, "close", len(CLOSE_DECIDER_FRAGMENTS))
+                soft_tail.append(CLOSE_DECIDER_FRAGMENTS[idx])
+            if mid_deuce:
+                idx = _stable_pool_index(m.id, "mid_deuce", len(MID_DEUCE_FRAGMENTS))
+                soft_tail.append(MID_DEUCE_FRAGMENTS[idx])
+            tail_text = ""
+            if soft_tail:
+                joined = ", ".join(soft_tail)
+                tail_text = joined[0].upper() + joined[1:] + "."
+            return (soft_opener + tail_text).strip()
+
         reason = match_drama_reason(m)
         if reason in ("Уверенный разгром", "Напряжённый матч"):
-            w_sets = sum(1 for s in sets if s["w"] > s["l"])
-            l_sets = len(sets) - w_sets
             pool = BLOWOUT_PHRASES if l_sets == 0 else PLAIN_WIN_PHRASES
             return pool[m.id % len(pool)]
         return reason
