@@ -7,11 +7,14 @@ from types import SimpleNamespace
 
 from bot.utils import (
     BLOWOUT_PHRASES,
+    CLOSE_DECIDER_FRAGMENTS,
     COMEBACK_OPENERS,
     DEUCE_FRAGMENTS,
     DRAMA_THRESHOLD,
     MARATHON_FRAGMENTS,
+    MID_DEUCE_FRAGMENTS,
     PLAIN_WIN_PHRASES,
+    SOFT_COMEBACK_OPENERS,
     UPSET_FRAGMENT_TEMPLATES,
     _stable_pool_index,
     match_drama_reason,
@@ -192,10 +195,14 @@ def test_report_only_first_set_lost_is_not_comeback():
     """Проиграл только первую партию (не вторую) — НЕ считается комбэком для
     репортажа (в отличие от match_drama_reason, где хватает одной)."""
     sets = [{"w": 6, "l": 11}, {"w": 11, "l": 6}, {"w": 11, "l": 6}]
-    text = match_report(make_match(sets, winner_id=1, rating_change=5.0), "Игрок")
+    m = make_match(sets, winner_id=1, rating_change=5.0)
+    text = match_report(m, "Игрок")
     assert "влетел в яму" not in text
-    # ни один из 4 факторов не сработал — откат на короткую причину
-    assert text == match_drama_reason(make_match(sets, winner_id=1, rating_change=5.0))
+    # строгие 4 фактора не сработали — «мягкий» камбэк (v2.131.0), не сухая строка
+    opener = SOFT_COMEBACK_OPENERS[_stable_pool_index(m.id, "soft_comeback", len(SOFT_COMEBACK_OPENERS))]
+    close = CLOSE_DECIDER_FRAGMENTS[_stable_pool_index(m.id, "close", len(CLOSE_DECIDER_FRAGMENTS))]
+    assert text == (opener.format(name="Игрок") + close[0].upper() + close[1:] + ".").strip()
+    assert text != match_drama_reason(m)
 
 
 def test_report_marathon_only():
@@ -306,16 +313,63 @@ def test_report_stable_index_by_match_id():
     assert match_report(m, "Игрок") == match_report(m, "Игрок")
 
 
-def test_report_preserves_specific_drama_reason():
-    """Если match_drama_reason находит что-то содержательное (не одну из двух
-    плоских строк) — репортаж (v2.105.0) её не подменяет пулом."""
-    # дьюс хотя бы в одной партии, но не в решающей (иначе сработал бы
-    # свой фактор deuce_decider внутри match_report) и без марафона/апсета/камбэка
+def test_report_mid_deuce_uses_phrase_pool():
+    """Дьюс в НЕ решающей партии (v2.131.0) — раньше репортаж отдавал сухое
+    «Дьюс на тоненького», теперь фразу из MID_DEUCE_FRAGMENTS."""
     sets = [{"w": 12, "l": 10}, {"w": 11, "l": 3}]
     m = make_match(sets, winner_id=1, rating_change=5.0, match_id=1)
-    reason = match_drama_reason(m)
-    assert reason not in ("Уверенный разгром", "Напряжённый матч")
-    assert match_report(m, "Игрок") == reason
+    idx = _stable_pool_index(m.id, "mid_deuce", len(MID_DEUCE_FRAGMENTS))
+    fragment = MID_DEUCE_FRAGMENTS[idx]
+    assert match_report(m, "Игрок") == fragment[0].upper() + fragment[1:] + "."
+
+
+def test_report_close_decider_uses_phrase_pool():
+    """2:1 впритык без дьюса и проигранного старта (v2.131.0) — раньше сухое
+    «Решилось в последней партии», теперь фраза из CLOSE_DECIDER_FRAGMENTS."""
+    sets = [{"w": 11, "l": 9}, {"w": 8, "l": 11}, {"w": 11, "l": 9}]
+    m = make_match(sets, winner_id=1, rating_change=5.0, match_id=2)
+    assert match_drama_reason(m) == "Решилось в последней партии"
+    idx = _stable_pool_index(m.id, "close", len(CLOSE_DECIDER_FRAGMENTS))
+    fragment = CLOSE_DECIDER_FRAGMENTS[idx]
+    assert match_report(m, "Игрок") == fragment[0].upper() + fragment[1:] + "."
+
+
+def test_report_soft_factors_combine():
+    """Проигранная первая + дьюс в середине + 2:1 — открывающая фраза и оба
+    хвостовых фрагмента, порядок: близкая развязка, затем дьюс."""
+    sets = [{"w": 9, "l": 11}, {"w": 12, "l": 10}, {"w": 11, "l": 7}]
+    m = make_match(sets, winner_id=1, rating_change=5.0, match_id=4)
+    text = match_report(m, "Игрок")
+    opener = SOFT_COMEBACK_OPENERS[_stable_pool_index(m.id, "soft_comeback", len(SOFT_COMEBACK_OPENERS))]
+    close = CLOSE_DECIDER_FRAGMENTS[_stable_pool_index(m.id, "close", len(CLOSE_DECIDER_FRAGMENTS))]
+    deuce = MID_DEUCE_FRAGMENTS[_stable_pool_index(m.id, "mid_deuce", len(MID_DEUCE_FRAGMENTS))]
+    joined = f"{close}, {deuce}"
+    assert text == (opener.format(name="Игрок") + joined[0].upper() + joined[1:] + ".").strip()
+
+
+def test_report_soft_comeback_escapes_winner_name():
+    sets = [{"w": 9, "l": 11}, {"w": 11, "l": 7}, {"w": 11, "l": 6}]
+    text = match_report(make_match(sets, winner_id=1, rating_change=5.0), "<b>X</b>")
+    assert "<b>X</b>" not in text and "&lt;b&gt;" in text
+
+
+def test_report_typical_top_matches_never_dry():
+    """Регрессия на жалобу «опять скучные репорты»: любой матч из 3 партий,
+    способный пройти порог «топ-матча», не должен давать сухую строку из
+    match_drama_reason."""
+    dry = {"Дьюс на тоненького", "Решилось в последней партии", "Дьюсы"}
+    variants = [
+        [{"w": 12, "l": 10}, {"w": 9, "l": 11}, {"w": 11, "l": 5}],
+        [{"w": 11, "l": 9}, {"w": 8, "l": 11}, {"w": 11, "l": 9}],
+        [{"w": 8, "l": 11}, {"w": 11, "l": 7}, {"w": 11, "l": 6}],
+        [{"w": 12, "l": 10}, {"w": 13, "l": 11}],
+    ]
+    for sets in variants:
+        for mid in range(10):
+            m = make_match(sets, winner_id=1, rating_change=5.0, match_id=mid)
+            text = match_report(m, "Игрок")
+            assert text not in dry
+            assert not text.startswith("Камбэк после")
 
 
 def test_report_draw_falls_back_to_drama_reason():
