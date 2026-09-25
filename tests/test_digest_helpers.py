@@ -2,11 +2,15 @@
 Тесты чистых хелперов наполнения дайджестов (без БД и бота).
 Запуск: pytest tests/test_digest_helpers.py
 """
+import logging
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
-from bot.scheduler import _biggest_swing, _longest_no_loss_streak, _total_points
-from bot.utils import pluralize_points
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+
+from bot.scheduler import _biggest_swing, _longest_no_loss_streak, _top_match_block, _total_points
+from bot.utils import pluralize_points, safe_send
 
 
 def mk(challenger_id, challenged_id, winner_id, rating_change, day, sets_data=None):
@@ -129,3 +133,53 @@ def test_biggest_swing_none_when_below_threshold():
         mk(1, 2, 2, 4.0, 2),
     ]
     assert _biggest_swing(matches, NAMES) is None
+
+
+# ── _top_match_block (общий блок «топ-матча» всех пяти дайджестов) ──────────────
+
+def test_top_match_block_none_when_nothing_dramatic():
+    blowout = mk(1, 2, 1, 5.0, 1, sets_data=[{"w": 11, "l": 2}])
+    assert _top_match_block([blowout], NAMES, "Топ-матч дня") is None
+
+
+def test_top_match_block_contains_title_players_and_score():
+    m = mk(1, 2, 2, 10.0, 1, sets_data=[{"w": 9, "l": 11}, {"w": 11, "l": 7}, {"w": 12, "l": 10}])
+    m.id = 5
+    block = _top_match_block([m], NAMES, "Матч недели")
+    assert block.startswith("🌟 <b>Матч недели</b>")
+    assert "Alice" in block and "Bob" in block
+    # счёт в перспективе challenger (Alice), победил challenged (Bob)
+    assert "11:9, 7:11, 10:12" in block
+
+
+def test_top_match_block_escapes_names():
+    m = mk(1, 2, 1, 10.0, 1, sets_data=[{"w": 9, "l": 11}, {"w": 11, "l": 7}, {"w": 12, "l": 10}])
+    m.id = 5
+    block = _top_match_block([m], {1: "<b>x</b>", 2: "Bob"}, "Т")
+    assert "&lt;b&gt;x&lt;/b&gt;" in block
+
+
+# ── safe_send ───────────────────────────────────────────────────────────────────
+
+async def test_safe_send_passes_through_args():
+    bot = AsyncMock()
+    assert await safe_send(bot, 42, "hi", reply_markup="kb") is True
+    bot.send_message.assert_awaited_once_with(42, "hi", reply_markup="kb")
+
+
+async def test_safe_send_blocked_bot_is_info_not_error(caplog):
+    bot = AsyncMock()
+    bot.send_message.side_effect = TelegramForbiddenError(method=MagicMock(), message="blocked")
+    with caplog.at_level(logging.INFO, logger="bot.utils"):
+        assert await safe_send(bot, 42, "hi") is False
+    assert [r.levelno for r in caplog.records] == [logging.INFO]
+
+
+async def test_safe_send_other_errors_are_logged_as_errors(caplog):
+    """Раньше такие ошибки (например, битый HTML) глотались молча."""
+    bot = AsyncMock()
+    bot.send_message.side_effect = TelegramBadRequest(method=MagicMock(), message="can't parse entities")
+    with caplog.at_level(logging.INFO, logger="bot.utils"):
+        assert await safe_send(bot, 42, "<b>") is False
+    assert [r.levelno for r in caplog.records] == [logging.ERROR]
+    assert caplog.records[0].exc_info is not None

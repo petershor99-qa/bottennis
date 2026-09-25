@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import math
 import os
 import random
@@ -8,11 +9,14 @@ from datetime import datetime, timedelta, timezone
 from html import escape as h
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramForbiddenError
 from sqlalchemy import and_, desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from bot.db.models import ChampionReign, Match, MatchStatus, Player
+
+logger = logging.getLogger(__name__)
 
 MSK_OFFSET = timedelta(hours=3)
 
@@ -560,14 +564,26 @@ async def steadiest_career(session: AsyncSession) -> tuple[int, float] | None:
     return (best_pid, round(eligible[best_pid], 1))
 
 
+async def safe_send(bot: Bot, chat_id: int, text: str, **kwargs) -> bool:
+    """send_message, который не роняет вызывающий код. Игрок, заблокировавший
+    бота, — штатная ситуация (info), всё остальное (битый HTML, слишком длинный
+    текст и т.п.) — уже баг, пишем в лог с трейсбэком, раньше такие ошибки
+    глотались молча и вообще не были видны."""
+    try:
+        await bot.send_message(chat_id, text, **kwargs)
+        return True
+    except TelegramForbiddenError:
+        logger.info("Сообщение не доставлено: чат %s заблокировал бота", chat_id)
+    except Exception:
+        logger.exception("Не удалось отправить сообщение в чат %s", chat_id)
+    return False
+
+
 async def notify_all_players(bot: Bot, session: AsyncSession, text: str) -> None:
     """Рассылает text всем зарегистрированным игрокам, молча пропуская недоступных."""
     players_r = await session.execute(select(Player))
     for p in players_r.scalars().all():
-        try:
-            await bot.send_message(p.telegram_id, text)
-        except Exception:
-            pass
+        await safe_send(bot, p.telegram_id, text)
 
 
 async def get_champion_and_challenger(session: AsyncSession) -> tuple[Player | None, Player | None]:
