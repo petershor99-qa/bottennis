@@ -35,6 +35,7 @@ from bot.utils import (
     pluralize_points,
     pluralize_sets,
     pluralize_wins,
+    safe_send,
     try_transfer_champion,
 )
 
@@ -42,6 +43,23 @@ logger = logging.getLogger(__name__)
 
 
 # ── Общие блоки для итогов недели/месяца ──────────────────────────────────────
+
+def _top_match_block(matches: list, name_map: dict, title: str) -> str | None:
+    """Блок «топ-матча» периода — одинаковый во всех пяти дайджестах (день/неделя/
+    месяц/квартал/год), отличается только заголовок. None, если ни один матч не
+    набрал порог драмы `pick_match_of_day`."""
+    mod = pick_match_of_day(matches)
+    if not mod:
+        return None
+    ch = name_map.get(mod.challenger_id, "?")
+    cd = name_map.get(mod.challenged_id, "?")
+    winner_name = name_map.get(mod.winner_id, "?") if mod.winner_id else ""
+    return (
+        f"🌟 <b>{title}</b>\n"
+        f"<b>{h(ch)}</b> vs <b>{h(cd)}</b> — {match_score_challenger_first(mod)}\n"
+        f"<i>{match_report(mod, winner_name)}</i>"
+    )
+
 
 def _most_played_pair(matches: list, name_map: dict) -> str | None:
     """«Чаще всего самбовались» — самая играющая пара за период (от 2 матчей)."""
@@ -188,18 +206,16 @@ async def send_match_reminders(bot: Bot) -> None:
                 (match.challenger, match.challenged),
                 (match.challenged, match.challenger),
             ]:
-                try:
-                    await bot.send_message(
-                        player.telegram_id,
-                        f"⏰ <b>Напоминание о матче</b>\n\n"
-                        f"У тебя с <b>{h(opponent.display_name)}</b> есть незавершённый матч "
-                        f"уже больше 24 часов.\n"
-                        f"Пока он не завершён, вы оба не можете вызвать никого другого — "
-                        f"сыграйте и внесите результат! 🏓",
-                        reply_markup=busy_with_match_kb(match.id),
-                    )
-                except Exception:
-                    pass
+                await safe_send(
+                    bot,
+                    player.telegram_id,
+                    f"⏰ <b>Напоминание о матче</b>\n\n"
+                    f"У тебя с <b>{h(opponent.display_name)}</b> есть незавершённый матч "
+                    f"уже больше 24 часов.\n"
+                    f"Пока он не завершён, вы оба не можете вызвать никого другого — "
+                    f"сыграйте и внесите результат! 🏓",
+                    reply_markup=busy_with_match_kb(match.id),
+                )
 
             match.reminder_sent = True
 
@@ -317,15 +333,13 @@ async def check_throne_cracking(bot: Bot) -> None:
         gap = round(champion.rating - chaser.rating, 1)
         if gap <= 0 or gap >= THRONE_CRACKING_GAP:
             return
-        try:
-            await bot.send_message(
-                champion.telegram_id,
-                f"👑 <b>Трон трещит</b>\n\n"
-                f"<b>{h(chaser.display_name)}</b> отстаёт всего на <b>{gap} pts</b> — "
-                f"будь готов защищаться.",
-            )
-        except Exception:
-            pass
+        await safe_send(
+            bot,
+            champion.telegram_id,
+            f"👑 <b>Трон трещит</b>\n\n"
+            f"<b>{h(chaser.display_name)}</b> отстаёт всего на <b>{gap} pts</b> — "
+            f"будь готов защищаться.",
+        )
 
 
 # ── Еженедельный дайджест ─────────────────────────────────────────────────────
@@ -487,17 +501,8 @@ async def send_weekly_digest(bot: Bot) -> None:
             hero_lines.append(f"😴 {word} недели — <b>{', '.join(slacker_names)}</b>")
 
         # ── Матч недели ────────────────────────────────────────────────────────
-        match_week = ""
-        mod = pick_match_of_day(all_week_matches)
-        if mod:
-            mch = player_name_map.get(mod.challenger_id, "?")
-            mcd = player_name_map.get(mod.challenged_id, "?")
-            winner_name = player_name_map.get(mod.winner_id, "?") if mod.winner_id else ""
-            match_week = (
-                f"\n\n🌟 <b>Матч недели</b>\n"
-                f"<b>{h(mch)}</b> vs <b>{h(mcd)}</b> — {match_score_challenger_first(mod)}\n"
-                f"<i>{match_report(mod, winner_name)}</i>"
-            )
+        top = _top_match_block(all_week_matches, player_name_map, "Матч недели")
+        match_week = f"\n\n{top}" if top else ""
 
         club_block = "\n".join(standings) + "\n\n" + "\n".join(hero_lines) + match_week
 
@@ -547,10 +552,7 @@ async def send_weekly_digest(bot: Bot) -> None:
                 header += f"{progress}\n"
 
             text = header + "\n" + club_block
-            try:
-                await bot.send_message(player.telegram_id, text)
-            except Exception:
-                pass
+            await safe_send(bot, player.telegram_id, text)
 
     logger.info("Еженедельный дайджест отправлен")
 
@@ -698,18 +700,9 @@ async def send_daily_summary(bot: Bot) -> None:
             lines.append(swing)
 
         # Топ-матч дня (было «Матч дня» — путалось с «Матчи дня» чуть ниже, v2.98.0)
-        mod = pick_match_of_day(matches)
-        if mod:
-            ch = name_map.get(mod.challenger_id, "?")
-            cd = name_map.get(mod.challenged_id, "?")
-            winner_name = name_map.get(mod.winner_id, "?") if mod.winner_id else ""
-            score_str = match_score_challenger_first(mod)
-            reason = match_report(mod, winner_name)
-            lines.append(
-                f"\n🌟 <b>Топ-матч дня</b>\n"
-                f"<b>{h(ch)}</b> vs <b>{h(cd)}</b> — {score_str}\n"
-                f"<i>{reason}</i>"
-            )
+        top = _top_match_block(matches, name_map, "Топ-матч дня")
+        if top:
+            lines.append(f"\n{top}")
 
         # Все матчи — общий лог клуба (было «Матчи дня», v2.98.0). Нейтрально,
         # счёт в перспективе challenger, победитель жирным.
@@ -729,10 +722,7 @@ async def send_daily_summary(bot: Bot) -> None:
 
         text = "\n".join(lines)
         for p in players:
-            try:
-                await bot.send_message(p.telegram_id, text)
-            except Exception:
-                pass
+            await safe_send(bot, p.telegram_id, text)
 
     logger.info("Итоги дня отправлены")
 
@@ -930,17 +920,8 @@ async def send_monthly_summary(bot: Bot) -> None:
             hero_lines.append(f"😴 {word} месяца — <b>{', '.join(slacker_names)}</b>")
 
         # ── Матч месяца ───────────────────────────────────────────────────────
-        match_month = ""
-        mod = pick_match_of_day(matches)
-        if mod:
-            ch = name_map.get(mod.challenger_id, "?")
-            cd = name_map.get(mod.challenged_id, "?")
-            winner_name = name_map.get(mod.winner_id, "?") if mod.winner_id else ""
-            match_month = (
-                f"\n\n🌟 <b>Матч месяца</b>\n"
-                f"<b>{h(ch)}</b> vs <b>{h(cd)}</b> — {match_score_challenger_first(mod)}\n"
-                f"<i>{match_report(mod, winner_name)}</i>"
-            )
+        top = _top_match_block(matches, name_map, "Матч месяца")
+        match_month = f"\n\n{top}" if top else ""
 
         club_block = "\n".join(standings) + "\n\n" + "\n".join(hero_lines) + match_month
 
@@ -982,10 +963,7 @@ async def send_monthly_summary(bot: Bot) -> None:
                 header += f"{progress}\n"
 
             text = header + "\n" + club_block
-            try:
-                await bot.send_message(player.telegram_id, text)
-            except Exception:
-                pass
+            await safe_send(bot, player.telegram_id, text)
 
     logger.info("Итоги месяца за %s отправлены", month_label)
 
@@ -1119,25 +1097,13 @@ async def send_quarterly_summary(bot: Bot) -> None:
         if swing:
             lines.append(swing)
 
-        mod = pick_match_of_day(matches)
-        if mod:
-            ch = name_map.get(mod.challenger_id, "?")
-            cd = name_map.get(mod.challenged_id, "?")
-            winner_name = name_map.get(mod.winner_id, "?") if mod.winner_id else ""
-            score_str = match_score_challenger_first(mod)
-            reason = match_report(mod, winner_name)
-            lines.append(
-                f"\n🌟 <b>Топ-матч квартала</b>\n"
-                f"<b>{h(ch)}</b> vs <b>{h(cd)}</b> — {score_str}\n"
-                f"<i>{reason}</i>"
-            )
+        top = _top_match_block(matches, name_map, "Топ-матч квартала")
+        if top:
+            lines.append(f"\n{top}")
 
         text = "\n".join(lines)
         for p in players:
-            try:
-                await bot.send_message(p.telegram_id, text)
-            except Exception:
-                pass
+            await safe_send(bot, p.telegram_id, text)
 
     logger.info("Итоги квартала за %s отправлены", quarter_label)
 
@@ -1281,26 +1247,13 @@ async def send_yearly_summary(bot: Bot) -> None:
             f"{pluralize_matches(match_count[most_active_id])}"
         )
 
-        mod = pick_match_of_day(matches)
-        if mod:
-            ch = name_map.get(mod.challenger_id, "?")
-            cd = name_map.get(mod.challenged_id, "?")
-            winner_name = name_map.get(mod.winner_id, "?") if mod.winner_id else ""
-            score_str = match_score_challenger_first(mod)
-            reason = match_report(mod, winner_name)
-            lines.append(
-                f"\n🌟 <b>Топ-матч года</b>\n"
-                f"<b>{h(ch)}</b> vs <b>{h(cd)}</b> — {score_str}\n"
-                f"<i>{reason}</i>\n"
-                f"<i>Если бы это сняли — билеты бы раскупили за час.</i>"
-            )
+        top = _top_match_block(matches, name_map, "Топ-матч года")
+        if top:
+            lines.append(f"\n{top}\n<i>Если бы это сняли — билеты бы раскупили за час.</i>")
 
         text = "\n".join(lines)
         for p in players:
-            try:
-                await bot.send_message(p.telegram_id, text)
-            except Exception:
-                pass
+            await safe_send(bot, p.telegram_id, text)
 
     logger.info("Итоги года за %d отправлены", year_start_msk.year)
 

@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from html import escape as h
 
@@ -29,7 +30,10 @@ from bot.utils import (
     match_phrase,
     notify_all_players,
     random_challenge_greeting,
+    safe_send,
 )
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -318,6 +322,7 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
             reply_markup=active_match_kb(match.id),
         )
     except Exception:
+        logger.exception("Не удалось отправить вызов в чат %s, матч %s отменён", opponent.telegram_id, match.id)
         await session.delete(match)
         await session.commit()
         await callback.answer()
@@ -362,10 +367,7 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
         select(func.count()).select_from(Player).where(Player.rating > opponent.rating)
     )
     if top_r.scalar() == 0:
-        try:
-            await bot.send_message(challenger.telegram_id, "💀 О, местную легенду вызвал. Смело.")
-        except Exception:
-            pass
+        await safe_send(bot, challenger.telegram_id, "💀 О, местную легенду вызвал. Смело.")
 
     await callback.answer()
 
@@ -447,14 +449,12 @@ async def do_cancel_match(callback: CallbackQuery, session: AsyncSession, bot: B
         reply_markup=back_to_menu_kb(),
     )
 
-    try:
-        await bot.send_message(
-            opponent.telegram_id,
-            f"❌ <b>{h(player.display_name)}</b> отменил матч с тобой.",
-            reply_markup=main_menu_kb(),
-        )
-    except Exception:
-        pass
+    await safe_send(
+        bot,
+        opponent.telegram_id,
+        f"❌ <b>{h(player.display_name)}</b> отменил матч с тобой.",
+        reply_markup=main_menu_kb(),
+    )
 
     # Достижение «Дух Анкориджа» — обоим участникам отменённого матча
     new_p = await check_cancel_achievements(session, player)
@@ -469,12 +469,10 @@ async def do_cancel_match(callback: CallbackQuery, session: AsyncSession, bot: B
             a = ACHIEVEMENTS_MAP.get(aid)
             if not a:
                 continue
-            try:
-                await bot.send_message(
-                    pl.telegram_id,
-                    f"🏅 <b>Новое достижение!</b>\n\n{a.emoji} <b>{a.name}</b>\n<i>{a.desc}</i>",
-                )
-            except Exception:
-                pass
+            await safe_send(
+                bot,
+                pl.telegram_id,
+                f"🏅 <b>Новое достижение!</b>\n\n{a.emoji} <b>{a.name}</b>\n<i>{a.desc}</i>",
+            )
 
     await callback.answer()

@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from html import escape as h
 
@@ -44,8 +45,11 @@ from bot.utils import (
     pluralize_days,
     previous_h2h_line,
     rating_tenths,
+    safe_send,
     try_transfer_champion,
 )
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -105,13 +109,11 @@ async def _check_and_send_milestones(session: AsyncSession, bot: Bot, player: Pl
 
     if total % MATCH_MILESTONE_STEP == 0 and total not in _MATCH_MILESTONE_SKIP:
         idx = (total // MATCH_MILESTONE_STEP - 1) % len(MATCH_MILESTONE_PHRASES)
-        try:
-            await bot.send_message(
-                player.telegram_id,
-                f"🎯 <b>{total}-й матч в клубе!</b>\n{MATCH_MILESTONE_PHRASES[idx]}",
-            )
-        except Exception:
-            pass
+        await safe_send(
+            bot,
+            player.telegram_id,
+            f"🎯 <b>{total}-й матч в клубе!</b>\n{MATCH_MILESTONE_PHRASES[idx]}",
+        )
 
     points_this_match = 0
     if match.sets_data:
@@ -125,13 +127,11 @@ async def _check_and_send_milestones(session: AsyncSession, bot: Bot, player: Pl
         milestone = (points // POINTS_MILESTONE_STEP) * POINTS_MILESTONE_STEP
         if milestone > 0 and milestone not in _POINTS_MILESTONE_SKIP:
             idx = (milestone // POINTS_MILESTONE_STEP - 1) % len(POINTS_MILESTONE_PHRASES)
-            try:
-                await bot.send_message(
-                    player.telegram_id,
-                    f"💰 <b>{milestone} очков за карьеру!</b>\n{POINTS_MILESTONE_PHRASES[idx]}",
-                )
-            except Exception:
-                pass
+            await safe_send(
+                bot,
+                player.telegram_id,
+                f"💰 <b>{milestone} очков за карьеру!</b>\n{POINTS_MILESTONE_PHRASES[idx]}",
+            )
 BOSS_FIGHT_MULT = 2.0     # множитель дельты в босс-файте
 
 
@@ -144,10 +144,7 @@ async def _send_personal_records(bot: Bot, player: Player, messages: list[str]) 
     """Отправляет игроку все сработавшие уведомления о личных рекордах
     (bot/services/personal_records.py) — их может быть несколько за один матч."""
     for text in messages:
-        try:
-            await bot.send_message(player.telegram_id, text)
-        except Exception:
-            pass
+        await safe_send(bot, player.telegram_id, text)
 
 
 async def _notify_achievements(bot: Bot, player, new_ids: list[str]) -> None:
@@ -163,10 +160,7 @@ async def _notify_achievements(bot: Bot, player, new_ids: list[str]) -> None:
     else:
         lines = "\n".join(f"{a.emoji} <b>{a.name}</b> — <i>{a.desc}</i>" for a in achs)
         text = f"🏅 <b>Новые достижения!</b>\n\n{lines}"
-    try:
-        await bot.send_message(player.telegram_id, text)
-    except Exception:
-        pass
+    await safe_send(bot, player.telegram_id, text)
 
 
 async def _collect_egg_context(
@@ -286,10 +280,7 @@ async def _send_winner_eggs(bot: Bot, winner: Player, loser: Player, ctx: dict) 
     """Отправляет пасхалки победителю."""
 
     async def _msg(text: str, **kw) -> None:
-        try:
-            await bot.send_message(winner.telegram_id, text, **kw)
-        except Exception:
-            pass
+        await safe_send(bot, winner.telegram_id, text, **kw)
 
     if ctx["flawless"]:
         await _msg("🩸 Flawless Victory")
@@ -346,10 +337,7 @@ async def _send_loser_eggs(
     """Отправляет пасхалки проигравшему."""
 
     async def _msg(text: str, **kw) -> None:
-        try:
-            await bot.send_message(loser.telegram_id, text, **kw)
-        except Exception:
-            pass
+        await safe_send(bot, loser.telegram_id, text, **kw)
 
     if ctx["prev_losses"] == 0:
         await _msg("🕶 Добро пожаловать в реальный мир")
@@ -384,10 +372,7 @@ async def _send_time_based_eggs(bot: Bot, players: list[Player], completed_at: d
     else:
         return
     for p in players:
-        try:
-            await bot.send_message(p.telegram_id, text)
-        except Exception:
-            pass
+        await safe_send(bot, p.telegram_id, text)
 
 
 async def _send_welcome_back_egg(
@@ -414,13 +399,11 @@ async def _send_welcome_back_egg(
             continue
         gap_days = (completed_at - prev_completed_at).days
         if gap_days >= 14:
-            try:
-                await bot.send_message(
-                    p.telegram_id,
-                    f"🧟 Восстал из мёртвых. Рейтинг за {pluralize_days(gap_days)} успел заскучать без тебя.",
-                )
-            except Exception:
-                pass
+            await safe_send(
+                bot,
+                p.telegram_id,
+                f"🧟 Восстал из мёртвых. Рейтинг за {pluralize_days(gap_days)} успел заскучать без тебя.",
+            )
 
 
 async def _send_h2h_milestone_egg(bot: Bot, session: AsyncSession, p1: Player, p2: Player) -> None:
@@ -439,10 +422,7 @@ async def _send_h2h_milestone_egg(bot: Bot, session: AsyncSession, p1: Player, p
         return
     text = f"🎉 Юбилейная битва — {total}-я встреча между вами!"
     for p in (p1, p2):
-        try:
-            await bot.send_message(p.telegram_id, text)
-        except Exception:
-            pass
+        await safe_send(bot, p.telegram_id, text)
 
 
 async def _send_quick_rematch_egg(
@@ -469,10 +449,7 @@ async def _send_quick_rematch_egg(
     if not (0 <= gap <= 600):
         return
     for p in (p1, p2):
-        try:
-            await bot.send_message(p.telegram_id, "Не наигрался? 😤")
-        except Exception:
-            pass
+        await safe_send(bot, p.telegram_id, "Не наигрался? 😤")
 
 
 async def _send_easter_eggs(
@@ -498,10 +475,7 @@ async def _send_easter_eggs(
     # ── Обоим игрокам ─────────────────────────────────────────────────────────
     if ctx["marathon"]:
         for p in (winner, loser):
-            try:
-                await bot.send_message(p.telegram_id, "🕰 Три часа спустя…")
-            except Exception:
-                pass
+            await safe_send(bot, p.telegram_id, "🕰 Три часа спустя…")
 
     today_start = msk_day_start()
     for p in (winner, loser):
@@ -513,10 +487,7 @@ async def _send_easter_eggs(
             )
         )
         if today_r.scalar() == 7:
-            try:
-                await bot.send_message(p.telegram_id, "7 матчей за сегодня! А поработать не хочешь? 😄")
-            except Exception:
-                pass
+            await safe_send(bot, p.telegram_id, "7 матчей за сегодня! А поработать не хочешь? 😄")
 
     if completed_at is not None:
         await _send_time_based_eggs(bot, [winner, loser], completed_at)
@@ -975,19 +946,13 @@ async def _award_draw_achievements_and_eggs(
 
     # Пасхалка — ничья
     for p in (challenger, challenged):
-        try:
-            await bot.send_message(p.telegram_id, "🤝 Договорнячок")
-        except Exception:
-            pass
+        await safe_send(bot, p.telegram_id, "🤝 Договорнячок")
 
     # Пасхалка — марафон (5+ партий) при ничье
     marathon = len(final_sets) >= 5
     if marathon:
         for p in (challenger, challenged):
-            try:
-                await bot.send_message(p.telegram_id, "🕰 Три часа спустя…")
-            except Exception:
-                pass
+            await safe_send(bot, p.telegram_id, "🕰 Три часа спустя…")
 
     # Пасхалка — 7 матчей за день (ничья)
     today_start = msk_day_start()
@@ -1000,10 +965,7 @@ async def _award_draw_achievements_and_eggs(
             )
         )
         if today_count_r.scalar() == 7:
-            try:
-                await bot.send_message(p.telegram_id, "7 матчей за сегодня! А поработать не хочешь? 😄")
-            except Exception:
-                pass
+            await safe_send(bot, p.telegram_id, "7 матчей за сегодня! А поработать не хочешь? 😄")
 
     await _send_time_based_eggs(bot, [challenger, challenged], match.completed_at)
     await _send_h2h_milestone_egg(bot, session, challenger, challenged)
@@ -1061,15 +1023,13 @@ async def _award_win_achievements_and_eggs(
             break
 
     if consecutive % 10 == 0:
-        try:
-            await bot.send_message(
-                winner.telegram_id,
-                f"💀 <b>То что мертво — умереть не может.</b>\n\n"
-                f"Ты победил <b>{h(loser.display_name)}</b> уже {consecutive} раз подряд.\n"
-                f"Попробуй выбрать ещё какого-нибудь соперника 😏",
-            )
-        except Exception:
-            pass
+        await safe_send(
+            bot,
+            winner.telegram_id,
+            f"💀 <b>То что мертво — умереть не может.</b>\n\n"
+            f"Ты победил <b>{h(loser.display_name)}</b> уже {consecutive} раз подряд.\n"
+            f"Попробуй выбрать ещё какого-нибудь соперника 😏",
+        )
 
 
 async def _notify_challenger_status_change(
@@ -1084,22 +1044,18 @@ async def _notify_challenger_status_change(
     challenger_after = await get_challenger(session, champion_after)
     challenger_after_id = challenger_after.id if challenger_after else None
     if challenger_after_id is not None and challenger_after_id != challenger_before_id:
-        try:
-            await bot.send_message(
-                challenger_after.telegram_id,
-                "⚔️ <b>Ты обошёл чемпиона по очкам!</b>\n"
-                "Чтобы занять 1-е место, победи его в босс-файте.",
-            )
-        except Exception:
-            pass
-        try:
-            await bot.send_message(
-                champion_after.telegram_id,
-                f"⚔️ Тебя догнал по очкам <b>{h(challenger_after.display_name)}</b> — "
-                f"он может вызвать тебя на босс-файт.",
-            )
-        except Exception:
-            pass
+        await safe_send(
+            bot,
+            challenger_after.telegram_id,
+            "⚔️ <b>Ты обошёл чемпиона по очкам!</b>\n"
+            "Чтобы занять 1-е место, победи его в босс-файте.",
+        )
+        await safe_send(
+            bot,
+            champion_after.telegram_id,
+            f"⚔️ Тебя догнал по очкам <b>{h(challenger_after.display_name)}</b> — "
+            f"он может вызвать тебя на босс-файт.",
+        )
 
     # ── Претендент потерял статус, не дойдя до боссфайта — «Просран шанс» ──────
     # Не для боссфайтов: поражение НЕПОСРЕДСТВЕННО в боссфайте уже даёт
@@ -1126,15 +1082,13 @@ async def _notify_challenger_status_change(
             record_achievements_earned(session, challenger_before.id, new_ach_blown, match.completed_at)
             await session.commit()
             await _notify_achievements(bot, challenger_before, new_ach_blown)
-        try:
-            await bot.send_message(
-                challenger_before.telegram_id,
-                "💸 <b>ПОТРАЧЕНО.</b>\n\n"
-                "Твой шанс вызвать чемпиона на босс-файт только что испарился — "
-                "ты выпал из претендентов, не дойдя до боссфайта.",
-            )
-        except Exception:
-            pass
+        await safe_send(
+            bot,
+            challenger_before.telegram_id,
+            "💸 <b>ПОТРАЧЕНО.</b>\n\n"
+            "Твой шанс вызвать чемпиона на босс-файт только что испарился — "
+            "ты выпал из претендентов, не дойдя до боссфайта.",
+        )
 
 
 @router.callback_query(F.data.startswith("confirm_"), MatchResultStates.confirming)
@@ -1286,17 +1240,15 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
         else:
             notify_sets_str = sets_str
 
-        try:
-            await bot.send_message(
-                notify_player.telegram_id,
-                f"📋 <b>Результат матча внесён</b>\n\n"
-                f"🤝 Ничья с <b>{h(opponent_name)}</b>\n"
-                f"Счёт партий: {notify_sets_str}\n\n"
-                f"Твой рейтинг: {round(notify_old, 1)} → <b>{round(notify_player.rating, 1)}</b> ({_fmt_delta(notify_actual_delta)})",
-                reply_markup=main_menu_kb(),
-            )
-        except Exception:
-            pass
+        await safe_send(
+            bot,
+            notify_player.telegram_id,
+            f"📋 <b>Результат матча внесён</b>\n\n"
+            f"🤝 Ничья с <b>{h(opponent_name)}</b>\n"
+            f"Счёт партий: {notify_sets_str}\n\n"
+            f"Твой рейтинг: {round(notify_old, 1)} → <b>{round(notify_player.rating, 1)}</b> ({_fmt_delta(notify_actual_delta)})",
+            reply_markup=main_menu_kb(),
+        )
 
         # Достижения обоих участников + пасхалки ничьей
         await _award_draw_achievements_and_eggs(
@@ -1425,32 +1377,28 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
         if reporter_is_winner:
             # Репортёр — победитель: уведомляем проигравшего (карточка победы
             # ему не положена — кнопка только на экране самого победителя выше)
-            try:
-                await bot.send_message(
-                    loser.telegram_id,
-                    f"📋 <b>Результат матча внесён</b>\n\n"
-                    f"<b>{h(winner.display_name)}</b> победил тебя\n"
-                    f"Счёт партий: {sets_str}\n\n"
-                    f"Твой рейтинг: {round(old_loser_rating, 1)} → <b>{round(loser.rating, 1)}</b> ({loser_delta_str})",
-                    reply_markup=main_menu_kb(),
-                )
-            except Exception:
-                pass
+            await safe_send(
+                bot,
+                loser.telegram_id,
+                f"📋 <b>Результат матча внесён</b>\n\n"
+                f"<b>{h(winner.display_name)}</b> победил тебя\n"
+                f"Счёт партий: {sets_str}\n\n"
+                f"Твой рейтинг: {round(old_loser_rating, 1)} → <b>{round(loser.rating, 1)}</b> ({loser_delta_str})",
+                reply_markup=main_menu_kb(),
+            )
         else:
             # Репортёр — проигравший (инверсия): уведомляем победителя. У него
             # нет интерактивного экрана результата (тот достался репортёру) —
             # кнопку карточки победы прицепляем прямо к этому уведомлению.
-            try:
-                await bot.send_message(
-                    winner.telegram_id,
-                    f"📋 <b>Результат матча внесён</b>\n\n"
-                    f"Ты победил <b>{h(loser.display_name)}</b>\n"
-                    f"Счёт партий: {sets_str}\n\n"
-                    f"Твой рейтинг: {round(old_winner_rating, 1)} → <b>{round(winner.rating, 1)}</b> (+{delta})",
-                    reply_markup=main_menu_kb(share_match_id=match_id),
-                )
-            except Exception:
-                pass
+            await safe_send(
+                bot,
+                winner.telegram_id,
+                f"📋 <b>Результат матча внесён</b>\n\n"
+                f"Ты победил <b>{h(loser.display_name)}</b>\n"
+                f"Счёт партий: {sets_str}\n\n"
+                f"Твой рейтинг: {round(old_winner_rating, 1)} → <b>{round(winner.rating, 1)}</b> (+{delta})",
+                reply_markup=main_menu_kb(share_match_id=match_id),
+            )
 
         # Достижения победителя/проигравшего, пасхалки, серия 10x подряд
         await _award_win_achievements_and_eggs(
@@ -1526,4 +1474,4 @@ async def send_share_card(callback: CallbackQuery, session: AsyncSession):
     try:
         await callback.message.answer(card_text)
     except Exception:
-        pass
+        logger.exception("Не удалось отправить карточку победы, матч %s", match_id)
