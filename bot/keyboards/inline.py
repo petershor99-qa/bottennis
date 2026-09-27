@@ -94,18 +94,42 @@ def stats_kb() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def achievements_kb() -> InlineKeyboardMarkup:
-    """Клавиатура под экраном своих достижений."""
+def achievements_kb(category_progress: list[tuple[str, int, int]]) -> InlineKeyboardMarkup:
+    """Клавиатура под оглавлением своих достижений (v2.133.0) — по кнопке на
+    категорию, по одной в ряд, прогресс прямо на кнопке («🔥 Серии 5/9»).
+    category_progress — [(категория, получено, всего), ...] из
+    _achievement_category_progress (profile.py), в порядке CATEGORY_ORDER —
+    индекс в этом списке и есть callback_data "ach_cat_{i}"."""
     b = InlineKeyboardBuilder()
+    for i, (category, earned, total) in enumerate(category_progress):
+        b.row(InlineKeyboardButton(
+            text=f"{category} {earned}/{total}", callback_data=f"ach_cat_{i}",
+        ))
     b.row(InlineKeyboardButton(text="« К статистике", callback_data="menu_stats"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
 
 
-def player_achievements_kb(player_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура под экраном достижений другого игрока."""
+def player_achievements_kb(
+    player_id: int, category_progress: list[tuple[str, int, int]],
+) -> InlineKeyboardMarkup:
+    """Клавиатура под оглавлением достижений другого игрока — те же кнопки
+    категорий, что у achievements_kb, но callback_data "pach_{player_id}_{i}"."""
     b = InlineKeyboardBuilder()
+    for i, (category, earned, total) in enumerate(category_progress):
+        b.row(InlineKeyboardButton(
+            text=f"{category} {earned}/{total}", callback_data=f"pach_{player_id}_{i}",
+        ))
     b.row(InlineKeyboardButton(text="« К профилю", callback_data=f"player_profile_{player_id}"))
+    return b.as_markup()
+
+
+def achievement_category_kb(player_id: int | None = None) -> InlineKeyboardMarkup:
+    """Клавиатура под экраном ОДНОЙ категории достижений — назад к оглавлению
+    (своему, если player_id не задан, иначе к оглавлению этого игрока)."""
+    b = InlineKeyboardBuilder()
+    back_cb = "my_achievements" if player_id is None else f"player_achievements_{player_id}"
+    b.row(InlineKeyboardButton(text="« Все категории", callback_data=back_cb))
     return b.as_markup()
 
 

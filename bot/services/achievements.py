@@ -31,9 +31,11 @@ class Achievement:
     hidden: bool = False  # скрыта до разблокировки — в списке показывается как "🔒 ???"
 
 
-# Категории — только для группировки экрана «Достижения» (_render_achievements,
-# profile.py). Плоский список из 30+ пунктов подряд читается как нечитаемая
-# простыня (тот же принцип уже применён к «Статистике» и «Рекордам клуба»).
+# Категории — для группировки экрана «Достижения»: оглавление с кнопкой на
+# категорию (achievements_kb/player_achievements_kb, inline.py) + отдельный
+# экран на категорию (_render_achievement_category, profile.py, v2.133.0).
+# Плоский список из 30+ пунктов подряд читается как нечитаемая простыня (тот
+# же принцип уже применён к «Статистике» и «Рекордам клуба»).
 CAT_START = "🏁 Старт карьеры"
 CAT_STREAKS = "🔥 Серии"
 CAT_SPECIAL = "🎯 Особые победы"
@@ -54,10 +56,10 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("im_on_fire",     "💀", "Я горяч нахуй!",            "Выиграть 5 матчей подряд", category=CAT_STREAKS),
     Achievement("god_mode",       "😤", "Ахуджел. Дай другим выиграть!", "Выиграть 10 матчей подряд", category=CAT_STREAKS),
     Achievement("phoenix",        "💪", "Восставший из зада",        "Победить после серии 3+ поражений подряд", category=CAT_STREAKS, hidden=True),
-    Achievement("highlander",     "👑", "Останется только один",     "Победить в боссфайте или получить трон", category=CAT_THRONE),
-    Achievement("david_goliath",  "🎯", "Ебнул четырёхпалубку",     "Победить игрока с рейтингом на 100+ выше", category=CAT_SPECIAL, hidden=True),
+    Achievement("highlander",     "👑", "Останется только один",     "Стать чемпионом — победить в боссфайте или получить трон", category=CAT_THRONE),
+    Achievement("david_goliath",  "🎯", "Ебнул четырёхпалубку",     "Победить игрока с рейтингом выше на 100+ pts", category=CAT_SPECIAL, hidden=True),
     Achievement("marathon",       "🕰", "Совсем абанулись",          "Сыграть матч из 5 и более партий", category=CAT_SPECIAL),
-    Achievement("fatality",       "💥", "Фаталити",                  "Победить, не отдав ни одной партии", category=CAT_SPECIAL, hidden=True),
+    Achievement("fatality",       "💥", "Фаталити",                  "Победить, не отдав сопернику ни одной партии", category=CAT_SPECIAL, hidden=True),
     Achievement("no_sweat",       "⚡", "Даже не вспотел",           "Выиграть партию со счётом 11:0", category=CAT_SPECIAL, hidden=True),
     Achievement("diplomat",       "🤝", "Мир, дружба, жвачка",      "Сыграть 5 ничьих", category=CAT_CLUB),
     Achievement("revenge",        "⚔️", "Ответ_очка",               "Победить того, кто последним обыграл тебя", category=CAT_SPECIAL, hidden=True),
@@ -80,32 +82,32 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("anchorage_spirit", "🏳️", "Дух Анкориджа",          "Отменить матч", category=CAT_CLUB),
     Achievement("comeback",       "🔄", "CumБэк",                    "Выиграть матч, проигрывая 0:2 по партиям", category=CAT_SPECIAL, hidden=True),
     Achievement("fk_tyumen",      "🥊", "ФК Тюмень",                 "Проиграть 5 матчей подряд", category=CAT_STREAKS),
-    Achievement("first_pancake",  "🫠", "Первый блин комом",         "Продул дебют", category=CAT_START),
-    Achievement("blown_lead",     "🫗", "Слил 2:0",                  "Проиграть с 2:0", category=CAT_SPECIAL, hidden=True),
-    Achievement("valley_of_tears", "🪦", "Долина слёз",              "10 подряд", category=CAT_STREAKS),
-    Achievement("punching_bag",   "🤕", "Груша",                     "50 поражений", category=CAT_MILESTONES),
-    Achievement("personal_prey",  "🦌", "Дичь",                      "10 подряд одному", category=CAT_STREAKS, hidden=True),
+    Achievement("first_pancake",  "🫠", "Первый блин комом",         "Проиграть свой самый первый матч", category=CAT_START),
+    Achievement("blown_lead",     "🫗", "Слил 2:0",                  "Проиграть матч, ведя 2:0 по партиям", category=CAT_SPECIAL, hidden=True),
+    Achievement("valley_of_tears", "🪦", "Долина слёз",              "Проиграть 10 матчей подряд", category=CAT_STREAKS),
+    Achievement("punching_bag",   "🤕", "Груша",                     "Проиграть 50 матчей за карьеру", category=CAT_MILESTONES),
+    Achievement("personal_prey",  "🦌", "Дичь",                      "Проиграть одному сопернику 10 раз подряд", category=CAT_STREAKS, hidden=True),
     Achievement("loser_full_set", "🏆", "Полный комплект неудачника", "Все 5 ачивок про поражения", category=CAT_SPECIAL, hidden=True),
     Achievement("relentless",     "☀️", "Неистого",                  "Выиграть все свои матчи за день (от 3)", category=CAT_MILESTONES),
     Achievement("groundhog_day",  "⏰", "День сурка",                "Проиграть все свои матчи за день (от 3)", category=CAT_MILESTONES),
     Achievement("deuce_maker",    "🎢", "Дьюсмейкер",                "Выиграть партию на дьюсе (12:10 и выше)", category=CAT_SPECIAL),
     Achievement("titans",         "🥋", "Битва такеши титанов",      "Победить в матче, где оба были 1100+ pts", category=CAT_SPECIAL, hidden=True),
-    Achievement("takova_zhis",    "🎭", "Такова жись",               "6 матчей подряд, чередуя победы и поражения", category=CAT_STREAKS, hidden=True),
-    Achievement("terminator_slain", "🦾", "Вынес терминатора",       "Победить соперника с серией 5+ побед подряд", category=CAT_SPECIAL, hidden=True),
+    Achievement("takova_zhis",    "🎭", "Такова жись",               "6 матчей подряд с чередованием побед и поражений", category=CAT_STREAKS, hidden=True),
+    Achievement("terminator_slain", "🦾", "Вынес терминатора",       "Победить соперника, шедшего с серией 5+ побед подряд", category=CAT_SPECIAL, hidden=True),
     Achievement("night_king",     "🌙", "Король ночи",               "Обыграть всех игроков клуба за один день", category=CAT_MILESTONES, hidden=True),
     Achievement("throne_defended", "🛡", "Трон удержан",             "Отбиться от претендента в босс-файте", category=CAT_THRONE, hidden=True),
-    Achievement("throne_denied",  "🚪", "Мимо трона",                "Проиграть боссфайт, остаться претендентом", category=CAT_THRONE, hidden=True),
-    Achievement("chance_blown",   "💸", "Просран шанс",              "Потерять статус претендента до боссфайта", category=CAT_THRONE, hidden=True),
-    Achievement("night_owl",      "🦉", "Полуночник",                "Выиграть матч, завершённый ночью (0–6 МСК)", category=CAT_SPECIAL, hidden=True),
-    Achievement("deuce_storm",    "🌪", "Дьюсопад",                  "Все партии матча — на дьюсе", category=CAT_SPECIAL, hidden=True),
-    Achievement("no_rest_win",    "🔁", "Добивашка",                 "Реванш меньше чем через 10 минут", category=CAT_SPECIAL, hidden=True),
+    Achievement("throne_denied",  "🚪", "Мимо трона",                "Проиграть босс-файт за трон, оставшись претендентом", category=CAT_THRONE, hidden=True),
+    Achievement("chance_blown",   "💸", "Просран шанс",              "Потерять статус претендента, не дойдя до боссфайта", category=CAT_THRONE, hidden=True),
+    Achievement("night_owl",      "🦉", "Полуночник",                "Выиграть матч, завершённый ночью (0:00–6:00 МСК)", category=CAT_SPECIAL, hidden=True),
+    Achievement("deuce_storm",    "🌪", "Дьюсопад",                  "Выиграть матч, где каждая партия закончилась на дьюсе", category=CAT_SPECIAL, hidden=True),
+    Achievement("no_rest_win",    "🔁", "Добивашка",                 "Выиграть матч, начатый в течение 10 минут после предыдущего с тем же соперником", category=CAT_SPECIAL, hidden=True),
     Achievement("round_hundred",  "💯", "Круглая цифра",             "Рейтинг стал ровно кратен 100", category=CAT_MILESTONES, hidden=True),
-    Achievement("absolute_zero",  "🥶", "Абсолютный ноль",           "Выиграть матч, где все партии 11:0", category=CAT_SPECIAL, hidden=True),
-    Achievement("weekend_warrior", "🏖", "Выходного дня",            "Выиграть матч в выходной", category=CAT_SPECIAL, hidden=True),
+    Achievement("absolute_zero",  "🥶", "Абсолютный ноль",           "Выиграть матч, где каждая партия закончилась 11:0", category=CAT_SPECIAL, hidden=True),
+    Achievement("weekend_warrior", "🏖", "Выходного дня",            "Выиграть матч, сыгранный в субботу или воскресенье", category=CAT_SPECIAL, hidden=True),
     Achievement("rock_bottom",    "🕳", "Дно",                       "Рейтинг упал ровно до 900.0 (пол ветерана)", category=CAT_MILESTONES, hidden=True),
-    Achievement("full_circle_week", "🌐", "Полный круг за неделю",   "Обыграть весь клуб минимум раз за 7 дней", category=CAT_CLUB, hidden=True),
+    Achievement("full_circle_week", "🌐", "Полный круг за неделю",   "Обыграть каждого игрока клуба минимум раз за 7 дней", category=CAT_CLUB, hidden=True),
     Achievement("draw_double",    "🕊", "Дубль мира",                "Сыграть 2 ничьи подряд", category=CAT_CLUB, hidden=True),
-    Achievement("first_crown",    "🎉", "Первая корона",             "Выиграть свой первый боссфайт в карьере", category=CAT_THRONE, hidden=True),
+    Achievement("first_crown",    "🎉", "Первая корона",             "Выиграть свой самый первый босс-файт в карьере", category=CAT_THRONE, hidden=True),
 ]
 
 ACHIEVEMENTS_MAP: dict[str, Achievement] = {a.id: a for a in ACHIEVEMENTS_LIST}

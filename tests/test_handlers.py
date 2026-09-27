@@ -3008,13 +3008,29 @@ async def test_fastest_match_skipped_without_accepted_at(db):
     assert "Самый быстрый матч" not in text
 
 
-# ── Скрытые ачивки: незаработанные не раскрывают имя/условие ───────────────────
+# ── Редизайн «Достижений» (v2.133.0, этап 2 дорожной карты): оглавление +
+# отдельный экран на категорию ──────────────────────────────────────────────
 
-async def test_hidden_achievement_masked_when_locked(db):
-    """Незаработанная скрытая ачивка показывается как '🔒 ???', без имени и условия."""
+def _cat_idx(category: str) -> int:
+    from bot.services.achievements import CATEGORY_ORDER
+    return CATEGORY_ORDER.index(category)
+
+
+async def _open_my_category(db, category: str):
+    from bot.handlers.profile import show_my_achievement_category
+
+    cb = _callback(1, f"ach_cat_{_cat_idx(category)}")
+    await show_my_achievement_category(cb, db)
+    return cb
+
+
+# ── Оглавление ───────────────────────────────────────────────────────────────
+
+async def test_achievements_toc_shows_total_count(db):
     from bot.handlers.profile import show_my_achievements
 
     p1 = _player(1, "Alice")
+    p1.achievements = '["press_start", "first_blood"]'
     db.add(p1)
     await db.commit()
 
@@ -3022,126 +3038,327 @@ async def test_hidden_achievement_masked_when_locked(db):
     await show_my_achievements(cb, db)
 
     text = cb.message.edit_text.call_args[0][0]
-    assert "🔒 ???" in text
-    # ни одна скрытая ачивка не раскрывает имя, пока не заработана
-    assert "Король ночи" not in text
-    assert "Вынес терминатора" not in text
-    assert "Такова жись" not in text
+    assert "2 из 59" in text
+    # оглавление больше не перечисляет ачивки построчно — прогресс только на кнопках
+    assert "Стукнул полтинник" not in text
+    assert "🔒" not in text
+
+
+async def test_achievements_toc_buttons_one_per_category_with_progress(db):
+    from bot.handlers.profile import show_my_achievements
+    from bot.services.achievements import CATEGORY_ORDER
+
+    p1 = _player(1, "Alice")
+    p1.achievements = '["press_start"]'  # 1 ачивка из "Старт карьеры" (всего 4)
+    db.add(p1)
+    await db.commit()
+
+    cb = _callback(1, "my_achievements")
+    await show_my_achievements(cb, db)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    category_rows = kb.inline_keyboard[:len(CATEGORY_ORDER)]
+    assert all(len(row) == 1 for row in category_rows)  # по одной кнопке в ряд
+    for i, category in enumerate(CATEGORY_ORDER):
+        btn = category_rows[i][0]
+        assert btn.text.startswith(category)
+        assert btn.callback_data == f"ach_cat_{i}"
+    assert category_rows[0][0].text.endswith("1/4")  # Старт карьеры: 1 из 4 получено
+
+    bottom_callbacks = [btn.callback_data for row in kb.inline_keyboard[len(CATEGORY_ORDER):] for btn in row]
+    assert bottom_callbacks == ["menu_stats", "back_to_menu"]
+
+
+async def test_player_achievements_toc_buttons_use_pach_prefix(db):
+    from bot.handlers.profile import show_player_achievements
+    from bot.services.achievements import CATEGORY_ORDER
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.commit()
+
+    cb = _callback(1, f"player_achievements_{p2.id}")
+    await show_player_achievements(cb, db)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    category_rows = kb.inline_keyboard[:len(CATEGORY_ORDER)]
+    assert category_rows[0][0].callback_data == f"pach_{p2.id}_0"
+
+    bottom_row = kb.inline_keyboard[len(CATEGORY_ORDER)]
+    assert bottom_row[0].callback_data == f"player_profile_{p2.id}"
+
+
+# ── Экран категории ───────────────────────────────────────────────────────────
+
+async def test_achievement_category_header_shows_progress(db):
+    from bot.services.achievements import CAT_START
+
+    p1 = _player(1, "Alice")
+    p1.achievements = '["press_start"]'
+    db.add(p1)
+    await db.commit()
+
+    cb = await _open_my_category(db, CAT_START)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert f"<b>{CAT_START}</b>  (1 из 4)" in text
+
+
+async def test_achievement_category_only_shows_own_category_achievements(db):
+    """Экран категории «Старт карьеры» не содержит ачивки из других категорий."""
+    from bot.services.achievements import CAT_START
+
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.commit()
+
+    cb = await _open_my_category(db, CAT_START)
+
+    text = cb.message.edit_text.call_args[0][0]
+    # ачивки "Старт карьеры" (не скрытые) — есть
+    assert "Я только посмотреть" in text
+    assert "Новичкам везёт" in text
+    # ачивка из другой категории ("Объём и вехи") — нет
+    assert "Стукнул полтинник" not in text
+
+
+async def test_achievement_category_header_separated_from_entries(db):
+    """Заголовок категории отбит от списка пустой строкой, а не идёт слитно."""
+    from bot.services.achievements import CAT_START
+
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.commit()
+
+    cb = await _open_my_category(db, CAT_START)
+
+    text = cb.message.edit_text.call_args[0][0]
+    header = text.split("\n", 1)[0]
+    assert header.startswith(f"<b>{CAT_START}</b>")
+    rest = text[len(header):]
+    assert rest.startswith("\n\n")  # пустая строка перед первым пунктом
+
+
+async def test_achievement_category_entries_separated_by_blank_line(db):
+    from bot.services.achievements import CAT_START
+
+    p1 = _player(1, "Alice")
+    p1.achievements = '["press_start", "first_blood"]'
+    db.add(p1)
+    await db.commit()
+
+    cb = await _open_my_category(db, CAT_START)
+
+    text = cb.message.edit_text.call_args[0][0]
+    assert "\n\n✅" in text  # два заработанных пункта разделены пустой строкой
+
+
+async def test_achievement_category_back_button_goes_to_own_toc(db):
+    from bot.services.achievements import CAT_START
+
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.commit()
+
+    cb = await _open_my_category(db, CAT_START)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    assert kb.inline_keyboard[0][0].callback_data == "my_achievements"
+
+
+async def test_achievement_category_back_button_goes_to_player_toc(db):
+    from bot.handlers.profile import show_player_achievement_category
+    from bot.services.achievements import CAT_START
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.commit()
+
+    cb = _callback(1, f"pach_{p2.id}_{_cat_idx(CAT_START)}")
+    await show_player_achievement_category(cb, db)
+
+    kb = cb.message.edit_text.call_args.kwargs["reply_markup"]
+    assert kb.inline_keyboard[0][0].callback_data == f"player_achievements_{p2.id}"
+
+
+# ── Скрытые ачивки: незаработанные не раскрывают имя/условие ───────────────────
+
+async def test_hidden_achievement_masked_when_locked(db):
+    """Незаработанная скрытая ачивка показывается как '🔒 ???', без имени и условия —
+    проверено по одной ачивке на каждую из трёх её категорий."""
+    from bot.services.achievements import CAT_MILESTONES, CAT_SPECIAL, CAT_STREAKS
+
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.commit()
+
+    for category, hidden_name in [
+        (CAT_MILESTONES, "Король ночи"),
+        (CAT_SPECIAL, "Вынес терминатора"),
+        (CAT_STREAKS, "Такова жись"),
+    ]:
+        cb = await _open_my_category(db, category)
+        text = cb.message.edit_text.call_args[0][0]
+        assert "🔒 ???" in text
+        assert hidden_name not in text
 
 
 async def test_hidden_achievement_revealed_when_earned(db):
     """Заработанная скрытая ачивка показывается полностью, как обычная."""
-    from bot.handlers.profile import show_my_achievements
+    from bot.services.achievements import CAT_MILESTONES
 
     p1 = _player(1, "Alice")
     p1.achievements = '["night_king"]'
     db.add(p1)
     await db.commit()
 
-    cb = _callback(1, "my_achievements")
-    await show_my_achievements(cb, db)
+    cb = await _open_my_category(db, CAT_MILESTONES)
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Король ночи" in text
     assert "✅" in text
 
 
-# ── Отступы между пунктами достижений (v2.98.0) ─────────────────────────────────
-
-def test_render_achievements_has_blank_line_between_entries():
-    """Пустая строка между КАЖДЫМ пунктом внутри категории, не только между
-    категориями — плотный список из 43 строк читался тяжело даже по категориям."""
-    from bot.handlers.profile import _render_achievements
-    from bot.services.achievements import ACHIEVEMENTS_LIST
-
-    earned = [a.id for a in ACHIEVEMENTS_LIST[:3]]  # первые 3 из одной категории (Старт карьеры)
-    text = _render_achievements(earned, "Мои достижения")
-
-    # Три подряд заработанные ачивки из "Старт карьеры" должны быть разделены
-    # пустыми строками (двойной перевод строки), а не идтиплотно одна за другой.
-    assert "\n\n✅" in text
-
-
-def test_render_achievements_category_header_stands_out_from_entries():
-    """Заголовок категории отбит двойной пустой строкой сверху (v2.99.0) —
-    с одинарной он визуально не отличался от обычного разрыва между пунктами,
-    и разделы («Старт карьеры», «Серии» и т.д.) сливались друг с другом."""
-    from bot.handlers.profile import _render_achievements
+def test_render_achievement_category_stays_under_telegram_limit():
+    """Худший случай — ВСЕ ачивки заработаны, каждая строка развёрнута с
+    именем и условием — теперь проверяется НА КАЖДУЮ КАТЕГОРИЮ по отдельности
+    (самая крупная — «Объём и вехи», 20 ачивок), а не на весь список из 59
+    сразу, как было до v2.133.0. Иначе edit_text здесь упадёт с ошибкой
+    Telegram API, а этот хендлер (в отличие от admin._send) не режет текст."""
+    from bot.handlers.profile import _render_achievement_category
     from bot.services.achievements import ACHIEVEMENTS_LIST, CATEGORY_ORDER
 
-    earned = [a.id for a in ACHIEVEMENTS_LIST]  # все категории непустые
-    text = _render_achievements(earned, "Мои достижения")
-
-    second_category = CATEGORY_ORDER[1]
-    header = f"<b>{second_category}</b>"
-    idx = text.index(header)
-    # перед вторым (и далее) заголовком — двойной перевод строки, а не одинарный,
-    # как между обычными пунктами
-    assert text[idx - 3 : idx] == "\n\n\n"
-
-
-def test_render_achievements_stays_under_telegram_limit():
-    """Худший случай (все ачивки заработаны — каждая строка развёрнута с
-    именем и условием) укладывается в лимит Telegram на одно сообщение (4096
-    символов) с запасом — иначе edit_text здесь упадёт с ошибкой Telegram API,
-    а этот хендлер (в отличие от admin._send) не режет текст на части."""
-    from bot.handlers.profile import _render_achievements
-    from bot.services.achievements import ACHIEVEMENTS_LIST
-
     earned_all = [a.id for a in ACHIEVEMENTS_LIST]
-    text = _render_achievements(earned_all, "Мои достижения")
-    assert len(text) < 4096
+    for category in CATEGORY_ORDER:
+        text = _render_achievement_category(earned_all, category)
+        assert len(text) < 4096, f"категория {category!r}: {len(text)} символов"
 
 
 async def test_non_hidden_locked_achievement_still_shown(db):
     """Обычная (не скрытая) незаработанная ачивка по-прежнему показывает имя и условие."""
-    from bot.handlers.profile import show_my_achievements
+    from bot.services.achievements import CAT_MILESTONES
 
     p1 = _player(1, "Alice")
     db.add(p1)
     await db.commit()
 
-    cb = _callback(1, "my_achievements")
-    await show_my_achievements(cb, db)
+    cb = await _open_my_category(db, CAT_MILESTONES)
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Стукнул полтинник" in text  # обычная счётная ачивка, не скрытая
 
 
 async def test_fatality_no_sweat_dominator_masked_when_locked(db):
-    """Три ситуативных ачивки (fatality/no_sweat/dominator) скрыты, пока не заработаны —
+    """Три ситуативные ачивки (fatality/no_sweat/dominator) скрыты, пока не заработаны —
     того же характера, что уже скрытые Феникс/Терминатор/Такова жись."""
-    from bot.handlers.profile import show_my_achievements
+    from bot.services.achievements import CAT_SPECIAL, CAT_STREAKS
 
     p1 = _player(1, "Alice")
     db.add(p1)
     await db.commit()
 
-    cb = _callback(1, "my_achievements")
-    await show_my_achievements(cb, db)
+    cb_special = await _open_my_category(db, CAT_SPECIAL)
+    text_special = cb_special.message.edit_text.call_args[0][0]
+    assert "Фаталити" not in text_special
+    assert "Даже не вспотел" not in text_special
 
-    text = cb.message.edit_text.call_args[0][0]
-    assert "Фаталити" not in text
-    assert "Даже не вспотел" not in text
-    assert "То что мертво" not in text
+    cb_streaks = await _open_my_category(db, CAT_STREAKS)
+    text_streaks = cb_streaks.message.edit_text.call_args[0][0]
+    assert "То что мертво" not in text_streaks
 
 
 async def test_fatality_no_sweat_dominator_revealed_when_earned(db):
     """Заработанные fatality/no_sweat/dominator показываются полностью."""
-    from bot.handlers.profile import show_my_achievements
+    from bot.services.achievements import CAT_SPECIAL, CAT_STREAKS
 
     p1 = _player(1, "Alice")
     p1.achievements = '["fatality", "no_sweat", "dominator"]'
     db.add(p1)
     await db.commit()
 
-    cb = _callback(1, "my_achievements")
-    await show_my_achievements(cb, db)
+    cb_special = await _open_my_category(db, CAT_SPECIAL)
+    text_special = cb_special.message.edit_text.call_args[0][0]
+    assert "Фаталити" in text_special
+    assert "Даже не вспотел" in text_special
+
+    cb_streaks = await _open_my_category(db, CAT_STREAKS)
+    text_streaks = cb_streaks.message.edit_text.call_args[0][0]
+    assert "То что мертво" in text_streaks
+
+
+# ── Хендлеры категорий: свой/чужой экран, некорректные данные ───────────────────
+
+async def test_my_achievement_category_invalid_index_shows_alert(db):
+    from bot.handlers.profile import show_my_achievement_category
+
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.commit()
+
+    cb = _callback(1, "ach_cat_999")
+    await show_my_achievement_category(cb, db)
+
+    cb.answer.assert_awaited_once()
+    assert cb.answer.await_args.kwargs.get("show_alert") is True
+    cb.message.edit_text.assert_not_called()
+
+
+async def test_my_achievement_category_no_player_prompts_start(db):
+    from bot.handlers.profile import show_my_achievement_category
+    from bot.services.achievements import CAT_START
+
+    cb = _callback(1, f"ach_cat_{_cat_idx(CAT_START)}")
+    await show_my_achievement_category(cb, db)
+
+    cb.answer.assert_awaited_once_with("Сначала напиши /start", show_alert=True)
+    cb.message.edit_text.assert_not_called()
+
+
+async def test_player_achievement_category_shown(db):
+    from bot.handlers.profile import show_player_achievement_category
+    from bot.services.achievements import CAT_START
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    p2.achievements = '["press_start"]'
+    db.add_all([p1, p2])
+    await db.commit()
+
+    cb = _callback(1, f"pach_{p2.id}_{_cat_idx(CAT_START)}")
+    await show_player_achievement_category(cb, db)
 
     text = cb.message.edit_text.call_args[0][0]
-    assert "Фаталити" in text
-    assert "Даже не вспотел" in text
-    assert "То что мертво" in text
+    assert f"<b>{CAT_START}</b>" in text
+    assert "✅" in text  # press_start заработан у Bob
+
+
+async def test_player_achievement_category_invalid_index_shows_alert(db):
+    from bot.handlers.profile import show_player_achievement_category
+
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.commit()
+
+    cb = _callback(1, f"pach_{p2.id}_999")
+    await show_player_achievement_category(cb, db)
+
+    cb.answer.assert_awaited_once()
+    assert cb.answer.await_args.kwargs.get("show_alert") is True
+    cb.message.edit_text.assert_not_called()
+
+
+async def test_player_achievement_category_unknown_player_shows_alert(db):
+    from bot.handlers.profile import show_player_achievement_category
+    from bot.services.achievements import CAT_START
+
+    p1 = _player(1, "Alice")
+    db.add(p1)
+    await db.commit()
+
+    cb = _callback(1, f"pach_999_{_cat_idx(CAT_START)}")
+    await show_player_achievement_category(cb, db)
+
+    cb.answer.assert_awaited_once_with("Игрок не найден.", show_alert=True)
+    cb.message.edit_text.assert_not_called()
 
 
 def test_fatality_dominator_not_in_achievement_progress_whitelist():

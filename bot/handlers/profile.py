@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Player
 from bot.keyboards.inline import (
+    achievement_category_kb,
     achievements_kb,
     back_to_stats_kb,
     player_achievements_kb,
@@ -559,51 +560,58 @@ async def show_what_if(callback: CallbackQuery, session: AsyncSession):
 
 # ── Achievements ──────────────────────────────────────────────────────────────
 
-def _render_achievements(earned_ids: list[str], title: str) -> str:
-    """Формирует текст экрана достижений, сгруппированный по категориям.
+def _achievement_category_progress(earned_ids: list[str]) -> list[tuple[str, int, int]]:
+    """(категория, получено, всего) для каждой категории из CATEGORY_ORDER —
+    общее для текста оглавления (пока не используется напрямую) и кнопок
+    категорий (achievements_kb/player_achievements_kb, inline.py)."""
+    earned_set = set(earned_ids)
+    result = []
+    for category in CATEGORY_ORDER:
+        achs = [a for a in ACHIEVEMENTS_LIST if a.category == category]
+        earned_count = sum(1 for a in achs if a.id in earned_set)
+        result.append((category, earned_count, len(achs)))
+    return result
 
-    Внутри каждой категории — сначала полученные (✅, в порядке ACHIEVEMENTS_LIST),
-    потом невыполненные (🔒). Плоский список 30+ пунктов подряд читается как
-    нечитаемая простыня — тот же принцип, что уже применён к «Статистике»
-    (_render_stats_lines) и «Рекордам клуба» (leaderboard.py, v2.73.0).
 
-    Пустая строка между КАЖДЫМ пунктом (не только между категориями, v2.98.0) —
-    по просьбе пользователя после живого скриншота прод-экрана: плотный список
-    из 43 длинных строк (имя + условие) читался тяжело даже разбитым на 6
-    категорий.
+def _render_achievements_toc(earned_ids: list[str], title: str) -> str:
+    """Оглавление экрана достижений — только заголовок с общим счётом.
 
-    Заголовок категории отбит ДВУМЯ пустыми строками сверху и одной снизу
-    (v2.99.0) — с одинарным отступом заголовок визуально не отличался от
-    обычного разрыва между пунктами и разделы «сливались» друг с другом.
-
-    Стоит копейки по длине (несколько лишних '\\n', не повтор текста) — даже
-    в худшем случае (все 43 заработаны, у каждой строки развёрнутое
-    имя+условие) укладывается в лимит Telegram на сообщение (4096 символов)
-    с запасом, см. test_render_achievements_stays_under_telegram_limit.
+    Список категорий больше не в тексте (v2.133.0, редизайн этапа 2 дорожной
+    карты) — он живёт на кнопках (achievements_kb/player_achievements_kb),
+    чтобы не дублировать одну и ту же цифру в тексте и на кнопке. Сами
+    ачивки — на отдельном экране категории (_render_achievement_category).
     """
     total = len(ACHIEVEMENTS_LIST)
     earned_set = set(earned_ids)
     count = len([a for a in ACHIEVEMENTS_LIST if a.id in earned_set])
-    lines = [f"🏅 <b>{title}</b>  ({count} из {total})"]
+    return f"🏅 <b>{title}</b>  ({count} из {total})"
 
-    by_category: dict[str, list] = {}
-    for a in ACHIEVEMENTS_LIST:
-        by_category.setdefault(a.category, []).append(a)
 
-    for category in CATEGORY_ORDER:
-        achs = by_category.get(category, [])
-        if not achs:
-            continue
-        lines.append(f"\n\n<b>{category}</b>\n")
-        entries = []
-        for a in sorted(achs, key=lambda a: a.id not in earned_set):
-            if a.id in earned_set:
-                entries.append(f"✅ {a.emoji} <b>{a.name}</b> — <i>{a.desc}</i>")
-            elif a.hidden:
-                entries.append("🔒 ???")
-            else:
-                entries.append(f"🔒 {a.emoji} {a.name} — <i>{a.desc}</i>")
-        lines.append("\n\n".join(entries))
+def _render_achievement_category(earned_ids: list[str], category: str) -> str:
+    """Текст экрана ОДНОЙ категории — список её ачивок (сначала ✅ полученные,
+    потом 🔒 невыполненные; скрытые неполученные — «🔒 ???»).
+
+    Раньше (до v2.133.0) весь список из 6 категорий уходил одним сообщением
+    и трижды подряд упирался в лимит Telegram (4096 символов) — лечили
+    обрезкой описаний ачивок. Теперь лимит проверяется НА КАТЕГОРИЮ (см.
+    test_render_achievement_category_stays_under_telegram_limit), а не на
+    весь список сразу — самая крупная категория («Объём и вехи», 20 ачивок)
+    всё равно намного меньше прежнего 59-пунктового списка, поэтому
+    полные описания вернули без урезания."""
+    earned_set = set(earned_ids)
+    achs = [a for a in ACHIEVEMENTS_LIST if a.category == category]
+    earned_count = sum(1 for a in achs if a.id in earned_set)
+
+    lines = [f"<b>{category}</b>  ({earned_count} из {len(achs)})", ""]
+    entries = []
+    for a in sorted(achs, key=lambda a: a.id not in earned_set):
+        if a.id in earned_set:
+            entries.append(f"✅ {a.emoji} <b>{a.name}</b> — <i>{a.desc}</i>")
+        elif a.hidden:
+            entries.append("🔒 ???")
+        else:
+            entries.append(f"🔒 {a.emoji} {a.name} — <i>{a.desc}</i>")
+    lines.append("\n\n".join(entries))
     return "\n".join(lines)
 
 
@@ -615,8 +623,9 @@ async def show_my_achievements(callback: CallbackQuery, session: AsyncSession):
         return
     await callback.answer()
     earned = get_achievements(player)
-    text = _render_achievements(earned, "Мои достижения")
-    await callback.message.edit_text(text, reply_markup=achievements_kb())
+    text = _render_achievements_toc(earned, "Мои достижения")
+    progress = _achievement_category_progress(earned)
+    await callback.message.edit_text(text, reply_markup=achievements_kb(progress))
 
 
 @router.callback_query(F.data.startswith("player_achievements_"))
@@ -633,8 +642,53 @@ async def show_player_achievements(callback: CallbackQuery, session: AsyncSessio
         return
     await callback.answer()
     earned = get_achievements(player)
-    text = _render_achievements(earned, f"Достижения — {h(player.display_name)}")
+    text = _render_achievements_toc(earned, f"Достижения — {h(player.display_name)}")
+    progress = _achievement_category_progress(earned)
     await callback.message.edit_text(
         text,
-        reply_markup=player_achievements_kb(target_id),
+        reply_markup=player_achievements_kb(target_id, progress),
     )
+
+
+@router.callback_query(F.data.startswith("ach_cat_"))
+async def show_my_achievement_category(callback: CallbackQuery, session: AsyncSession):
+    """Экран ОДНОЙ категории своих достижений — по кнопке с оглавления."""
+    player = await get_player(session, callback.from_user.id)
+    if not player:
+        await callback.answer("Сначала напиши /start", show_alert=True)
+        return
+    try:
+        category = CATEGORY_ORDER[int(callback.data.removeprefix("ach_cat_"))]
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
+    await callback.answer()
+    earned = get_achievements(player)
+    text = _render_achievement_category(earned, category)
+    await callback.message.edit_text(text, reply_markup=achievement_category_kb())
+
+
+@router.callback_query(F.data.startswith("pach_"))
+async def show_player_achievement_category(callback: CallbackQuery, session: AsyncSession):
+    """Экран ОДНОЙ категории достижений другого игрока — по кнопке с его оглавления.
+
+    callback_data: pach_{player_id}_{индекс категории в CATEGORY_ORDER}. Не
+    начинается с "player_achievements_", чтобы не попасть под startswith
+    хендлера оглавления выше."""
+    raw = callback.data.removeprefix("pach_")
+    try:
+        player_id_str, idx_str = raw.rsplit("_", 1)
+        target_id = int(player_id_str)
+        category = CATEGORY_ORDER[int(idx_str)]
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
+    tp_r = await session.execute(select(Player).where(Player.id == target_id))
+    player = tp_r.scalar_one_or_none()
+    if not player:
+        await callback.answer("Игрок не найден.", show_alert=True)
+        return
+    await callback.answer()
+    earned = get_achievements(player)
+    text = _render_achievement_category(earned, category)
+    await callback.message.edit_text(text, reply_markup=achievement_category_kb(target_id))
