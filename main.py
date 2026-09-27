@@ -26,7 +26,7 @@ from bot.handlers.leaderboard import router as leaderboard_router
 from bot.handlers.match_result import router as match_result_router
 from bot.handlers.profile import router as profile_router
 from bot.handlers.start import router as start_router
-from bot.middleware import DatabaseMiddleware
+from bot.middleware import DatabaseMiddleware, UsageMiddleware
 from bot.scheduler import setup_scheduler
 
 logging.basicConfig(
@@ -88,6 +88,10 @@ async def main() -> None:
     dp = Dispatcher(storage=MemoryStorage())
 
     dp.update.middleware(DatabaseMiddleware(async_session))
+    # Пассивный счётчик открытий экранов (этап 1 дорожной карты) — своя
+    # сессия, отдельная от DatabaseMiddleware выше, см. bot/middleware.py.
+    dp.callback_query.middleware(UsageMiddleware("callback"))
+    dp.message.middleware(UsageMiddleware("command"))
 
     dp.error.register(on_telegram_bad_request, ExceptionTypeFilter(TelegramBadRequest))
     dp.error.register(on_telegram_rate_limit, ExceptionTypeFilter(TelegramRetryAfter))

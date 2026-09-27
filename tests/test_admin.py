@@ -1,11 +1,11 @@
-"""Тесты /dbstats и разбиения длинных сообщений в bot/handlers/admin.py."""
-from datetime import datetime
+"""Тесты /dbstats, /usage и разбиения длинных сообщений в bot/handlers/admin.py."""
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import bot.handlers.admin as admin_module
-from bot.db.models import Match, MatchStatus
-from bot.handlers.admin import _SEND_CHUNK, _send, cmd_backup, cmd_dbstats
+from bot.db.models import Match, MatchStatus, UsageEvent
+from bot.handlers.admin import _SEND_CHUNK, _send, cmd_backup, cmd_dbstats, cmd_usage
 from tests.conftest import _player
 
 
@@ -147,3 +147,65 @@ async def test_backup_missing_file_does_not_crash(monkeypatch):
     bot.send_document.assert_not_called()
     msg.answer.assert_awaited_once()
     assert "не найден" in msg.answer.await_args.args[0]
+
+
+# ── /usage ─────────────────────────────────────────────────────────────────────
+
+async def test_usage_not_admin_does_nothing(db, monkeypatch):
+    monkeypatch.setattr(admin_module, "ADMIN_ID", 1)
+    msg = _message(2)  # не админ
+    await cmd_usage(msg, db)
+    msg.answer.assert_not_called()
+
+
+async def test_usage_no_data_yet(db, monkeypatch):
+    monkeypatch.setattr(admin_module, "ADMIN_ID", 1)
+    msg = _message(1)
+    await cmd_usage(msg, db)
+    msg.answer.assert_awaited_once()
+    assert "Данных пока нет" in msg.answer.await_args.args[0]
+
+
+async def test_usage_aggregates_and_sorts_by_opens(db, monkeypatch):
+    """Больше открытий — выше в списке; число разных игроков и «человеческое»
+    название экрана (не сырой callback_data) — тоже в строке."""
+    monkeypatch.setattr(admin_module, "ADMIN_ID", 1)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.add_all([
+        UsageEvent(user_id=1, action="menu_stats", created_at=now),
+        UsageEvent(user_id=2, action="menu_stats", created_at=now),
+        UsageEvent(user_id=1, action="player_profile", created_at=now),
+    ])
+    await db.commit()
+
+    msg = _message(1)
+    await cmd_usage(msg, db)
+
+    text = msg.answer.await_args.args[0]
+    assert text.index("Статистика") < text.index("Профиль игрока")
+    assert "2 открытия" in text
+    assert "2 игрока" in text
+    assert "Всего событий: <b>3</b>" in text
+
+
+async def test_usage_excludes_events_older_than_30_days(db, monkeypatch):
+    monkeypatch.setattr(admin_module, "ADMIN_ID", 1)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.add(UsageEvent(user_id=1, action="menu_stats", created_at=now - timedelta(days=31)))
+    await db.commit()
+
+    msg = _message(1)
+    await cmd_usage(msg, db)
+    assert "Данных пока нет" in msg.answer.await_args.args[0]
+
+
+async def test_usage_unknown_action_shows_raw_name(db, monkeypatch):
+    """Экран, ещё не вписанный в ACTION_LABELS, — техническим именем, а не молча."""
+    monkeypatch.setattr(admin_module, "ADMIN_ID", 1)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.add(UsageEvent(user_id=1, action="brand_new_screen", created_at=now))
+    await db.commit()
+
+    msg = _message(1)
+    await cmd_usage(msg, db)
+    assert "brand_new_screen" in msg.answer.await_args.args[0]

@@ -4,21 +4,23 @@
 /dbstats  — анализ начислений рейтинга по всей БД
 /myid     — показать свой Telegram ID (для настройки ADMIN_ID)
 /backup   — снять бэкап БД по запросу, без ожидания ежемесячной джобы
+/usage    — какие экраны реально открывают (счётчик, этап 1 дорожной карты)
 """
 import json
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import escape as h
 
 from aiogram import Bot, Router
 from aiogram.filters import Command
 from aiogram.types import Message
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import Match, MatchStatus, Player
+from bot.db.models import Match, MatchStatus, Player, UsageEvent
 from bot.scheduler import send_backup_file
-from bot.utils import MSK_OFFSET, env_int
+from bot.services.usage import action_label
+from bot.utils import MSK_OFFSET, env_int, pluralize_opens, pluralize_players
 
 router = Router()
 
@@ -82,6 +84,53 @@ async def cmd_backup(message: Message, bot: Bot) -> None:
     ok = await send_backup_file(bot, message.chat.id, f"💾 Бэкап по запросу — {date_str}")
     if not ok:
         await message.answer("⚠️ Файл базы данных не найден.")
+
+
+# ── /usage ─────────────────────────────────────────────────────────────────────
+
+_USAGE_WINDOW_DAYS = 30
+
+
+@router.message(Command("usage"))
+async def cmd_usage(message: Message, session: AsyncSession) -> None:
+    """Отчёт по счётчику открытий экранов (этап 1 дорожной карты) — какие
+    экраны реально используют, за последние 30 дней. Данные копятся только
+    с момента выкатки этой команды — задним числом их нет."""
+    if not _is_admin(message):
+        return
+
+    period_start = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=_USAGE_WINDOW_DAYS)
+    r = await session.execute(
+        select(
+            UsageEvent.action,
+            func.count().label("opens"),
+            func.count(func.distinct(UsageEvent.user_id)).label("users"),
+            func.max(UsageEvent.created_at).label("last_at"),
+        )
+        .where(UsageEvent.created_at >= period_start)
+        .group_by(UsageEvent.action)
+        .order_by(func.count().desc())
+    )
+    rows = r.all()
+
+    header = f"📊 <b>Использование экранов</b> — за последние {_USAGE_WINDOW_DAYS} дней"
+    if not rows:
+        await message.answer(
+            f"{header}\n"
+            "Данных пока нет — счётчик считает только с момента выкатки этой команды."
+        )
+        return
+
+    total = sum(row.opens for row in rows)
+    lines = [header, f"Всего событий: <b>{total}</b>\n"]
+    for i, row in enumerate(rows, 1):
+        last_str = (row.last_at + MSK_OFFSET).strftime("%d.%m")
+        lines.append(
+            f"{i}. {h(action_label(row.action))} — "
+            f"{pluralize_opens(row.opens)}, {pluralize_players(row.users)}, "
+            f"последнее {last_str}"
+        )
+    await _send(message, "\n".join(lines))
 
 
 # ── /dbstats ──────────────────────────────────────────────────────────────────

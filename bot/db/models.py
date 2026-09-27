@@ -103,6 +103,23 @@ class AchievementEarned(Base):
     earned_at = Column(DateTime, nullable=True)
 
 
+class UsageEvent(Base):
+    """Пассивный счётчик открытий экранов (v2.132.0, этап 1 дорожной карты
+    в CLAUDE.md) — какие экраны реально открывают, чтобы позже (этап 4)
+    можно было убрать неиспользуемое. Пишется `UsageMiddleware` молча,
+    игроки ничего не видят и не замечают. Без FK на players — незарегистри-
+    рованный тоже может нажать кнопку. Питает команду /usage."""
+    __tablename__ = "usage_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    action = Column(String, nullable=False, index=True)  # normalize_action() — bot/services/usage.py
+    created_at = Column(
+        DateTime, nullable=False, index=True,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+
+
 class PersonalRecordEarned(Base):
     """История личных рекордов (v2.106.0). В отличие от ачивок метрику можно
     бить многократно за карьеру — поэтому не одна строка на (player_id,
