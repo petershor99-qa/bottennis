@@ -316,17 +316,20 @@ def year_vote_invite_kb() -> InlineKeyboardMarkup:
 
 
 def year_vote_bulletin_kb() -> InlineKeyboardMarkup:
-    """Клавиатура бюллетеня — по кнопке на номинацию, callback_data "yv_nom_{i}"
-    (i — индекс в YEAR_VOTE_NOMINATIONS)."""
+    """Клавиатура бюллетеня — по кнопке на номинацию, callback_data "yv_nom_{id}"
+    (id — стабильный строковый id номинации, НЕ позиционный индекс в
+    YEAR_VOTE_NOMINATIONS — список можно менять составом/порядком одной правкой,
+    а бюллетень уже разослан игрокам с зашитыми кнопками; индекс после такой
+    правки указывал бы уже на другую номинацию у тех, кто не обновил экран)."""
     b = InlineKeyboardBuilder()
-    for i, n in enumerate(YEAR_VOTE_NOMINATIONS):
-        b.row(InlineKeyboardButton(text=f"{n.emoji} {n.name}", callback_data=f"yv_nom_{i}"))
+    for n in YEAR_VOTE_NOMINATIONS:
+        b.row(InlineKeyboardButton(text=f"{n.emoji} {n.name}", callback_data=f"yv_nom_{n.id}"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
 
 
 def year_vote_nomination_kb(
-    nomination_idx: int, candidates: list, current_pick: int | None,
+    nomination_id: str, candidates: list, current_pick: int | None,
 ) -> InlineKeyboardMarkup:
     """Экран выбора кандидата в одной номинации. candidates — допущенные игроки
     (без самого голосующего), current_pick — id уже выбранного (если есть) —
@@ -336,7 +339,7 @@ def year_vote_nomination_kb(
         prefix = "✅ " if p.id == current_pick else ""
         b.row(InlineKeyboardButton(
             text=f"{prefix}{p.display_name}",
-            callback_data=f"yv_pick_{nomination_idx}_{p.id}",
+            callback_data=f"yv_pick_{nomination_id}_{p.id}",
         ))
     b.row(InlineKeyboardButton(text="« Назад к бюллетеню", callback_data="yv_open"))
     return b.as_markup()

@@ -14,8 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.db.models import Player
 from bot.keyboards.inline import year_vote_bulletin_kb, year_vote_nomination_kb
 from bot.services.year_vote import (
-    YEAR_VOTE_NOMINATIONS,
     get_eligible_player_ids,
+    get_nomination,
     get_nominees,
     get_voter_choices,
     is_voting_open,
@@ -28,9 +28,13 @@ from bot.utils import MSK_OFFSET, get_player
 router = Router()
 
 
-async def _guard(callback: CallbackQuery, session: AsyncSession) -> tuple[Player, int] | None:
-    """(игрок, год), если голосование сейчас открыто и игрок допущен — иначе
-    сама отвечает алертом на callback и возвращает None."""
+async def _guard(
+    callback: CallbackQuery, session: AsyncSession,
+) -> tuple[Player, int, set[int]] | None:
+    """(игрок, год, допущенные id года), если голосование сейчас открыто и
+    игрок допущен — иначе сама отвечает алертом на callback и возвращает None.
+    Допущенные id отдаются вызывающему, чтобы show_bulletin/show_nomination/
+    pick_nominee не пересчитывали их ещё раз через get_nominees на каждый тап."""
     player = await get_player(session, callback.from_user.id)
     if not player:
         await callback.answer("Сначала напиши /start", show_alert=True)
@@ -52,7 +56,7 @@ async def _guard(callback: CallbackQuery, session: AsyncSession) -> tuple[Player
         )
         return None
 
-    return player, year
+    return player, year, eligible_ids
 
 
 @router.callback_query(F.data == "yv_open")
@@ -60,10 +64,10 @@ async def show_bulletin(callback: CallbackQuery, session: AsyncSession):
     guard = await _guard(callback, session)
     if guard is None:
         return
-    player, year = guard
+    player, year, eligible_ids = guard
     await callback.answer()
 
-    candidates = await get_nominees(session, year, exclude_id=player.id)
+    candidates = await get_nominees(session, year, exclude_id=player.id, eligible_ids=eligible_ids)
     name_map = {p.id: p.display_name for p in candidates}
     choices = await get_voter_choices(session, year, player.id)
     text = render_bulletin(year, choices, name_map)
@@ -75,22 +79,21 @@ async def show_nomination(callback: CallbackQuery, session: AsyncSession):
     guard = await _guard(callback, session)
     if guard is None:
         return
-    player, year = guard
+    player, year, eligible_ids = guard
 
-    try:
-        idx = int(callback.data.removeprefix("yv_nom_"))
-        nomination = YEAR_VOTE_NOMINATIONS[idx]
-    except (ValueError, IndexError):
+    nomination_id = callback.data.removeprefix("yv_nom_")
+    nomination = get_nomination(nomination_id)
+    if nomination is None:
         await callback.answer("Некорректные данные.", show_alert=True)
         return
     await callback.answer()
 
-    candidates = await get_nominees(session, year, exclude_id=player.id)
+    candidates = await get_nominees(session, year, exclude_id=player.id, eligible_ids=eligible_ids)
     choices = await get_voter_choices(session, year, player.id)
     text = render_nomination_screen(nomination)
     await callback.message.edit_text(
         text,
-        reply_markup=year_vote_nomination_kb(idx, candidates, choices.get(nomination.id)),
+        reply_markup=year_vote_nomination_kb(nomination.id, candidates, choices.get(nomination.id)),
     )
 
 
@@ -99,19 +102,21 @@ async def pick_nominee(callback: CallbackQuery, session: AsyncSession):
     guard = await _guard(callback, session)
     if guard is None:
         return
-    player, year = guard
+    player, year, eligible_ids = guard
 
     raw = callback.data.removeprefix("yv_pick_")
     try:
-        idx_str, nominee_id_str = raw.split("_", 1)
-        idx = int(idx_str)
+        nomination_id, nominee_id_str = raw.rsplit("_", 1)
         nominee_id = int(nominee_id_str)
-        nomination = YEAR_VOTE_NOMINATIONS[idx]
-    except (ValueError, IndexError):
+    except ValueError:
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
+    nomination = get_nomination(nomination_id)
+    if nomination is None:
         await callback.answer("Некорректные данные.", show_alert=True)
         return
 
-    candidates = await get_nominees(session, year, exclude_id=player.id)
+    candidates = await get_nominees(session, year, exclude_id=player.id, eligible_ids=eligible_ids)
     if nominee_id not in {p.id for p in candidates}:
         # За себя (нет своей кнопки) или устаревшая клавиатура — не записываем.
         await callback.answer("Некорректные данные.", show_alert=True)
