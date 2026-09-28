@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from bot.db.models import AchievementEarned, Match, MatchStatus, Player
+from bot.db.models import AchievementEarned, ChampionReign, Match, MatchStatus, Player
 from bot.services.achievements import (
     BACKFILL_VERSION,
     backfill_achievements,
@@ -387,6 +387,29 @@ async def test_no_diplomat_with_only_4_draws(db):
     assert "diplomat" not in new
 
 
+# ── first_draw ────────────────────────────────────────────────────────────────
+
+async def test_first_draw_on_first_match(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _add_draw(db, p1, p2, dt=_ts(0))
+    new = await check_draw_achievements(db, p1, _DEFAULT_SETS, is_challenger=True)
+    assert "first_draw" in new
+
+
+async def test_no_first_draw_when_not_first_match(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _add_win(db, p1, p2, dt=_ts(0))
+    await _add_draw(db, p1, p2, dt=_ts(1))
+    new = await check_draw_achievements(db, p1, _DEFAULT_SETS, is_challenger=True)
+    assert "first_draw" not in new
+
+
 # ── revenge ────────────────────────────────────────────────────────────────────
 
 async def test_revenge_beats_last_defeater(db):
@@ -530,12 +553,16 @@ async def test_career_points_and_sets_perspective():
     )
     matches = [win, draw]
 
-    pts1, sets1 = _career_points_and_sets(matches, 1)
-    pts2, sets2 = _career_points_and_sets(matches, 2)
+    pts1, sets1, conceded1 = _career_points_and_sets(matches, 1)
+    pts2, sets2, conceded2 = _career_points_and_sets(matches, 2)
     # win: p1(winner-perspective)=11+8+11=30, sets_won=2; p2=5+11+9=25, sets_won=1
     # draw (challenger=p1): p1=11+9=20, sets_won=1; p2=9+11=20, sets_won=1
     assert (pts1, sets1) == (50, 3)
     assert (pts2, sets2) == (45, 2)
+    # Отданные очки — зеркало: то, что набрал один, ровно то отдал другой
+    # (оба матча ровно между этими двумя игроками, третьих нет).
+    assert conceded1 == pts2
+    assert conceded2 == pts1
 
 
 async def test_point_saver_awarded_at_4000_points(db):
@@ -1206,6 +1233,102 @@ async def test_no_punching_bag_after_49_losses(db):
     assert "punching_bag" not in new
 
 
+# ── unbreakable / tempered (v2.135.3 — достраивают лесенку рядом с punching_bag) ──
+
+async def test_unbreakable_after_150_losses(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _bulk_wins(db, p2, p1, 149)
+    new = await _do_loss(db, p2, p1, dt=_ts(149))
+    assert "unbreakable" in new
+    assert "tempered" not in new
+
+
+async def test_tempered_after_300_losses(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _bulk_wins(db, p2, p1, 299)
+    new = await _do_loss(db, p2, p1, dt=_ts(299))
+    assert "tempered" in new
+
+
+# ── club_school (Прошёл школу клуба — проиграл каждому хотя бы раз) ──────────────
+
+async def test_club_school_after_losing_to_everyone(db):
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    await _do_loss(db, p2, p1, dt=_ts(0))
+    new = await _do_loss(db, p3, p1, dt=_ts(1))
+    assert "club_school" in new
+
+
+async def test_no_club_school_if_one_opponent_never_beaten(db):
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    new = await _do_loss(db, p2, p1, dt=_ts(0))
+    assert "club_school" not in new
+
+
+# ── resilient / battle_tested / through_fire (очки, отданные сопернику) ─────────
+# Накапливаются независимо от исхода МАТЧА (как career_points) — можно отдать
+# много очков в проигранной партии даже победив в самом матче.
+
+async def test_resilient_at_4000_points_conceded_on_loss(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    big_sets = [{"w": 11, "l": 0}] * 2  # проигравший отдаёт 22 очка за матч
+    await _bulk_wins(db, p2, p1, 181, sets=big_sets)  # 181*22 = 3982
+    new = await _do_loss(db, p2, p1, sets=big_sets, dt=_ts(181))  # +22 = 4004
+    assert "resilient" in new
+    assert "battle_tested" not in new
+
+
+async def test_resilient_awarded_on_win_too(db):
+    """Отдать много очков сопернику можно и выиграв сам матч — метрика не
+    зависит от исхода матча, только от того, сколько очков в сумме отдано."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    sets = [{"w": 11, "l": 9}]  # победитель всё равно отдаёт 9 очков за матч
+    await _bulk_wins(db, p1, p2, 444, sets=sets)  # 444*9 = 3996
+    new = await _do_win(db, p1, p2, sets=sets, dt=_ts(444))  # +9 = 4005
+    assert "resilient" in new
+
+
+async def test_battle_tested_at_8000_points_conceded(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    big_sets = [{"w": 11, "l": 0}] * 2
+    await _bulk_wins(db, p2, p1, 363, sets=big_sets)  # 363*22 = 7986
+    new = await _do_loss(db, p2, p1, sets=big_sets, dt=_ts(363))  # +22 = 8008
+    assert "battle_tested" in new
+    assert "through_fire" not in new
+
+
+async def test_through_fire_at_12000_points_conceded(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    big_sets = [{"w": 11, "l": 0}] * 2
+    await _bulk_wins(db, p2, p1, 545, sets=big_sets)  # 545*22 = 11990
+    new = await _do_loss(db, p2, p1, sets=big_sets, dt=_ts(545))  # +22 = 12012
+    assert "through_fire" in new
+
+
 # ── personal_prey (Дичь — 10 поражений подряд от ОДНОГО соперника) ──────────────
 
 async def test_personal_prey_after_10_losses_to_same_opponent(db):
@@ -1515,6 +1638,135 @@ async def test_backfill_punching_bag(db):
 
     await backfill_achievements(db)
     assert "punching_bag" in get_achievements(p1)
+
+
+async def test_backfill_unbreakable_and_tempered(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    for i in range(300):
+        db.add(Match(
+            challenger_id=p2.id, challenged_id=p1.id,
+            status=MatchStatus.completed, winner_id=p2.id,
+            sets_data=_DEFAULT_SETS, completed_at=_ts(i),
+        ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    earned = get_achievements(p1)
+    assert "unbreakable" in earned
+    assert "tempered" in earned
+
+
+async def test_backfill_first_draw(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    db.add(Match(
+        challenger_id=p1.id, challenged_id=p2.id,
+        status=MatchStatus.completed, winner_id=None,
+        sets_data=_DEFAULT_SETS, completed_at=_ts(0),
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "first_draw" in get_achievements(p1)
+
+
+async def test_backfill_club_school(db):
+    p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+    db.add_all([p1, p2, p3])
+    await db.flush()
+
+    db.add(Match(
+        challenger_id=p2.id, challenged_id=p1.id,
+        status=MatchStatus.completed, winner_id=p2.id,
+        sets_data=_DEFAULT_SETS, completed_at=_ts(0),
+    ))
+    db.add(Match(
+        challenger_id=p3.id, challenged_id=p1.id,
+        status=MatchStatus.completed, winner_id=p3.id,
+        sets_data=_DEFAULT_SETS, completed_at=_ts(1),
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "club_school" in get_achievements(p1)
+
+
+async def test_backfill_points_conceded_milestones(db):
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    big_sets = [{"w": 11, "l": 0}] * 2  # p1 отдаёт 22 очка за матч
+    for i in range(182):
+        db.add(Match(
+            challenger_id=p2.id, challenged_id=p1.id,
+            status=MatchStatus.completed, winner_id=p2.id,
+            sets_data=big_sets, completed_at=_ts(i),
+        ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    assert "resilient" in get_achievements(p1)  # 182*22 = 4004
+
+
+async def test_backfill_fortress_and_guard_change(db):
+    """Одно правление с 3 защитами, закрытое поражением в боссфайте — старый
+    чемпион получает и 'fortress' (3 защиты подряд), и 'guard_change' (потерял
+    трон в бою), новый чемпион получает своё правление отдельно."""
+    old_champ, new_champ = _player(1, "OldChamp"), _player(2, "NewChamp")
+    db.add_all([old_champ, new_champ])
+    await db.flush()
+
+    reign_start = datetime(2026, 1, 1)
+    transfer_at = reign_start + timedelta(days=10)
+    db.add(ChampionReign(player_id=old_champ.id, started_at=reign_start, ended_at=transfer_at))
+    db.add(ChampionReign(player_id=new_champ.id, started_at=transfer_at, ended_at=None))
+
+    for i in range(3):
+        db.add(Match(
+            challenger_id=new_champ.id, challenged_id=old_champ.id,
+            status=MatchStatus.completed, winner_id=old_champ.id,
+            sets_data=_DEFAULT_SETS, is_boss_fight=True,
+            completed_at=reign_start + timedelta(days=i + 1),
+        ))
+    db.add(Match(
+        challenger_id=new_champ.id, challenged_id=old_champ.id,
+        status=MatchStatus.completed, winner_id=new_champ.id,
+        sets_data=_DEFAULT_SETS, is_boss_fight=True, completed_at=transfer_at,
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    old_earned = get_achievements(old_champ)
+    assert "fortress" in old_earned
+    assert "guard_change" in old_earned
+    assert "abdication" not in old_earned
+
+
+async def test_backfill_abdication_when_reign_closed_without_boss_fight(db):
+    champion, opponent = _player(1, "Champion"), _player(2, "Opponent")
+    db.add_all([champion, opponent])
+    await db.flush()
+
+    db.add(Match(
+        challenger_id=champion.id, challenged_id=opponent.id,
+        status=MatchStatus.completed, winner_id=champion.id,
+        sets_data=_DEFAULT_SETS, completed_at=_ts(0),
+    ))
+    db.add(ChampionReign(
+        player_id=champion.id, started_at=datetime(2026, 1, 1), ended_at=_ts(1),
+    ))
+    await db.flush()
+
+    await backfill_achievements(db)
+    earned = get_achievements(champion)
+    assert "abdication" in earned
+    assert "guard_change" not in earned
 
 
 async def test_backfill_personal_prey(db):
