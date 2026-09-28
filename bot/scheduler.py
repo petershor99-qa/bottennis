@@ -16,9 +16,12 @@ from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import busy_with_match_kb, year_vote_invite_kb
 from bot.services.stats import _compute_player_stats, _nearest_achievement_progress
 from bot.services.year_vote import (
+    YEAR_VOTE_CLOSE_AT,
+    YEAR_VOTE_OPEN_AT,
+    YEAR_VOTE_REMINDER_AT,
     compute_results,
     get_eligible_player_ids,
-    has_all_nominations_filled,
+    get_incomplete_voter_ids,
     render_results,
 )
 from bot.utils import (
@@ -28,7 +31,6 @@ from bot.utils import (
     compute_ranks,
     env_int,
     get_active_match,
-    get_career_matches,
     get_champion,
     get_match_counts,
     match_rating_delta,
@@ -160,6 +162,19 @@ def _biggest_swing(matches: list, name_map: dict) -> str | None:
 def _total_points(matches: list) -> int:
     """Суммарное число разыгранных очков (оба игрока, все партии) за период."""
     return sum((s["w"] + s["l"]) for m in matches if m.sets_data for s in m.sets_data)
+
+
+def _career_matches_by_player(all_completed: list) -> dict[int, list]:
+    """Группирует уже загруженные завершённые матчи КЛУБА по игроку — замена
+    N+1 отдельных get_career_matches(session, player.id) на игрока в
+    еженедельном/ежемесячном дайджесте (эффективность: одна выборка вместо
+    5-6). all_completed уже отсортирован desc(completed_at) вызывающим —
+    подсписки остаются в том же порядке, как и требует _compute_player_stats."""
+    by_player: dict[int, list] = {}
+    for m in all_completed:
+        for pid in (m.challenger_id, m.challenged_id):
+            by_player.setdefault(pid, []).append(m)
+    return by_player
 
 
 def _compute_player_form(matches: list) -> dict[int, list[str]]:
@@ -386,6 +401,16 @@ async def send_weekly_digest(bot: Bot) -> None:
             logger.info("Еженедельный дайджест: за неделю матчей не было, пропускаем")
             return
 
+        # Вся карьерная история клуба одним запросом — питает прогресс до
+        # ближайшей ачивки в личной шапке каждого игрока ниже (замена N+1
+        # отдельных get_career_matches() на игрока).
+        all_completed_r = await session.execute(
+            select(Match)
+            .where(Match.status == MatchStatus.completed)
+            .order_by(desc(Match.completed_at))
+        )
+        career_by_player = _career_matches_by_player(all_completed_r.scalars().all())
+
         # Матчи за предыдущие 4 недели — среднее для «пульса» клуба
         baseline_r = await session.execute(
             select(func.count()).select_from(Match)
@@ -514,14 +539,10 @@ async def send_weekly_digest(bot: Bot) -> None:
 
         # ── Персональные сообщения: личная шапка + общий клубный блок ───────────
         for player in players:
-            matches_result = await session.execute(
-                select(Match).where(
-                    or_(Match.challenger_id == player.id, Match.challenged_id == player.id),
-                    Match.status == MatchStatus.completed,
-                    Match.completed_at >= week_ago,
-                )
-            )
-            matches = matches_result.scalars().all()
+            matches = [
+                m for m in all_week_matches
+                if player.id in (m.challenger_id, m.challenged_id)
+            ]
 
             rank = rank_map.get(player.id)
             rank_suffix = f" — #{rank}" if rank else ""
@@ -550,7 +571,7 @@ async def send_weekly_digest(bot: Bot) -> None:
             # Прогресс до ближайшей незаработанной ачивки — та же логика, что и
             # в личной статистике (profile.py), просто раз в неделю напоминанием,
             # а не только по запросу на экране «Статистика».
-            career_matches = await get_career_matches(session, player.id)
+            career_matches = career_by_player.get(player.id, [])
             progress = _nearest_achievement_progress(
                 player, _compute_player_stats(player, career_matches), len(players)
             )
@@ -653,25 +674,14 @@ async def send_daily_summary(bot: Bot) -> None:
                 lines.append("")
                 lines.extend(growth_lines)
 
-        # Нагибатель дня — самая длинная серия побед за день
-        run_pid = None
-        run_best = 0
-        for pid, outcomes in player_form.items():
-            run = cur = 0
-            for o in outcomes:
-                if o == "🟩":
-                    cur += 1
-                    run = max(run, cur)
-                else:
-                    cur = 0
-            if run > run_best:
-                run_best = run
-                run_pid = pid
-        if run_pid and run_best >= 2:
-            lines.append(
-                f"\n🔥 Нагибатель дня — <b>{h(name_map.get(run_pid, '?'))}</b>: "
-                f"{pluralize_wins(run_best)} подряд"
-            )
+        # Нагибатель дня — самая длинная серия побед за день. Переиспользует
+        # общий _longest_streak() (уже применяется в неделе/месяце/квартале/
+        # годе) вместо отдельной инлайн-копии того же подсчёта — семантика
+        # идентична (лучший подряд идущий забег побед, любой не-выигрыш сбрасывает
+        # счётчик), формат строки совпадал уже до этой правки.
+        streak = _longest_streak(matches, name_map, "дня")
+        if streak:
+            lines.append(f"\n{streak}")
 
         # «Дуэль дня» (v2.128.0) — было просто «Чаще всего самбовались» с числом
         # матчей, без счёта между ними; добавлен взаимный счёт за день (тот же
@@ -822,6 +832,15 @@ async def send_monthly_summary(bot: Bot) -> None:
             logger.info("Итоги месяца %s: матчей не было, пропускаем", month_label)
             return
 
+        # Вся карьерная история клуба одним запросом — та же оптимизация, что
+        # в еженедельном дайджесте (замена N+1 get_career_matches() на игрока).
+        all_completed_r = await session.execute(
+            select(Match)
+            .where(Match.status == MatchStatus.completed)
+            .order_by(desc(Match.completed_at))
+        )
+        career_by_player = _career_matches_by_player(all_completed_r.scalars().all())
+
         players_r = await session.execute(select(Player))
         players = players_r.scalars().all()
         name_map = {p.id: p.display_name for p in players}
@@ -961,7 +980,7 @@ async def send_monthly_summary(bot: Bot) -> None:
                     f"({sign}{round(p_delta, 1)}){rank_suffix}\n"
                 )
 
-            career_matches = await get_career_matches(session, player.id)
+            career_matches = career_by_player.get(player.id, [])
             progress = _nearest_achievement_progress(
                 player, _compute_player_stats(player, career_matches), len(players)
             )
@@ -1315,7 +1334,10 @@ async def send_year_vote_reminders(bot: Bot) -> None:
         eligible_ids = await get_eligible_player_ids(session, year)
         if not eligible_ids:
             return
-        players_r = await session.execute(select(Player).where(Player.id.in_(eligible_ids)))
+        incomplete_ids = await get_incomplete_voter_ids(session, year, eligible_ids)
+        if not incomplete_ids:
+            return
+        players_r = await session.execute(select(Player).where(Player.id.in_(incomplete_ids)))
         players = players_r.scalars().all()
 
         text = (
@@ -1323,14 +1345,10 @@ async def send_year_vote_reminders(bot: Bot) -> None:
             "Закрытие — 30 декабря в 12:00. У тебя остались незаполненные "
             "номинации — успей закончить бюллетень."
         )
-        sent = 0
         for p in players:
-            if await has_all_nominations_filled(session, year, p.id):
-                continue
             await safe_send(bot, p.telegram_id, text, reply_markup=year_vote_invite_kb())
-            sent += 1
 
-    logger.info("Напоминание о голосовании за %d отправлено %d игрокам", year, sent)
+    logger.info("Напоминание о голосовании за %d отправлено %d игрокам", year, len(players))
 
 
 async def send_year_vote_results(bot: Bot) -> None:
@@ -1450,29 +1468,45 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         id="quarterly_summary",
     )
 
-    # Итоги года + результаты голосования — 30 декабря в 12:00 МСК, одной джобой
-    # (send_year_end_combo), чтобы порядок «сначала итоги, потом голосование»
-    # не зависел от того, в каком порядке APScheduler разбудит два триггера,
-    # совпавших по времени. Было 31 декабря 14:00 — сдвинуто в v2.134.0.
+    # Итоги года + результаты голосования — время берём из YEAR_VOTE_CLOSE_AT
+    # (year_vote.py) вместо повторения тех же чисел — момент закрытия
+    # голосования и момент send_year_end_combo по определению один и тот же
+    # (документировано там же), а не просто случайно совпадающие литералы.
+    # Одна джоба вместо двух триггеров на одну минуту, чтобы порядок «сначала
+    # итоги, потом голосование» не зависел от того, в каком порядке APScheduler
+    # разбудит два независимых триггера. Было 31 декабря 14:00 — сдвинуто в v2.134.0.
+    _close_month, _close_day, _close_hour, _close_minute = YEAR_VOTE_CLOSE_AT
     scheduler.add_job(
         send_year_end_combo,
-        CronTrigger(month=12, day=30, hour=12, minute=0, timezone=msk),
+        CronTrigger(
+            month=_close_month, day=_close_day, hour=_close_hour, minute=_close_minute,
+            timezone=msk,
+        ),
         args=[bot],
         id="yearly_summary",
     )
 
-    # Голосование за неформальные звания года — приглашение 21 декабря 10:00 МСК
+    # Голосование за неформальные звания года — приглашение, время из
+    # YEAR_VOTE_OPEN_AT (year_vote.py) — единый источник с is_voting_open().
+    _open_month, _open_day, _open_hour, _open_minute = YEAR_VOTE_OPEN_AT
     scheduler.add_job(
         send_year_vote_invitations,
-        CronTrigger(month=12, day=21, hour=10, minute=0, timezone=msk),
+        CronTrigger(
+            month=_open_month, day=_open_day, hour=_open_hour, minute=_open_minute,
+            timezone=msk,
+        ),
         args=[bot],
         id="year_vote_invite",
     )
 
-    # Голосование — напоминание не закончившим бюллетень, 29 декабря 10:00 МСК
+    # Голосование — напоминание не закончившим бюллетень, время из YEAR_VOTE_REMINDER_AT
+    _rem_month, _rem_day, _rem_hour, _rem_minute = YEAR_VOTE_REMINDER_AT
     scheduler.add_job(
         send_year_vote_reminders,
-        CronTrigger(month=12, day=29, hour=10, minute=0, timezone=msk),
+        CronTrigger(
+            month=_rem_month, day=_rem_day, hour=_rem_hour, minute=_rem_minute,
+            timezone=msk,
+        ),
         args=[bot],
         id="year_vote_reminder",
     )
