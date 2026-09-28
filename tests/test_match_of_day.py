@@ -6,6 +6,7 @@ from datetime import datetime
 from types import SimpleNamespace
 
 from bot.utils import (
+    _ORDINAL_FEM,
     BLOWOUT_PHRASES,
     CLOSE_DECIDER_FRAGMENTS,
     COMEBACK_OPENERS,
@@ -213,10 +214,35 @@ def test_report_marathon_only():
     m = make_match(sets, winner_id=1, rating_change=5.0)
     text = match_report(m, "Игрок")
     idx = _stable_pool_index(m.id, "marathon", len(MARATHON_FRAGMENTS))
-    fragment = MARATHON_FRAGMENTS[idx]
+    fragment = MARATHON_FRAGMENTS[idx].format(n=5, ord="пятой")
     expected = fragment[0].upper() + fragment[1:] + "."
     assert text == expected
     assert "влетел в яму" not in text and "провалил старт" not in text
+
+
+def test_report_marathon_uses_real_set_count_not_hardcoded_five():
+    """Регресс на баг, найденный пользователем на живом матче: matches с 6+
+    партиями (marathon триггерится от len(sets) >= 5, MAX_SETS в
+    match_result.py = 10) раньше всегда показывали «дошло до пятой»/«все 5
+    партий», даже если партий было реально 7. Текст обязан отражать реальное
+    число партий и правильное порядковое слово (см. _ORDINAL_FEM)."""
+    sets = [{"w": 11, "l": 9}] * 7
+    m = make_match(sets, winner_id=1, rating_change=5.0)
+    text = match_report(m, "Игрок")
+    assert "5" not in text
+    assert "пятой" not in text
+    assert "7" in text or "седьмой" in text
+    idx = _stable_pool_index(m.id, "marathon", len(MARATHON_FRAGMENTS))
+    fragment = MARATHON_FRAGMENTS[idx].format(n=7, ord=_ORDINAL_FEM[7])
+    expected = fragment[0].upper() + fragment[1:] + "."
+    assert text == expected
+
+
+def test_ordinal_fem_covers_full_max_sets_range():
+    """_ORDINAL_FEM должен покрывать весь диапазон, в котором может
+    сработать marathon: от 5 (порог триггера) до MAX_SETS=10 включительно."""
+    for n in range(5, 11):
+        assert n in _ORDINAL_FEM
 
 
 def test_report_deuce_decider_only():
@@ -256,7 +282,8 @@ def test_report_all_factors_combined():
     opener_idx = _stable_pool_index(m.id, "comeback", len(COMEBACK_OPENERS))
     opener = COMEBACK_OPENERS[opener_idx].format(name="Игрок")
     tail_fragments = [
-        MARATHON_FRAGMENTS[_stable_pool_index(m.id, "marathon", len(MARATHON_FRAGMENTS))],
+        MARATHON_FRAGMENTS[_stable_pool_index(m.id, "marathon", len(MARATHON_FRAGMENTS))]
+        .format(n=5, ord="пятой"),
         DEUCE_FRAGMENTS[_stable_pool_index(m.id, "deuce", len(DEUCE_FRAGMENTS))],
         UPSET_FRAGMENT_TEMPLATES[_stable_pool_index(m.id, "upset", len(UPSET_FRAGMENT_TEMPLATES))].format(delta=20.0),
     ]
