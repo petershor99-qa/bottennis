@@ -41,6 +41,19 @@ YEAR_VOTE_NOMINATIONS: list[YearVoteNomination] = [
 _NOMINATIONS_BY_ID = {n.id: n for n in YEAR_VOTE_NOMINATIONS}
 
 
+# Границы окна голосования (месяц, день, час, минута по МСК) — единственный
+# источник правды. Раньше открытие/закрытие/напоминание были захардкожены
+# трижды: здесь (is_voting_open) и дважды в scheduler.py (CronTrigger для
+# приглашения и для send_year_end_combo, время которого документировано как
+# "совпадает с закрытием голосования"). Три места, которые обязаны совпадать,
+# но ничем не связаны в коде — правка одного при забытом другом тихо
+# рассинхронила бы приглашение/закрытие/итоги года. Теперь scheduler.py
+# импортирует эти же константы вместо повторения чисел.
+YEAR_VOTE_OPEN_AT = (12, 21, 10, 0)  # (month, day, hour, minute)
+YEAR_VOTE_REMINDER_AT = (12, 29, 10, 0)
+YEAR_VOTE_CLOSE_AT = (12, 30, 12, 0)  # тем же временем идёт send_year_end_combo
+
+
 def get_nomination(nomination_id: str) -> YearVoteNomination | None:
     return _NOMINATIONS_BY_ID.get(nomination_id)
 
@@ -49,8 +62,10 @@ def is_voting_open(now_msk: datetime) -> bool:
     """Окно голосования: 21 декабря 10:00 МСК — 30 декабря 12:00 МСК (правая
     граница НЕ включена), целиком внутри одного календарного декабря — год
     голосования всегда совпадает с now_msk.year, кросс-годовой границы нет."""
-    start = now_msk.replace(month=12, day=21, hour=10, minute=0, second=0, microsecond=0)
-    end = now_msk.replace(month=12, day=30, hour=12, minute=0, second=0, microsecond=0)
+    om, od, oh, omin = YEAR_VOTE_OPEN_AT
+    cm, cd, ch, cmin = YEAR_VOTE_CLOSE_AT
+    start = now_msk.replace(month=om, day=od, hour=oh, minute=omin, second=0, microsecond=0)
+    end = now_msk.replace(month=cm, day=cd, hour=ch, minute=cmin, second=0, microsecond=0)
     return start <= now_msk < end
 
 
@@ -119,6 +134,31 @@ async def get_voter_choices(
 async def has_all_nominations_filled(session: AsyncSession, year: int, voter_id: int) -> bool:
     choices = await get_voter_choices(session, year, voter_id)
     return all(v is not None for v in choices.values())
+
+
+async def get_incomplete_voter_ids(
+    session: AsyncSession, year: int, eligible_ids: set[int],
+) -> set[int]:
+    """Из допущенных игроков — те, кто ЕЩЁ НЕ заполнил все 6 номинаций. Одним
+    запросом вместо has_all_nominations_filled() на каждого игрока (тот сам
+    по себе уже один SELECT на игрока) — было N+1 в send_year_vote_reminders,
+    на 5-6 игроках несущественно по цене, но неверно по конструкции: тот же
+    результат получается одним походом в БД."""
+    if not eligible_ids:
+        return set()
+    r = await session.execute(
+        select(YearVote.voter_id, YearVote.nomination).where(
+            YearVote.year == year, YearVote.voter_id.in_(eligible_ids),
+        )
+    )
+    filled: dict[int, set[str]] = {}
+    for voter_id, nomination in r.all():
+        filled.setdefault(voter_id, set()).add(nomination)
+    all_nomination_ids = {n.id for n in YEAR_VOTE_NOMINATIONS}
+    return {
+        pid for pid in eligible_ids
+        if filled.get(pid, set()) != all_nomination_ids
+    }
 
 
 async def set_vote(

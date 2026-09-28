@@ -1,19 +1,8 @@
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import (
-    JSON,
-    Boolean,
-    Column,
-    DateTime,
-    Enum,
-    Float,
-    ForeignKey,
-    Integer,
-    String,
-    UniqueConstraint,
-)
-from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy import JSON, Enum, ForeignKey, UniqueConstraint
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -30,17 +19,19 @@ class MatchStatus(enum.Enum):
 class Player(Base):
     __tablename__ = "players"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    telegram_id = Column(Integer, unique=True, nullable=False)
-    username = Column(String, nullable=True)
-    display_name = Column(String, nullable=False)
-    rating = Column(Float, default=1000.0, nullable=False)
-    peak_rating = Column(Float, nullable=True)   # максимальный рейтинг за всё время
-    achievements = Column(String, default="[]", nullable=True)  # JSON-список id заработанных ачивок
-    backfill_version = Column(Integer, default=0, nullable=True)  # версия последнего бэкфилла
-    is_champion = Column(Boolean, default=False, nullable=False)  # владелец 1-го места (босс-файт)
-    last_menu_message_id = Column(Integer, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    telegram_id: Mapped[int] = mapped_column(unique=True)
+    username: Mapped[str | None]
+    display_name: Mapped[str]
+    rating: Mapped[float] = mapped_column(default=1000.0)
+    peak_rating: Mapped[float | None]  # максимальный рейтинг за всё время
+    achievements: Mapped[str | None] = mapped_column(default="[]")  # JSON-список id заработанных ачивок
+    backfill_version: Mapped[int | None] = mapped_column(default=0)  # версия последнего бэкфилла
+    is_champion: Mapped[bool] = mapped_column(default=False)  # владелец 1-го места (босс-файт)
+    last_menu_message_id: Mapped[int | None]
+    created_at: Mapped[datetime | None] = mapped_column(
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
 
     challenges_sent = relationship(
         "Match", foreign_keys="Match.challenger_id", back_populates="challenger"
@@ -53,19 +44,21 @@ class Player(Base):
 class Match(Base):
     __tablename__ = "matches"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    challenger_id = Column(Integer, ForeignKey("players.id"), nullable=False)
-    challenged_id = Column(Integer, ForeignKey("players.id"), nullable=False)
-    status = Column(Enum(MatchStatus), default=MatchStatus.pending, nullable=False)
-    winner_id = Column(Integer, ForeignKey("players.id"), nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    challenger_id: Mapped[int] = mapped_column(ForeignKey("players.id"))
+    challenged_id: Mapped[int] = mapped_column(ForeignKey("players.id"))
+    status: Mapped[MatchStatus] = mapped_column(Enum(MatchStatus), default=MatchStatus.pending)
+    winner_id: Mapped[int | None] = mapped_column(ForeignKey("players.id"))
     # [{"w": 11, "l": 7}, ...] — winner's score : loser's score per set
-    sets_data = Column(JSON, nullable=True)
-    rating_change = Column(Float, nullable=True)
-    reminder_sent = Column(Boolean, default=False, nullable=False)
-    is_boss_fight = Column(Boolean, default=False, nullable=False)  # ×2 к дельте, ничья запрещена
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
-    accepted_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
+    sets_data: Mapped[list[dict] | None] = mapped_column(JSON)
+    rating_change: Mapped[float | None]
+    reminder_sent: Mapped[bool] = mapped_column(default=False)
+    is_boss_fight: Mapped[bool] = mapped_column(default=False)  # ×2 к дельте, ничья запрещена
+    created_at: Mapped[datetime | None] = mapped_column(
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+    accepted_at: Mapped[datetime | None]
+    completed_at: Mapped[datetime | None]
 
     challenger = relationship(
         "Player", foreign_keys=[challenger_id], back_populates="challenges_sent"
@@ -87,10 +80,10 @@ class ChampionReign(Base):
     """
     __tablename__ = "champion_reigns"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
-    started_at = Column(DateTime, nullable=False)
-    ended_at = Column(DateTime, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"))
+    started_at: Mapped[datetime]
+    ended_at: Mapped[datetime | None]
 
 
 class AchievementEarned(Base):
@@ -108,10 +101,10 @@ class AchievementEarned(Base):
     """
     __tablename__ = "achievements_earned"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
-    achievement_id = Column(String, nullable=False)
-    earned_at = Column(DateTime, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"))
+    achievement_id: Mapped[str]
+    earned_at: Mapped[datetime | None]
 
 
 class UsageEvent(Base):
@@ -122,11 +115,11 @@ class UsageEvent(Base):
     рованный тоже может нажать кнопку. Питает команду /usage."""
     __tablename__ = "usage_events"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, nullable=False, index=True)
-    action = Column(String, nullable=False, index=True)  # normalize_action() — bot/services/usage.py
-    created_at = Column(
-        DateTime, nullable=False, index=True,
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(index=True)
+    action: Mapped[str] = mapped_column(index=True)  # normalize_action() — bot/services/usage.py
+    created_at: Mapped[datetime] = mapped_column(
+        index=True,
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
@@ -143,13 +136,13 @@ class YearVote(Base):
         UniqueConstraint("year", "nomination", "voter_id", name="uq_year_vote_voter"),
     )
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    year = Column(Integer, nullable=False)
-    nomination = Column(String, nullable=False)
-    voter_id = Column(Integer, ForeignKey("players.id"), nullable=False)
-    nominee_id = Column(Integer, ForeignKey("players.id"), nullable=False)
-    updated_at = Column(
-        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    year: Mapped[int]
+    nomination: Mapped[str]
+    voter_id: Mapped[int] = mapped_column(ForeignKey("players.id"))
+    nominee_id: Mapped[int] = mapped_column(ForeignKey("players.id"))
+    updated_at: Mapped[datetime | None] = mapped_column(
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
 
@@ -164,9 +157,9 @@ class PersonalRecordEarned(Base):
     """
     __tablename__ = "personal_records_earned"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
-    metric = Column(String, nullable=False)
-    value = Column(Float, nullable=False)
-    match_id = Column(Integer, ForeignKey("matches.id"), nullable=True)
-    earned_at = Column(DateTime, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"))
+    metric: Mapped[str]
+    value: Mapped[float]
+    match_id: Mapped[int | None] = mapped_column(ForeignKey("matches.id"))
+    earned_at: Mapped[datetime | None]

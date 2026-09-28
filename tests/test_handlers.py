@@ -5,6 +5,7 @@
 настоящие FSM (MemoryStorage) и in-memory SQLite — чтобы проверять
 реальный путь пользователя: вызов → ввод счёта → отмена.
 """
+import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -269,6 +270,44 @@ async def test_send_challenge_blocks_when_opponent_busy(db):
     cb.answer.assert_called()
     assert any("занят" in str(c.args) for c in cb.answer.call_args_list)
     bot.send_message.assert_not_called()
+
+
+async def test_send_challenge_race_closed_by_lock(db_factory):
+    """Регресс на гонку из CLAUDE.md «Известные ограничения» (закрыта
+    asyncio.Lock в v2.135.0). Два вызова с ОБЩИМ соперником (Cara), запущенные
+    через asyncio.gather на РАЗНЫХ сессиях одного движка (как две независимые
+    сессии DatabaseMiddleware на два параллельных апдейта) — оба почти
+    одновременно упираются в `await get_active_match(...)`. Без лока оба
+    могли пройти проверку «Cara свободна» до того, как второй увидит матч
+    первого — на Cara оказалось бы два активных матча одновременно. С локом
+    второй вызов обязан дождаться первого и получить отказ."""
+    async with db_factory() as setup:
+        p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
+        setup.add_all([p1, p2, p3])
+        await setup.commit()
+        p3_id = p3.id
+
+    session1, session2 = db_factory(), db_factory()
+    try:
+        cb1, bot1 = _callback(1, f"challenge_{p3_id}"), AsyncMock()
+        cb2, bot2 = _callback(2, f"challenge_{p3_id}"), AsyncMock()
+        await asyncio.gather(
+            send_challenge(cb1, session1, bot1),
+            send_challenge(cb2, session2, bot2),
+        )
+    finally:
+        await session1.close()
+        await session2.close()
+
+    async with db_factory() as check:
+        r = await check.execute(
+            select(Match).where(
+                Match.status == MatchStatus.accepted,
+                or_(Match.challenger_id == p3_id, Match.challenged_id == p3_id),
+            )
+        )
+        active_for_cara = r.scalars().all()
+    assert len(active_for_cara) == 1
 
 
 # ── show_players_for_challenge (экран «Кого вызвать») ───────────────────────────
