@@ -13,8 +13,14 @@ from sqlalchemy.orm import selectinload
 
 from bot.db.database import DATABASE_URL, async_session
 from bot.db.models import Match, MatchStatus, Player
-from bot.keyboards.inline import busy_with_match_kb
+from bot.keyboards.inline import busy_with_match_kb, year_vote_invite_kb
 from bot.services.stats import _compute_player_stats, _nearest_achievement_progress
+from bot.services.year_vote import (
+    compute_results,
+    get_eligible_player_ids,
+    has_all_nominations_filled,
+    render_results,
+)
 from bot.utils import (
     MSK_OFFSET,
     NEWCOMER_THRESHOLD,
@@ -1108,25 +1114,27 @@ async def send_quarterly_summary(bot: Bot) -> None:
     logger.info("Итоги квартала за %s отправлены", quarter_label)
 
 
-# ── Итоги года (31 декабря, 14:00 МСК) ────────────────────────────────────────
+# ── Итоги года (30 декабря, 12:00 МСК) ────────────────────────────────────────
 # Самая насыщенная сводка из всех — сознательное исключение из правила «не
 # простыня, режь на группы» (см. остальные экраны проекта): это письмо раз в
 # год, а не экран, который открывают на бегу 5 раз в день, поэтому уместен
 # максимально подробный текст. Едкие фразы-отсылки — по одной на раздел,
 # согласованы отдельно (не пул, как у пасхалок, а конкретный зафиксированный
-# выбор). Джоба стартует ЗА ~10 часов до конца года (31 декабря, не 1 января)
-# — специально, чтобы застать игроков ДО Нового года, а не после; оставшиеся
-# несколько часов года сознательно не ждём.
+# выбор). Время сдвинуто с 31 декабря 14:00 на 30 декабря 12:00 (v2.134.0,
+# этап 3 дорожной карты, решение пользователя 2026-09-26) — 31-го в офисе,
+# скорее всего, уже никого нет; заодно это время закрытия голосования за
+# неформальные звания года (см. send_year_end_combo ниже) — оба сообщения
+# уходят одной джобой сразу друг за другом.
 
 def _year_bounds_msk(now_msk: datetime) -> tuple[datetime, datetime]:
     """(начало года, сейчас) по МСК, naive — «итоги года» это срез на момент
-    отправки (31 декабря, 14:00), а не строго закрытый календарный год."""
+    отправки (30 декабря, 12:00), а не строго закрытый календарный год."""
     start = now_msk.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
     return start, now_msk
 
 
 async def send_yearly_summary(bot: Bot) -> None:
-    """31 декабря в 14:00 МСК — итоги почти закрывшегося года."""
+    """30 декабря в 12:00 МСК — итоги почти закрывшегося года."""
     async with async_session() as session:
         msk_now = datetime.now(timezone.utc).replace(tzinfo=None) + MSK_OFFSET
         year_start_msk, year_end_msk = _year_bounds_msk(msk_now)
@@ -1258,6 +1266,108 @@ async def send_yearly_summary(bot: Bot) -> None:
     logger.info("Итоги года за %d отправлены", year_start_msk.year)
 
 
+# ── Голосование «Итоги года: неформальные звания» (этап 3 дорожной карты) ────
+# Раз в год: 21 декабря 10:00 МСК — приглашение, 29 декабря 10:00 МСК —
+# напоминание тем, кто не закончил бюллетень, 30 декабря 12:00 МСК — закрытие
+# и результаты (сразу за «Итогами года», см. send_year_end_combo). Домен —
+# bot/services/year_vote.py (номинации, окно голосования, допуск, хранение
+# и рендер текста); здесь только рассылки, тем же паттерном, что у остальных
+# периодических сообщений выше.
+
+async def send_year_vote_invitations(bot: Bot) -> None:
+    """21 декабря в 10:00 МСК — приглашение проголосовать. Только допущенным
+    игрокам (≥1 завершённый матч в этом году — та же граница, что у видимости
+    в лидерборде)."""
+    async with async_session() as session:
+        now_msk = datetime.now(timezone.utc).replace(tzinfo=None) + MSK_OFFSET
+        year = now_msk.year
+        eligible_ids = await get_eligible_player_ids(session, year)
+        if not eligible_ids:
+            logger.info(
+                "Голосование %d: нет допущенных игроков, приглашение не отправлено", year,
+            )
+            return
+        players_r = await session.execute(select(Player).where(Player.id.in_(eligible_ids)))
+        players = players_r.scalars().all()
+
+        text = (
+            "🏆 <b>Итоги года</b>\n\n"
+            "Если вы видите это сообщение, то мы не загнулись как фирма, "
+            "с чем вас всех и поздравляю. Пора определить 6 номинаций, "
+            "которые никакой рейтинг не посчитает. Голосуй за кого хочешь "
+            "(кроме себя), голос можно менять сколько угодно раз до самого "
+            "закрытия.\n\n"
+            "⏳ Закрытие — 30 декабря в 12:00. Сразу после этого — "
+            "«Итоги года» и результаты голосования."
+        )
+        for p in players:
+            await safe_send(bot, p.telegram_id, text, reply_markup=year_vote_invite_kb())
+
+    logger.info("Приглашение на голосование за %d отправлено", year)
+
+
+async def send_year_vote_reminders(bot: Bot) -> None:
+    """29 декабря в 10:00 МСК — одно напоминание, только тем, кто заполнил
+    не все 6 номинаций (кто уже закончил бюллетень — не спамим)."""
+    async with async_session() as session:
+        now_msk = datetime.now(timezone.utc).replace(tzinfo=None) + MSK_OFFSET
+        year = now_msk.year
+        eligible_ids = await get_eligible_player_ids(session, year)
+        if not eligible_ids:
+            return
+        players_r = await session.execute(select(Player).where(Player.id.in_(eligible_ids)))
+        players = players_r.scalars().all()
+
+        text = (
+            "⏰ <b>Голосование закрывается завтра!</b>\n\n"
+            "Закрытие — 30 декабря в 12:00. У тебя остались незаполненные "
+            "номинации — успей закончить бюллетень."
+        )
+        sent = 0
+        for p in players:
+            if await has_all_nominations_filled(session, year, p.id):
+                continue
+            await safe_send(bot, p.telegram_id, text, reply_markup=year_vote_invite_kb())
+            sent += 1
+
+    logger.info("Напоминание о голосовании за %d отправлено %d игрокам", year, sent)
+
+
+async def send_year_vote_results(bot: Bot) -> None:
+    """Результаты голосования — вызывается ТОЛЬКО из send_year_end_combo, сразу
+    после «Итогов года» (30 декабря, 12:00). Не регистрируется в планировщике
+    отдельной джобой — см. send_year_end_combo ниже, порядок важен."""
+    async with async_session() as session:
+        now_msk = datetime.now(timezone.utc).replace(tzinfo=None) + MSK_OFFSET
+        year = now_msk.year
+        results, total_votes = await compute_results(session, year)
+        if total_votes == 0:
+            logger.info("Голосование за %d: голосов не было, результаты не отправлены", year)
+            return
+
+        eligible_ids = await get_eligible_player_ids(session, year)
+        players_r = await session.execute(select(Player).where(Player.id.in_(eligible_ids)))
+        players = players_r.scalars().all()
+        name_map = {p.id: p.display_name for p in players}
+
+        text = render_results(year, results, name_map)
+        for p in players:
+            await safe_send(bot, p.telegram_id, text)
+
+    logger.info("Результаты голосования за %d отправлены", year)
+
+
+async def send_year_end_combo(bot: Bot) -> None:
+    """30 декабря в 12:00 МСК — сначала «Итоги года» (send_yearly_summary,
+    содержание не менялось, поменялось только время), сразу за ними —
+    результаты голосования за неформальные звания. Одна джоба вместо двух
+    отдельных cron-триггеров на одну и ту же минуту — APScheduler не
+    гарантирует порядок срабатывания двух независимых триггеров, совпавших
+    по времени, а порядок здесь важен пользователю."""
+    await send_yearly_summary(bot)
+    await send_year_vote_results(bot)
+
+
 # ── Инициализация планировщика ────────────────────────────────────────────────
 
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
@@ -1340,12 +1450,31 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         id="quarterly_summary",
     )
 
-    # Итоги года — 31 декабря в 14:00 МСК, до Нового года, а не после
+    # Итоги года + результаты голосования — 30 декабря в 12:00 МСК, одной джобой
+    # (send_year_end_combo), чтобы порядок «сначала итоги, потом голосование»
+    # не зависел от того, в каком порядке APScheduler разбудит два триггера,
+    # совпавших по времени. Было 31 декабря 14:00 — сдвинуто в v2.134.0.
     scheduler.add_job(
-        send_yearly_summary,
-        CronTrigger(month=12, day=31, hour=14, minute=0, timezone=msk),
+        send_year_end_combo,
+        CronTrigger(month=12, day=30, hour=12, minute=0, timezone=msk),
         args=[bot],
         id="yearly_summary",
+    )
+
+    # Голосование за неформальные звания года — приглашение 21 декабря 10:00 МСК
+    scheduler.add_job(
+        send_year_vote_invitations,
+        CronTrigger(month=12, day=21, hour=10, minute=0, timezone=msk),
+        args=[bot],
+        id="year_vote_invite",
+    )
+
+    # Голосование — напоминание не закончившим бюллетень, 29 декабря 10:00 МСК
+    scheduler.add_job(
+        send_year_vote_reminders,
+        CronTrigger(month=12, day=29, hour=10, minute=0, timezone=msk),
+        args=[bot],
+        id="year_vote_reminder",
     )
 
     return scheduler

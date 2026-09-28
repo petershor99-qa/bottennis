@@ -73,9 +73,24 @@ def test_quarterly_summary_jan_apr_jul_oct_1st_1030_msk():
     assert nxt.date() == datetime(2026, 7, 1).date()
 
 
-def test_yearly_summary_dec_31_1400_msk():
-    """Итоги года: 31 декабря 14:00 МСК = 11:00 UTC. От 2026-06-19 ближайшее
-    31 декабря — 2026-12-31 (до Нового года, не после)."""
+def test_yearly_summary_dec_30_1200_msk():
+    """Итоги года + результаты голосования (одна джоба "yearly_summary",
+    send_year_end_combo): 30 декабря 12:00 МСК = 9:00 UTC. Сдвинуто с
+    31 декабря 14:00 в v2.134.0 — 31-го в офисе, скорее всего, уже никого."""
     nxt = _next_utc("yearly_summary", REF)
-    assert (nxt.hour, nxt.minute) == (11, 0)
-    assert nxt.date() == datetime(2026, 12, 31).date()
+    assert (nxt.hour, nxt.minute) == (9, 0)
+    assert nxt.date() == datetime(2026, 12, 30).date()
+
+
+def test_year_vote_invite_dec_21_1000_msk():
+    """Приглашение на голосование: 21 декабря 10:00 МСК = 7:00 UTC."""
+    nxt = _next_utc("year_vote_invite", REF)
+    assert (nxt.hour, nxt.minute) == (7, 0)
+    assert nxt.date() == datetime(2026, 12, 21).date()
+
+
+def test_year_vote_reminder_dec_29_1000_msk():
+    """Напоминание о голосовании: 29 декабря 10:00 МСК = 7:00 UTC."""
+    nxt = _next_utc("year_vote_reminder", REF)
+    assert (nxt.hour, nxt.minute) == (7, 0)
+    assert nxt.date() == datetime(2026, 12, 29).date()

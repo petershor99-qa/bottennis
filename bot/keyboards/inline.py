@@ -6,6 +6,7 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from bot.services.year_vote import YEAR_VOTE_NOMINATIONS
 from bot.utils import favor_icon, random_challenge_button_label
 
 
@@ -304,6 +305,40 @@ def back_to_leaderboard_kb() -> InlineKeyboardMarkup:
 def back_to_stats_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.row(InlineKeyboardButton(text="« К статистике", callback_data="menu_stats"))
+    return b.as_markup()
+
+
+def year_vote_invite_kb() -> InlineKeyboardMarkup:
+    """Кнопка под приглашением/напоминанием голосования — открывает бюллетень."""
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="🗳 Голосовать", callback_data="yv_open"))
+    return b.as_markup()
+
+
+def year_vote_bulletin_kb() -> InlineKeyboardMarkup:
+    """Клавиатура бюллетеня — по кнопке на номинацию, callback_data "yv_nom_{i}"
+    (i — индекс в YEAR_VOTE_NOMINATIONS)."""
+    b = InlineKeyboardBuilder()
+    for i, n in enumerate(YEAR_VOTE_NOMINATIONS):
+        b.row(InlineKeyboardButton(text=f"{n.emoji} {n.name}", callback_data=f"yv_nom_{i}"))
+    b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
+    return b.as_markup()
+
+
+def year_vote_nomination_kb(
+    nomination_idx: int, candidates: list, current_pick: int | None,
+) -> InlineKeyboardMarkup:
+    """Экран выбора кандидата в одной номинации. candidates — допущенные игроки
+    (без самого голосующего), current_pick — id уже выбранного (если есть) —
+    помечается ✅ на кнопке, чтобы было видно текущий выбор при смене."""
+    b = InlineKeyboardBuilder()
+    for p in candidates:
+        prefix = "✅ " if p.id == current_pick else ""
+        b.row(InlineKeyboardButton(
+            text=f"{prefix}{p.display_name}",
+            callback_data=f"yv_pick_{nomination_idx}_{p.id}",
+        ))
+    b.row(InlineKeyboardButton(text="« Назад к бюллетеню", callback_data="yv_open"))
     return b.as_markup()
 
 

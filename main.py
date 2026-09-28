@@ -26,6 +26,7 @@ from bot.handlers.leaderboard import router as leaderboard_router
 from bot.handlers.match_result import router as match_result_router
 from bot.handlers.profile import router as profile_router
 from bot.handlers.start import router as start_router
+from bot.handlers.year_vote import router as year_vote_router
 from bot.middleware import DatabaseMiddleware, UsageMiddleware
 from bot.scheduler import setup_scheduler
 
@@ -107,6 +108,7 @@ async def main() -> None:
     dp.include_router(history_router)
     dp.include_router(challenge_router)
     dp.include_router(match_result_router)
+    dp.include_router(year_vote_router)
 
     await init_db()
 

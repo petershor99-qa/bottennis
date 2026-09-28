@@ -1,7 +1,18 @@
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Enum, Float, ForeignKey, Integer, String
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -117,6 +128,28 @@ class UsageEvent(Base):
     created_at = Column(
         DateTime, nullable=False, index=True,
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+
+
+class YearVote(Base):
+    """Голос в номинации ежегодного голосования «Итоги года: неформальные
+    звания» (v2.134.0, этап 3 дорожной карты). Одна строка на
+    (year, nomination, voter_id) — уникальный индекс гарантирует, что смена
+    голоса до закрытия перезаписывает существующую строку (UPDATE), а не
+    создаёт вторую. nomination — id из YEAR_VOTE_NOMINATIONS
+    (bot/services/year_vote.py)."""
+    __tablename__ = "year_votes"
+    __table_args__ = (
+        UniqueConstraint("year", "nomination", "voter_id", name="uq_year_vote_voter"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    year = Column(Integer, nullable=False)
+    nomination = Column(String, nullable=False)
+    voter_id = Column(Integer, ForeignKey("players.id"), nullable=False)
+    nominee_id = Column(Integer, ForeignKey("players.id"), nullable=False)
+    updated_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
 
