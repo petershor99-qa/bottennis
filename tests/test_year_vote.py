@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 from sqlalchemy import func, select
 
-from bot.db.models import Match, MatchStatus, YearVote
+from bot.db.models import YearVote
 from bot.services.year_vote import (
     YEAR_VOTE_NOMINATIONS,
     compute_results,
@@ -21,16 +21,7 @@ from bot.services.year_vote import (
     render_results,
     set_vote,
 )
-from tests.conftest import _callback, _player
-
-
-def _completed(challenger, challenged, winner_id, rc, when):
-    return Match(
-        challenger_id=challenger.id, challenged_id=challenged.id,
-        status=MatchStatus.completed, winner_id=winner_id,
-        sets_data=[{"w": 11, "l": 5}], rating_change=rc, completed_at=when,
-    )
-
+from tests.conftest import _callback, _completed, _player
 
 # ── Окно голосования (чистая функция, без БД) ─────────────────────────────────
 

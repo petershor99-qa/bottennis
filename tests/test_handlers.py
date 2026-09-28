@@ -54,7 +54,7 @@ from bot.utils import (
     rank_title,
     rating_tenths,
 )
-from tests.conftest import _callback, _player, _state
+from tests.conftest import _callback, _completed, _player, _state
 
 # ── Фикстуры и хелперы ──────────────────────────────────────────────────────────
 
@@ -1846,14 +1846,6 @@ def test_rank_title_bands():
 
 
 # ── Скрытие игроков с 0 матчей / график по игроку ───────────────────────────────
-
-def _completed(challenger, challenged, winner_id, rc, when):
-    return Match(
-        challenger_id=challenger.id, challenged_id=challenged.id,
-        status=MatchStatus.completed, winner_id=winner_id,
-        sets_data=[{"w": 11, "l": 5}], rating_change=rc, completed_at=when,
-    )
-
 
 async def test_leaderboard_hides_zero_match_players(db):
     """Игрок без сыгранных матчей не показывается в рейтинге."""
