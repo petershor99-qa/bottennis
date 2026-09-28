@@ -84,11 +84,18 @@ async def get_eligible_player_ids(session: AsyncSession, year: int) -> set[int]:
 
 
 async def get_nominees(
-    session: AsyncSession, year: int, exclude_id: int | None = None,
+    session: AsyncSession,
+    year: int,
+    exclude_id: int | None = None,
+    eligible_ids: set[int] | None = None,
 ) -> list[Player]:
     """Допущенные кандидаты года, без exclude_id (голосующий за себя) —
-    отсортированы по имени для стабильного порядка кнопок."""
-    ids = await get_eligible_player_ids(session, year)
+    отсортированы по имени для стабильного порядка кнопок.
+
+    eligible_ids — если уже посчитан вызывающим (например, _guard в
+    year_vote.py уже сходил за ним ради проверки допуска), передаём готовый
+    набор вместо повторного скана всех матчей года на каждый тап кнопки."""
+    ids = set(eligible_ids) if eligible_ids is not None else await get_eligible_player_ids(session, year)
     ids.discard(exclude_id)
     if not ids:
         return []
@@ -149,14 +156,21 @@ async def compute_results(
     r = await session.execute(select(YearVote).where(YearVote.year == year))
     votes = r.scalars().all()
 
-    tally: dict[str, dict[int, int]] = {n.id: {} for n in YEAR_VOTE_NOMINATIONS}
+    # tally.setdefault, а не {n.id: {} for n in YEAR_VOTE_NOMINATIONS} — голос
+    # мог быть отдан под id номинации, которой к моменту подсчёта уже нет в
+    # списке (список меняется одной правкой прямо в этом файле, а голоса лежат
+    # в БД неделю до подсчёта). Прямое tally[v.nomination] уронило бы KeyError
+    # и весь send_year_end_combo — осиротевший голос просто не попадёт ни в
+    # одну из результирующих номинаций ниже (никто не проголосовал бы в нём
+    # без него — не хуже, чем если бы голоса не было вовсе).
+    tally: dict[str, dict[int, int]] = {}
     for v in votes:
-        counts = tally[v.nomination]
+        counts = tally.setdefault(v.nomination, {})
         counts[v.nominee_id] = counts.get(v.nominee_id, 0) + 1
 
     results = []
     for nomination in YEAR_VOTE_NOMINATIONS:
-        counts = tally[nomination.id]
+        counts = tally.get(nomination.id, {})
         if not counts:
             results.append((nomination, [], 0))
             continue

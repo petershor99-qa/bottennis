@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 from sqlalchemy import func, select
 
-from bot.db.models import Match, MatchStatus, YearVote
+from bot.db.models import YearVote
 from bot.services.year_vote import (
     YEAR_VOTE_NOMINATIONS,
     compute_results,
@@ -21,16 +21,7 @@ from bot.services.year_vote import (
     render_results,
     set_vote,
 )
-from tests.conftest import _callback, _player
-
-
-def _completed(challenger, challenged, winner_id, rc, when):
-    return Match(
-        challenger_id=challenger.id, challenged_id=challenged.id,
-        status=MatchStatus.completed, winner_id=winner_id,
-        sets_data=[{"w": 11, "l": 5}], rating_change=rc, completed_at=when,
-    )
-
+from tests.conftest import _callback, _completed, _player
 
 # ── Окно голосования (чистая функция, без БД) ─────────────────────────────────
 
@@ -156,6 +147,24 @@ async def test_compute_results_tie_splits_title(db):
     assert total == 2
     by_id = {n.id: (set(winners), count) for n, winners, count in results}
     assert by_id["toughest"] == ({c1.id, c2.id}, 1)
+
+
+async def test_compute_results_ignores_orphaned_nomination_id(db):
+    """Голос под id, которого больше нет в YEAR_VOTE_NOMINATIONS (список
+    поменяли между стартом голосования и подсчётом) — не должен ронять
+    compute_results KeyError'ом, просто не попадает ни в один результат."""
+    voter, cand = _player(1, "V1"), _player(10, "Bob")
+    db.add_all([voter, cand])
+    await db.flush()
+    db.add(YearVote(year=2026, nomination="retired_id", voter_id=voter.id, nominee_id=cand.id))
+    await set_vote(db, 2026, "toughest", voter.id, cand.id)
+    await db.commit()
+
+    results, total = await compute_results(db, 2026)
+    assert total == 2  # оба голоса посчитаны в total
+    by_id = {n.id: (winners, count) for n, winners, count in results}
+    assert by_id["toughest"] == ([cand.id], 1)
+    assert "retired_id" not in by_id  # осиротевший голос не выдуман в чужую номинацию
 
 
 def test_render_results_winner_line():
@@ -391,7 +400,8 @@ async def test_bulletin_and_nomination_and_pick_flow(monkeypatch, db):
     assert text.count("не выбрано") == len(YEAR_VOTE_NOMINATIONS)
 
     # Экран номинации — только Bob кандидатом, себя (Alice) нет
-    cb2 = _callback(1, "yv_nom_0")
+    nom0 = YEAR_VOTE_NOMINATIONS[0].id
+    cb2 = _callback(1, f"yv_nom_{nom0}")
     await yv.show_nomination(cb2, db)
     kb = cb2.message.edit_text.await_args.kwargs["reply_markup"]
     names = [btn.text for row in kb.inline_keyboard for btn in row]
@@ -399,7 +409,7 @@ async def test_bulletin_and_nomination_and_pick_flow(monkeypatch, db):
     assert not any("Alice" in n for n in names)
 
     # Голос за Bob в номинации 0
-    cb3 = _callback(1, f"yv_pick_0_{cand.id}")
+    cb3 = _callback(1, f"yv_pick_{nom0}_{cand.id}")
     await yv.pick_nominee(cb3, db)
     assert "учтён" in cb3.answer.await_args.args[0]
     text3 = cb3.message.edit_text.await_args.args[0]
@@ -420,8 +430,34 @@ async def test_pick_nominee_rejects_forged_self_vote(monkeypatch, db):
     db.add(_completed(voter, other, voter.id, 10.0, datetime(2026, 3, 1, 12, 0, 0)))
     await db.commit()
 
-    cb = _callback(1, f"yv_pick_0_{voter.id}")
+    cb = _callback(1, f"yv_pick_{YEAR_VOTE_NOMINATIONS[0].id}_{voter.id}")
     await yv.pick_nominee(cb, db)
     assert "Некорректные данные" in cb.answer.await_args.args[0]
+    count_r = await db.execute(select(func.count()).select_from(YearVote))
+    assert count_r.scalar() == 0
+
+
+async def test_show_nomination_unknown_id_alerts_without_crashing(monkeypatch, db):
+    """callback_data кодирует стабильный id номинации, не позиционный индекс
+    (регресс на находку код-ревью v2.134.3) — устаревшая/подделанная кнопка
+    с несуществующим id должна тихо получить алерт, а не уронить хендлер."""
+    import bot.handlers.year_vote as yv
+
+    _freeze(monkeypatch, yv, datetime(2026, 12, 25, 10, 0, 0, tzinfo=timezone.utc))
+    player = _player(1, "Alice")
+    other = _player(2, "Bob")
+    db.add_all([player, other])
+    await db.flush()
+    db.add(_completed(player, other, player.id, 10.0, datetime(2026, 3, 1, 12, 0, 0)))
+    await db.commit()
+
+    cb = _callback(1, "yv_nom_retired_id")
+    await yv.show_nomination(cb, db)
+    assert "Некорректные данные" in cb.answer.await_args.args[0]
+    cb.message.edit_text.assert_not_awaited()
+
+    cb2 = _callback(1, f"yv_pick_retired_id_{other.id}")
+    await yv.pick_nominee(cb2, db)
+    assert "Некорректные данные" in cb2.answer.await_args.args[0]
     count_r = await db.execute(select(func.count()).select_from(YearVote))
     assert count_r.scalar() == 0

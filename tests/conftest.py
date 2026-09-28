@@ -15,6 +15,7 @@
   добавила бы каждому тесту обязательный параметр в сигнатуре ради нуля
   выгоды.
 """
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -25,7 +26,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-from bot.db.models import Base, Player
+from bot.db.models import Base, Match, MatchStatus, Player
 
 
 @pytest_asyncio.fixture
@@ -77,3 +78,17 @@ def _callback(user_id: int, data: str) -> AsyncMock:
     cb.message.edit_text = AsyncMock()
     cb.answer = AsyncMock()
     return cb
+
+
+def _completed(
+    challenger: Player, challenged: Player, winner_id: int, rc: float, when: datetime,
+) -> Match:
+    """Завершённый матч (для db.add(...) напрямую в тестах). rc — rating_change,
+    явный аргумент (не дефолт) — сигнатура унифицирована между test_handlers.py
+    (было `rc` явным с самого начала) и test_boss_fight.py (было жёстко 5.0
+    внутри) — заход 2 рефактора тестовых хелперов, см. CLAUDE.md."""
+    return Match(
+        challenger_id=challenger.id, challenged_id=challenged.id,
+        status=MatchStatus.completed, winner_id=winner_id,
+        sets_data=[{"w": 11, "l": 5}], rating_change=rc, completed_at=when,
+    )

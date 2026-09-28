@@ -32,17 +32,9 @@ from bot.utils import (
     steadiest_career,
     try_transfer_champion,
 )
-from tests.conftest import _callback, _player, _state
+from tests.conftest import _callback, _completed, _player, _state
 
 # ── Фикстуры и хелперы ────────────────────────────────────────────────────────
-
-
-def _completed(challenger: Player, challenged: Player, winner_id: int, when: datetime) -> Match:
-    return Match(
-        challenger_id=challenger.id, challenged_id=challenged.id,
-        status=MatchStatus.completed, winner_id=winner_id,
-        sets_data=[{"w": 11, "l": 5}], rating_change=5.0, completed_at=when,
-    )
 
 
 async def _accepted_match(db, challenger: Player, challenged: Player, is_boss_fight: bool = False) -> Match:
@@ -59,7 +51,7 @@ async def _accepted_match(db, challenger: Player, challenged: Player, is_boss_fi
 async def _seed_matches(db, player: Player, opponent: Player, n: int, base: datetime) -> None:
     """Дать player n завершённых побед над opponent — для порога NEWCOMER_THRESHOLD."""
     for i in range(n):
-        db.add(_completed(player, opponent, player.id, base - timedelta(days=n - i)))
+        db.add(_completed(player, opponent, player.id, rc=5.0, when=base - timedelta(days=n - i)))
 
 
 async def _confirming_state(match_id: int, reporter_id: int, sets: list[dict], is_draw: bool = False):
@@ -242,7 +234,7 @@ async def test_bootstrap_champion_assigns_top_rated_among_played(db):
     p3 = _player(3, "NeverPlayed", rating=1500.0)
     db.add_all([p1, p2, p3])
     await db.flush()
-    db.add(_completed(p1, p2, p2.id, datetime(2026, 6, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p2.id, rc=5.0, when=datetime(2026, 6, 1, 12, 0, 0)))
     await db.commit()
 
     await bootstrap_champion(db)
@@ -257,7 +249,7 @@ async def test_bootstrap_champion_idempotent(db):
     p2 = _player(2, "Bob", rating=1200.0)
     db.add_all([p1, p2])
     await db.flush()
-    db.add(_completed(p1, p2, p2.id, datetime(2026, 6, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p2.id, rc=5.0, when=datetime(2026, 6, 1, 12, 0, 0)))
     await db.commit()
     p1.is_champion = True   # руками назначаем не топа чемпионом
     await db.commit()
@@ -277,7 +269,7 @@ async def test_bootstrap_champion_backfills_reign_for_pre_existing_champion(db):
     p1.is_champion = True   # как будто назначено старым кодом до апдейта
     db.add_all([p1, p2])
     await db.flush()
-    db.add(_completed(p1, p2, p1.id, datetime(2026, 6, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p1.id, rc=5.0, when=datetime(2026, 6, 1, 12, 0, 0)))
     await db.commit()
 
     assert (await db.execute(select(ChampionReign))).scalars().first() is None
@@ -382,7 +374,7 @@ async def test_boss_fight_delta_doubled_and_ignores_repeat_multiplier(db):
     base = datetime(2026, 6, 1, 12, 0, 0)
     # 3 победы подряд challenger_p над champion — вне боссфайта дал бы repeat ×0.85
     for i in range(3):
-        db.add(_completed(challenger_p, champion, challenger_p.id, base - timedelta(days=3 - i)))
+        db.add(_completed(challenger_p, champion, challenger_p.id, rc=5.0, when=base - timedelta(days=3 - i)))
     await db.commit()
 
     m = await _accepted_match(db, challenger_p, champion, is_boss_fight=True)
@@ -643,7 +635,7 @@ async def test_champion_auto_release_transfers_after_7_days_inactive(monkeypatch
         heir = _player(2, "Heir", rating=1100.0)
         s.add_all([champion, heir])
         await s.flush()
-        s.add(_completed(champion, heir, champion.id, old_completed))
+        s.add(_completed(champion, heir, champion.id, rc=5.0, when=old_completed))
         await _seed_matches(s, heir, champion, NEWCOMER_THRESHOLD, old_completed - timedelta(days=1))
         await s.commit()
 
@@ -815,7 +807,7 @@ async def test_champion_auto_release_no_candidates_keeps_throne(monkeypatch, db_
         underqualified = _player(2, "Underqualified", rating=1100.0)
         s.add_all([champion, underqualified])
         await s.flush()
-        s.add(_completed(champion, underqualified, champion.id, old_completed))
+        s.add(_completed(champion, underqualified, champion.id, rc=5.0, when=old_completed))
         # только 5 матчей < NEWCOMER_THRESHOLD — не хватает на наследование
         await _seed_matches(s, underqualified, champion, 5, old_completed - timedelta(days=1))
         await s.commit()
@@ -844,7 +836,7 @@ async def test_champion_auto_release_not_triggered_within_7_days(monkeypatch, db
         heir = _player(2, "Heir", rating=1100.0)
         s.add_all([champion, heir])
         await s.flush()
-        s.add(_completed(champion, heir, champion.id, recent))
+        s.add(_completed(champion, heir, champion.id, rc=5.0, when=recent))
         await _seed_matches(s, heir, champion, NEWCOMER_THRESHOLD, recent - timedelta(days=1))
         await s.commit()
 
@@ -871,7 +863,7 @@ async def test_overtake_notifications_sent_once_not_repeated(db):
     base = datetime(2026, 6, 1, 12, 0, 0)
     # 14 прошлых матчей — этот победный станет 15-м и даст право на боссфайт
     for i in range(14):
-        db.add(_completed(contender, third, contender.id, base - timedelta(days=14 - i)))
+        db.add(_completed(contender, third, contender.id, rc=5.0, when=base - timedelta(days=14 - i)))
     await db.commit()
 
     m1 = await _accepted_match(db, contender, champion)   # обычный вызов, ещё не боссфайт
@@ -915,7 +907,7 @@ async def test_chance_blown_when_champion_retakes_lead(db):
     await db.flush()
     base = datetime(2026, 6, 1, 12, 0, 0)
     for i in range(15):
-        db.add(_completed(contender, third, contender.id, base - timedelta(days=15 - i)))
+        db.add(_completed(contender, third, contender.id, rc=5.0, when=base - timedelta(days=15 - i)))
     await db.commit()
 
     pre_champion = await get_champion(db)
@@ -948,7 +940,7 @@ async def test_chance_blown_when_challenger_loses_to_third_party(db):
     await db.flush()
     base = datetime(2026, 6, 1, 12, 0, 0)
     for i in range(15):
-        db.add(_completed(contender, third, contender.id, base - timedelta(days=15 - i)))
+        db.add(_completed(contender, third, contender.id, rc=5.0, when=base - timedelta(days=15 - i)))
     await db.commit()
 
     pre_champion = await get_champion(db)
@@ -1004,7 +996,7 @@ async def test_chance_blown_not_given_when_challenger_status_unchanged(db):
     await db.flush()
     base = datetime(2026, 6, 1, 12, 0, 0)
     for i in range(15):
-        db.add(_completed(contender, p3, contender.id, base - timedelta(days=15 - i)))
+        db.add(_completed(contender, p3, contender.id, rc=5.0, when=base - timedelta(days=15 - i)))
     await db.commit()
 
     m = await _accepted_match(db, p3, p4, is_boss_fight=False)
@@ -1034,7 +1026,7 @@ async def test_chance_blown_also_fires_on_third_party_overtake(db):
     await db.flush()
     base = datetime(2026, 6, 1, 12, 0, 0)
     for i in range(15):
-        db.add(_completed(contender, third, contender.id, base - timedelta(days=15 - i)))
+        db.add(_completed(contender, third, contender.id, rc=5.0, when=base - timedelta(days=15 - i)))
     await db.commit()
 
     pre_champion = await get_champion(db)
@@ -1151,7 +1143,7 @@ async def test_auto_release_skipped_when_champion_has_active_match(monkeypatch, 
         heir = _player(2, "Heir", rating=1100.0)
         s.add_all([champion, heir])
         await s.flush()
-        s.add(_completed(champion, heir, champion.id, old_completed))
+        s.add(_completed(champion, heir, champion.id, rc=5.0, when=old_completed))
         await _seed_matches(s, heir, champion, NEWCOMER_THRESHOLD, old_completed - timedelta(days=1))
         # У чемпиона ПРЯМО СЕЙЧАС идёт активный матч — джоба не должна его трогать
         s.add(Match(
@@ -1187,7 +1179,7 @@ async def test_auto_release_quiet_when_cas_fails(monkeypatch, db_factory):
         heir = _player(2, "Heir", rating=1100.0)
         s.add_all([champion, heir])
         await s.flush()
-        s.add(_completed(champion, heir, champion.id, old_completed))
+        s.add(_completed(champion, heir, champion.id, rc=5.0, when=old_completed))
         await _seed_matches(s, heir, champion, NEWCOMER_THRESHOLD, old_completed - timedelta(days=1))
         await s.commit()
 
@@ -1334,7 +1326,7 @@ async def test_bootstrap_champion_does_not_recrown_after_manual_disable(db):
     p1, p2 = _player(1, "Alice", rating=1000.0), _player(2, "Bob", rating=1200.0)
     db.add_all([p1, p2])
     await db.flush()
-    db.add(_completed(p1, p2, p2.id, datetime(2026, 6, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p2.id, rc=5.0, when=datetime(2026, 6, 1, 12, 0, 0)))
     await db.commit()
 
     await bootstrap_champion(db)
@@ -1359,7 +1351,7 @@ async def test_leaderboard_no_false_arrow_for_pinned_champion(db):
     db.add_all([champion, higher])
     await db.flush()
     old = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=30)
-    db.add(_completed(champion, higher, champion.id, old))  # только старый матч, за неделю тишина
+    db.add(_completed(champion, higher, champion.id, rc=5.0, when=old))  # только старый матч, за неделю тишина
     await db.commit()
 
     cb = _callback(1, "menu_leaderboard")
@@ -1426,7 +1418,7 @@ async def test_club_records_shows_longest_reign(db):
     p1, p2 = _player(1, "LongReign"), _player(2, "B")
     db.add_all([p1, p2])
     await db.flush()
-    db.add(_completed(p1, p2, p1.id, datetime(2026, 6, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p1.id, rc=5.0, when=datetime(2026, 6, 1, 12, 0, 0)))
     db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=datetime(2026, 1, 11)))
     await db.commit()
 
@@ -1495,7 +1487,7 @@ async def test_club_records_shows_most_defenses(db):
     p1, p2 = _player(1, "Defender"), _player(2, "B")
     db.add_all([p1, p2])
     await db.flush()
-    db.add(_completed(p1, p2, p1.id, datetime(2026, 6, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p1.id, rc=5.0, when=datetime(2026, 6, 1, 12, 0, 0)))
     db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=None))
     db.add(Match(
         challenger_id=p1.id, challenged_id=p2.id, status=MatchStatus.completed,
@@ -1668,8 +1660,8 @@ async def test_longest_awaited_revenge_finds_biggest_gap(db):
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
     db.add_all([p1, p2])
     await db.flush()
-    db.add(_completed(p1, p2, p2.id, datetime(2026, 1, 1, 12, 0, 0)))  # Alice проиграла
-    db.add(_completed(p1, p2, p1.id, datetime(2026, 3, 1, 12, 0, 0)))  # Alice отомстила спустя 59 дней
+    db.add(_completed(p1, p2, p2.id, rc=5.0, when=datetime(2026, 1, 1, 12, 0, 0)))  # Alice проиграла
+    db.add(_completed(p1, p2, p1.id, rc=5.0, when=datetime(2026, 3, 1, 12, 0, 0)))  # Alice отомстила спустя 59 дней
     await db.commit()
 
     result = await longest_awaited_revenge(db)
@@ -1682,9 +1674,9 @@ async def test_longest_awaited_revenge_ignores_intervening_wins(db):
     p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
     db.add_all([p1, p2, p3])
     await db.flush()
-    db.add(_completed(p1, p2, p2.id, datetime(2026, 1, 1, 12, 0, 0)))   # Alice проиграла Bob
-    db.add(_completed(p1, p3, p1.id, datetime(2026, 1, 5, 12, 0, 0)))   # Alice выиграла у Cara — не считается
-    db.add(_completed(p1, p2, p1.id, datetime(2026, 2, 1, 12, 0, 0)))   # Alice отомстила Bob спустя 31 день
+    db.add(_completed(p1, p2, p2.id, rc=5.0, when=datetime(2026, 1, 1, 12, 0, 0)))   # Alice проиграла Bob
+    db.add(_completed(p1, p3, p1.id, rc=5.0, when=datetime(2026, 1, 5, 12, 0, 0)))   # Alice выиграла у Cara — не считается
+    db.add(_completed(p1, p2, p1.id, rc=5.0, when=datetime(2026, 2, 1, 12, 0, 0)))   # Alice отомстила Bob спустя 31 день
     await db.commit()
 
     result = await longest_awaited_revenge(db)
@@ -1696,8 +1688,8 @@ async def test_longest_awaited_revenge_none_below_threshold(db):
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
     db.add_all([p1, p2])
     await db.flush()
-    db.add(_completed(p1, p2, p2.id, datetime(2026, 1, 1, 12, 0, 0)))
-    db.add(_completed(p1, p2, p1.id, datetime(2026, 1, 3, 12, 0, 0)))
+    db.add(_completed(p1, p2, p2.id, rc=5.0, when=datetime(2026, 1, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p1.id, rc=5.0, when=datetime(2026, 1, 3, 12, 0, 0)))
     await db.commit()
 
     assert await longest_awaited_revenge(db) is None
@@ -1707,7 +1699,7 @@ async def test_longest_awaited_revenge_none_without_any_revenge(db):
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
     db.add_all([p1, p2])
     await db.flush()
-    db.add(_completed(p1, p2, p2.id, datetime(2026, 1, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p2.id, rc=5.0, when=datetime(2026, 1, 1, 12, 0, 0)))
     await db.commit()
 
     assert await longest_awaited_revenge(db) is None
@@ -1741,7 +1733,7 @@ async def test_steadiest_career_respects_newcomer_threshold(db):
     p1, p2 = _player(1, "A"), _player(2, "B")
     db.add_all([p1, p2])
     await db.flush()
-    db.add(_completed(p1, p2, p1.id, datetime(2026, 1, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p1.id, rc=5.0, when=datetime(2026, 1, 1, 12, 0, 0)))
     await db.commit()
 
     assert await steadiest_career(db) is None
@@ -1753,7 +1745,7 @@ async def test_club_records_shows_shortest_reign(db):
     p1, p2 = _player(1, "ShortReign"), _player(2, "B")
     db.add_all([p1, p2])
     await db.flush()
-    db.add(_completed(p1, p2, p1.id, datetime(2026, 6, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p1.id, rc=5.0, when=datetime(2026, 6, 1, 12, 0, 0)))
     db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=datetime(2026, 1, 3)))
     await db.commit()
 
@@ -1769,7 +1761,7 @@ async def test_club_records_shows_throne_ascensions(db):
     p1, p2 = _player(1, "Comeback"), _player(2, "B")
     db.add_all([p1, p2])
     await db.flush()
-    db.add(_completed(p1, p2, p1.id, datetime(2026, 6, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p1.id, rc=5.0, when=datetime(2026, 6, 1, 12, 0, 0)))
     db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=datetime(2026, 1, 5)))
     db.add(ChampionReign(player_id=p2.id, started_at=datetime(2026, 1, 5), ended_at=datetime(2026, 1, 10)))
     db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 10), ended_at=None))
@@ -1787,8 +1779,8 @@ async def test_club_records_shows_longest_awaited_revenge(db):
     p1, p2 = _player(1, "Avenger"), _player(2, "Bully")
     db.add_all([p1, p2])
     await db.flush()
-    db.add(_completed(p1, p2, p2.id, datetime(2026, 1, 1, 12, 0, 0)))
-    db.add(_completed(p1, p2, p1.id, datetime(2026, 3, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p2.id, rc=5.0, when=datetime(2026, 1, 1, 12, 0, 0)))
+    db.add(_completed(p1, p2, p1.id, rc=5.0, when=datetime(2026, 3, 1, 12, 0, 0)))
     await db.commit()
 
     cb = _callback(1, "club_records")
