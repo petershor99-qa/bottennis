@@ -13,14 +13,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import after_set_kb, back_to_menu_kb, main_menu_kb, rematch_kb
 from bot.services.achievements import (
-    ACHIEVEMENTS_MAP,
     _career_points_and_sets,
     check_boss_fight_challenger_defeat_achievement,
     check_boss_fight_defense_achievement,
+    check_boss_fight_fortress_achievement,
+    check_boss_fight_guard_change_achievement,
     check_chance_blown_achievement,
     check_draw_achievements,
     check_loss_achievements,
     check_win_achievements,
+    notify_new_achievements,
     record_achievements_earned,
 )
 from bot.services.personal_records import (
@@ -105,7 +107,7 @@ async def _check_and_send_milestones(session: AsyncSession, bot: Bot, player: Pl
     границы 500, а не только точное попадание в неё)."""
     matches = await get_career_matches(session, player.id)
     total = len(matches)
-    points, _sets_won = _career_points_and_sets(matches, player.id)
+    points, _sets_won, _points_conceded = _career_points_and_sets(matches, player.id)
 
     if total % MATCH_MILESTONE_STEP == 0 and total not in _MATCH_MILESTONE_SKIP:
         idx = (total // MATCH_MILESTONE_STEP - 1) % len(MATCH_MILESTONE_PHRASES)
@@ -145,22 +147,6 @@ async def _send_personal_records(bot: Bot, player: Player, messages: list[str]) 
     (bot/services/personal_records.py) — их может быть несколько за один матч."""
     for text in messages:
         await safe_send(bot, player.telegram_id, text)
-
-
-async def _notify_achievements(bot: Bot, player, new_ids: list[str]) -> None:
-    """Отправляет игроку уведомление о новых достижениях."""
-    if not new_ids:
-        return
-    achs = [ACHIEVEMENTS_MAP[aid] for aid in new_ids if aid in ACHIEVEMENTS_MAP]
-    if not achs:
-        return
-    if len(achs) == 1:
-        a = achs[0]
-        text = f"🏅 <b>Новое достижение!</b>\n\n{a.emoji} <b>{a.name}</b>\n<i>{a.desc}</i>"
-    else:
-        lines = "\n".join(f"{a.emoji} <b>{a.name}</b> — <i>{a.desc}</i>" for a in achs)
-        text = f"🏅 <b>Новые достижения!</b>\n\n{lines}"
-    await safe_send(bot, player.telegram_id, text)
 
 
 async def _collect_egg_context(
@@ -910,6 +896,13 @@ async def _handle_boss_fight_outcome(
             ):
                 await session.commit()
                 bf_result_text = f"👑 <b>Новый чемпион — {h(winner.display_name)}!</b>"
+                # loser здесь по построению — бывший чемпион (winner уже
+                # подтверждён победителем в этой ветке "трон перешёл").
+                new_ach_guard = await check_boss_fight_guard_change_achievement(loser)
+                if new_ach_guard:
+                    record_achievements_earned(session, loser.id, new_ach_guard, match.completed_at)
+                    await session.commit()
+                    await notify_new_achievements(bot, loser, new_ach_guard)
         else:
             bf_result_text = (
                 f"🛡 <b>Трон удержан!</b> {h(winner.display_name)} остаётся чемпионом."
@@ -918,14 +911,19 @@ async def _handle_boss_fight_outcome(
             if new_ach_defense:
                 record_achievements_earned(session, winner.id, new_ach_defense, match.completed_at)
                 await session.commit()
-                await _notify_achievements(bot, winner, new_ach_defense)
+                await notify_new_achievements(bot, winner, new_ach_defense)
+            new_ach_fortress = await check_boss_fight_fortress_achievement(session, winner)
+            if new_ach_fortress:
+                record_achievements_earned(session, winner.id, new_ach_fortress, match.completed_at)
+                await session.commit()
+                await notify_new_achievements(bot, winner, new_ach_fortress)
             # loser здесь по построению — проигравший претендент (winner
             # уже подтверждён как champion_role в этой ветке "трон удержан")
             new_ach_denied = await check_boss_fight_challenger_defeat_achievement(loser)
             if new_ach_denied:
                 record_achievements_earned(session, loser.id, new_ach_denied, match.completed_at)
                 await session.commit()
-                await _notify_achievements(bot, loser, new_ach_denied)
+                await notify_new_achievements(bot, loser, new_ach_denied)
     if bf_result_text is not None:
         await notify_all_players(bot, session, bf_result_text)
 
@@ -941,8 +939,8 @@ async def _award_draw_achievements_and_eggs(
     record_achievements_earned(session, challenger.id, new_ch_ach, match.completed_at)
     record_achievements_earned(session, challenged.id, new_cd_ach, match.completed_at)
     await session.commit()
-    await _notify_achievements(bot, challenger, new_ch_ach)
-    await _notify_achievements(bot, challenged, new_cd_ach)
+    await notify_new_achievements(bot, challenger, new_ch_ach)
+    await notify_new_achievements(bot, challenged, new_cd_ach)
 
     # Пасхалка — ничья
     for p in (challenger, challenged):
@@ -1000,8 +998,8 @@ async def _award_win_achievements_and_eggs(
     record_achievements_earned(session, winner.id, new_ach_winner, match.completed_at)
     record_achievements_earned(session, loser.id, new_ach_loser, match.completed_at)
     await session.commit()
-    await _notify_achievements(bot, winner, new_ach_winner)
-    await _notify_achievements(bot, loser, new_ach_loser)
+    await notify_new_achievements(bot, winner, new_ach_winner)
+    await notify_new_achievements(bot, loser, new_ach_loser)
 
     await _send_easter_eggs(
         bot, session, winner, loser, old_winner_rating, old_loser_rating, final_sets, match_id,
@@ -1081,7 +1079,7 @@ async def _notify_challenger_status_change(
         if new_ach_blown:
             record_achievements_earned(session, challenger_before.id, new_ach_blown, match.completed_at)
             await session.commit()
-            await _notify_achievements(bot, challenger_before, new_ach_blown)
+            await notify_new_achievements(bot, challenger_before, new_ach_blown)
         await safe_send(
             bot,
             challenger_before.telegram_id,

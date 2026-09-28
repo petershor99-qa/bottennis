@@ -3069,7 +3069,7 @@ async def test_achievements_toc_shows_total_count(db):
     await show_my_achievements(cb, db)
 
     text = cb.message.edit_text.call_args[0][0]
-    assert "2 из 59" in text
+    assert "2 из 69" in text
     # оглавление больше не перечисляет ачивки построчно — прогресс только на кнопках
     assert "Стукнул полтинник" not in text
     assert "🔒" not in text
@@ -3094,7 +3094,7 @@ async def test_achievements_toc_buttons_one_per_category_with_progress(db):
         btn = category_rows[i][0]
         assert btn.text.startswith(category)
         assert btn.callback_data == f"ach_cat_{i}"
-    assert category_rows[0][0].text.endswith("1/4")  # Старт карьеры: 1 из 4 получено
+    assert category_rows[0][0].text.endswith("1/5")  # Старт карьеры: 1 из 4 получено
 
     bottom_callbacks = [btn.callback_data for row in kb.inline_keyboard[len(CATEGORY_ORDER):] for btn in row]
     assert bottom_callbacks == ["menu_stats", "back_to_menu"]
@@ -3132,7 +3132,7 @@ async def test_achievement_category_header_shows_progress(db):
     cb = await _open_my_category(db, CAT_START)
 
     text = cb.message.edit_text.call_args[0][0]
-    assert f"<b>{CAT_START}</b>  (1 из 4)" in text
+    assert f"<b>{CAT_START}</b>  (1 из 5)" in text
 
 
 async def test_achievement_category_only_shows_own_category_achievements(db):
@@ -3253,9 +3253,10 @@ async def test_hidden_achievement_revealed_when_earned(db):
 def test_render_achievement_category_stays_under_telegram_limit():
     """Худший случай — ВСЕ ачивки заработаны, каждая строка развёрнута с
     именем и условием — теперь проверяется НА КАЖДУЮ КАТЕГОРИЮ по отдельности
-    (самая крупная — «Объём и вехи», 20 ачивок), а не на весь список из 59
-    сразу, как было до v2.133.0. Иначе edit_text здесь упадёт с ошибкой
-    Telegram API, а этот хендлер (в отличие от admin._send) не режет текст."""
+    (самая крупная — «Объём и вехи», 25 ачивок после v2.135.3), а не на весь
+    список из 69 сразу, как было до v2.133.0. Иначе edit_text здесь упадёт с
+    ошибкой Telegram API, а этот хендлер (в отличие от admin._send) не режет
+    текст."""
     from bot.handlers.profile import _render_achievement_category
     from bot.services.achievements import ACHIEVEMENTS_LIST, CATEGORY_ORDER
 

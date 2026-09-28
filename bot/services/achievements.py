@@ -12,13 +12,20 @@
 import json
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import AchievementEarned, Match, MatchStatus, Player
-from bot.utils import MSK_OFFSET, as_naive, msk_day_start, msk_hour_and_weekday, rating_tenths
+from bot.db.models import AchievementEarned, ChampionReign, Match, MatchStatus, Player
+from bot.utils import (
+    MSK_OFFSET,
+    as_naive,
+    msk_day_start,
+    msk_hour_and_weekday,
+    rating_tenths,
+    safe_send,
+)
 
 
 @dataclass
@@ -108,13 +115,29 @@ ACHIEVEMENTS_LIST: list[Achievement] = [
     Achievement("full_circle_week", "🌐", "Полный круг за неделю",   "Обыграть каждого игрока клуба минимум раз за 7 дней", category=CAT_CLUB, hidden=True),
     Achievement("draw_double",    "🕊", "Дубль мира",                "Сыграть 2 ничьи подряд", category=CAT_CLUB, hidden=True),
     Achievement("first_crown",    "🎉", "Первая корона",             "Выиграть свой самый первый босс-файт в карьере", category=CAT_THRONE, hidden=True),
+    # v2.135.3 — по просьбе пользователя: 3 ачивки достраивают лесенку в
+    # «Трон» (была самой маленькой категорией вместе с «Дух клуба»), плюс
+    # уважительные (не насмешливые) лузерские ачивки в «Старт карьеры»/
+    # «Дух клуба», плюс зеркало вех по очкам/поражениям с позиции проигранного,
+    # а не только выигранного. Названия согласованы с пользователем построчно
+    # (первый черновик содержал насмешливые формулировки — переписаны).
+    Achievement("fortress",       "🛡", "Несокрушимый",              "Защитить трон 3+ раза подряд без потери", category=CAT_THRONE, hidden=True),
+    Achievement("guard_change",   "⚔️", "Смена караула",             "Потерять трон, проиграв босс-файт как действующий чемпион", category=CAT_THRONE, hidden=True),
+    Achievement("abdication",     "🌅", "Отпустил трон",             "Потерять трон через авто-освобождение (14 дней без матчей), а не в бою", category=CAT_THRONE, hidden=True),
+    Achievement("first_draw",     "🤷", "Первая ничья",              "Сыграть вничью в своём самом первом матче", category=CAT_START),
+    Achievement("club_school",    "📚", "Прошёл школу клуба",        "Проиграть каждому игроку клуба хотя бы раз", category=CAT_CLUB, hidden=True),
+    Achievement("unbreakable",    "🩹", "Не сломить",                "Проиграть 150 матчей за карьеру", category=CAT_MILESTONES),
+    Achievement("tempered",       "🦾", "Закалённый",                "Проиграть 300 матчей за карьеру", category=CAT_MILESTONES),
+    Achievement("resilient",      "🎯", "Отдал, но не сдался",       "Отдать сопернику 4000 очков за карьеру", category=CAT_MILESTONES),
+    Achievement("battle_tested",  "🧱", "Проверен на прочность",     "Отдать сопернику 8000 очков за карьеру", category=CAT_MILESTONES),
+    Achievement("through_fire",   "🏔", "Через тернии",              "Отдать сопернику 12000 очков за карьеру", category=CAT_MILESTONES),
 ]
 
 ACHIEVEMENTS_MAP: dict[str, Achievement] = {a.id: a for a in ACHIEVEMENTS_LIST}
 
 # Увеличивай при добавлении новых ачивок, требующих бэкфилл.
 # Игроки с player.backfill_version < BACKFILL_VERSION будут обработаны один раз при старте.
-BACKFILL_VERSION = 14
+BACKFILL_VERSION = 15
 
 TERMINATOR_STREAK_LEN = 5  # активная серия соперника для «Вынес терминатора»
 
@@ -136,12 +159,16 @@ def _has_alternating_tail(matches_asc: list, player_id: int, length: int = ALTER
     return all(outcomes[i] != outcomes[i + 1] for i in range(length - 1))
 
 
-def _career_points_and_sets(matches: list, player_id: int) -> tuple[int, int]:
-    """Суммарные набранные очки и выигранные партии за карьеру — с перспективы
-    player_id, независимо от исхода матча (для вех «Копил по очку»/«Сетовый
-    снайпёр» и их старших ступеней). Та же перспектива, что и в _match_line
-    (utils.py) и _compute_player_stats (services/stats.py)."""
-    points = sets_won = 0
+def _career_points_and_sets(matches: list, player_id: int) -> tuple[int, int, int]:
+    """Суммарные набранные очки, выигранные партии И отданные сопернику очки
+    за карьеру — с перспективы player_id, независимо от исхода матча (для вех
+    «Копил по очку»/«Сетовый снайпёр» и их старших ступеней, а также
+    зеркальных вех «отдал сопернику N очков» — v2.135.3, отдача очков
+    накапливается независимо от исхода МАТЧА, как и набранные очки: можно
+    отдать много очков в проигранной партии даже выиграв сам матч). Та же
+    перспектива, что и в _match_line (utils.py) и _compute_player_stats
+    (services/stats.py)."""
+    points = sets_won = points_conceded = 0
     for m in matches:
         if not m.sets_data:
             continue
@@ -152,9 +179,10 @@ def _career_points_and_sets(matches: list, player_id: int) -> tuple[int, int]:
         for s in m.sets_data:
             mine, theirs = (s["w"], s["l"]) if i_am_favored else (s["l"], s["w"])
             points += mine
+            points_conceded += theirs
             if mine > theirs:
                 sets_won += 1
-    return points, sets_won
+    return points, sets_won, points_conceded
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -356,7 +384,9 @@ async def check_win_achievements(
         maybe("superstar")
 
     # ── Вехи по очкам и выигранным партиям ───────────────────────────────────
-    career_points, career_sets_won = _career_points_and_sets(all_matches, winner.id)
+    career_points, career_sets_won, career_points_conceded = _career_points_and_sets(
+        all_matches, winner.id,
+    )
     if career_points >= 4000:
         maybe("point_saver")
     if career_points >= 8000:
@@ -369,6 +399,15 @@ async def check_win_achievements(
         maybe("set_veteran")
     if career_sets_won >= 1000:
         maybe("set_legend")
+    # ── Зеркало вех выше — очки, отданные сопернику (v2.135.3) ────────────────
+    # Накапливаются независимо от исхода МАТЧА (как и career_points) — можно
+    # отдать много очков в проигранной партии даже победив в самом матче.
+    if career_points_conceded >= 4000:
+        maybe("resilient")
+    if career_points_conceded >= 8000:
+        maybe("battle_tested")
+    if career_points_conceded >= 12000:
+        maybe("through_fire")
 
     # ── Теннисный маньячелло: 10+ матчей за сегодня ──────────────────────────
     # Граница «сегодня» — полночь по МСК (единое бизнес-правило, как в экранах и пасхалках)
@@ -555,7 +594,9 @@ async def check_loss_achievements(
     if total >= 1000:
         maybe("superstar")
 
-    career_points, career_sets_won = _career_points_and_sets(all_matches, loser.id)
+    career_points, career_sets_won, career_points_conceded = _career_points_and_sets(
+        all_matches, loser.id,
+    )
     if career_points >= 4000:
         maybe("point_saver")
     if career_points >= 8000:
@@ -568,6 +609,12 @@ async def check_loss_achievements(
         maybe("set_veteran")
     if career_sets_won >= 1000:
         maybe("set_legend")
+    if career_points_conceded >= 4000:
+        maybe("resilient")
+    if career_points_conceded >= 8000:
+        maybe("battle_tested")
+    if career_points_conceded >= 12000:
+        maybe("through_fire")
 
     # Теннисный маньячелло: 10+ матчей за сегодня
     # Граница «сегодня» — полночь по МСК (единое бизнес-правило, как в экранах и пасхалках)
@@ -606,10 +653,28 @@ async def check_loss_achievements(
     if loss_streak >= 10:
         maybe("valley_of_tears")
 
-    # ── Мешок для битья: 50 поражений за карьеру ─────────────────────────────
+    # ── Мешок для битья: 50 поражений за карьеру + 2 старшие ступени (v2.135.3,
+    # достраивают лесенку рядом с уже существующей — было единственной вехой
+    # без прогрессии, в отличие от матчей/очков/партий у побед) ──────────────
     total_losses = sum(1 for m in all_matches if m.winner_id is not None and m.winner_id != loser.id)
     if total_losses >= 50:
         maybe("punching_bag")
+    if total_losses >= 150:
+        maybe("unbreakable")
+    if total_losses >= 300:
+        maybe("tempered")
+
+    # ── Прошёл школу клуба: проиграл каждому игроку клуба хотя бы раз —
+    # уважительное зеркало «Со всеми познакомился» (collector) в
+    # check_win_achievements, с позиции проигравшего (v2.135.3).
+    other_ids_r = await session.execute(select(Player.id).where(Player.id != loser.id))
+    other_ids = {row[0] for row in other_ids_r.all()}
+    lost_to_ids = {
+        (m.challenged_id if m.challenger_id == loser.id else m.challenger_id)
+        for m in all_matches if m.winner_id is not None and m.winner_id != loser.id
+    }
+    if other_ids and other_ids.issubset(lost_to_ids):
+        maybe("club_school")
 
     # ── Личная дичь: 10+ поражений подряд от ОДНОГО соперника — зеркало
     # «То что мертво» (dominator) с позиции проигравшего. h2h_matches — desc
@@ -684,6 +749,7 @@ async def check_draw_achievements(
     # Первый матч
     if total == 1:
         maybe("press_start")
+        maybe("first_draw")
 
     # Дипломат: 5 ничьих
     total_draws = sum(1 for m in all_matches if m.winner_id is None)
@@ -727,7 +793,9 @@ async def check_draw_achievements(
     if player.rating >= 1200.0:
         maybe("rating_1200")
 
-    career_points, career_sets_won = _career_points_and_sets(all_matches, player.id)
+    career_points, career_sets_won, career_points_conceded = _career_points_and_sets(
+        all_matches, player.id,
+    )
     if career_points >= 4000:
         maybe("point_saver")
     if career_points >= 8000:
@@ -740,6 +808,12 @@ async def check_draw_achievements(
         maybe("set_veteran")
     if career_sets_won >= 1000:
         maybe("set_legend")
+    if career_points_conceded >= 4000:
+        maybe("resilient")
+    if career_points_conceded >= 8000:
+        maybe("battle_tested")
+    if career_points_conceded >= 12000:
+        maybe("through_fire")
 
     # Теннисный маньячелло: 10+ матчей за сегодня
     # Граница «сегодня» — полночь по МСК (единое бизнес-правило, как в экранах и пасхалках)
@@ -819,6 +893,124 @@ async def check_boss_fight_challenger_defeat_achievement(challenger: Player) -> 
     return new_ids
 
 
+# ── Check after boss-fight loss (as the reigning champion) ───────────────────────
+
+async def check_boss_fight_guard_change_achievement(ex_champion: Player) -> list[str]:
+    """'Смена караула' — потерял трон, проиграв босс-файт БУДУЧИ действующим
+    чемпионом (v2.135.3). Зеркало throne_denied (для проигравшего
+    ПРЕТЕНДЕНТА) с позиции проигравшего ЧЕМПИОНА.
+
+    Вызывается напрямую из _handle_boss_fight_outcome() (match_result.py)
+    сразу после успешного try_transfer_champion() — тем же прямым паттерном,
+    без запросов к БД, что и check_boss_fight_defense_achievement().
+
+    В отличие от throne_denied — ВОССТАНАВЛИВАЕТСЯ бэкфиллом: переход трона
+    через боссфайт оставляет постоянный след в ChampionReign (ended_at
+    закрывающегося правления совпадает с completed_at матча смены — тот же
+    принцип связки, что использует _reign_end_narrative в leaderboard.py),
+    поэтому это не требует снапшота роли на произвольный момент, только
+    корреляции с уже сохранённой историей правлений.
+    """
+    earned = get_achievements(ex_champion)
+    new_ids: list[str] = []
+    if _add_new(earned, "guard_change"):
+        new_ids.append("guard_change")
+        ex_champion.achievements = json.dumps(earned)
+    return new_ids
+
+
+# ── Check after boss-fight defense reaching a 3+ in-a-row streak ─────────────────
+
+async def check_boss_fight_fortress_achievement(
+    session: AsyncSession, champion: Player,
+) -> list[str]:
+    """'Несокрушимый' — защитил трон 3+ раза подряд без потери, В РАМКАХ
+    ОДНОГО правления (v2.135.3). Внутри одного ChampionReign КАЖДЫЙ боссфайт
+    чемпиона по конструкции try_transfer_champion() — победа (поражение
+    немедленно закрыло бы правление) — тот же принцип, что у клубного
+    рекорда most_boss_fight_defenses() (utils.py), здесь просто применённый
+    just-in-time к ТЕКУЩЕМУ (ещё не закрытому) правлению, без повторного
+    скана всех правлений клуба.
+
+    Вызывается напрямую из _handle_boss_fight_outcome() (match_result.py)
+    сразу после check_boss_fight_defense_achievement(), в ветке «трон
+    удержан» — champion гарантированно ещё владеет троном (branch уже это
+    проверила), лишний запрос is_champion не нужен.
+    """
+    earned = get_achievements(champion)
+    new_ids: list[str] = []
+
+    def maybe(ach_id: str) -> None:
+        if _add_new(earned, ach_id):
+            new_ids.append(ach_id)
+
+    reign_r = await session.execute(
+        select(ChampionReign).where(
+            ChampionReign.player_id == champion.id, ChampionReign.ended_at.is_(None),
+        )
+    )
+    reign = reign_r.scalar_one_or_none()
+    if reign is not None:
+        cnt_r = await session.execute(
+            select(func.count()).select_from(Match).where(
+                Match.is_boss_fight == True,  # noqa: E712
+                Match.status == MatchStatus.completed,
+                or_(Match.challenger_id == champion.id, Match.challenged_id == champion.id),
+                Match.completed_at >= reign.started_at,
+            )
+        )
+        if (cnt_r.scalar() or 0) >= 3:
+            maybe("fortress")
+
+    if new_ids:
+        champion.achievements = json.dumps(earned)
+    return new_ids
+
+
+# ── Check after losing the throne to auto-release (inactivity) ───────────────────
+
+async def check_throne_abdication_achievement(ex_champion: Player) -> list[str]:
+    """'Отпустил трон' — потерял трон через авто-освобождение (бездействие),
+    а не в бою (v2.135.3). Вызывается напрямую из check_champion_auto_release()
+    (scheduler.py) сразу после успешного try_transfer_champion() — тем же
+    прямым паттерном без запросов к БД, что и check_boss_fight_defense_achievement().
+
+    ВОССТАНАВЛИВАЕТСЯ бэкфиллом — та же связка ChampionReign.ended_at с
+    боссфайт-матчем, что и у guard_change: если правление закрылось БЕЗ
+    такого матча, значит это было авто-освобождение (тот же вывод, что
+    делает "без боя" в _reign_end_narrative, leaderboard.py).
+    """
+    earned = get_achievements(ex_champion)
+    new_ids: list[str] = []
+    if _add_new(earned, "abdication"):
+        new_ids.append("abdication")
+        ex_champion.achievements = json.dumps(earned)
+    return new_ids
+
+
+async def notify_new_achievements(bot, player: Player, new_ids: list[str]) -> None:
+    """Отправляет игроку уведомление о новых достижениях.
+
+    Перенесена сюда из match_result.py (v2.135.3, была приватной
+    _notify_achievements) — понадобилась ещё и в scheduler.py для
+    check_throne_abdication_achievement(), поэтому переместилась в
+    achievements.py вместе с остальными помощниками ачивок, а не осталась
+    приватной в одном хендлере и не задублировалась во втором месте.
+    """
+    if not new_ids:
+        return
+    achs = [ACHIEVEMENTS_MAP[aid] for aid in new_ids if aid in ACHIEVEMENTS_MAP]
+    if not achs:
+        return
+    if len(achs) == 1:
+        a = achs[0]
+        text = f"🏅 <b>Новое достижение!</b>\n\n{a.emoji} <b>{a.name}</b>\n<i>{a.desc}</i>"
+    else:
+        lines = "\n".join(f"{a.emoji} <b>{a.name}</b> — <i>{a.desc}</i>" for a in achs)
+        text = f"🏅 <b>Новые достижения!</b>\n\n{lines}"
+    await safe_send(bot, player.telegram_id, text)
+
+
 # ── Check after losing challenger status (before reaching a boss fight) ──────────
 
 async def check_chance_blown_achievement(ex_challenger: Player) -> list[str]:
@@ -855,6 +1047,14 @@ async def backfill_achievements(session: AsyncSession) -> None:
     chance_blown, rock_bottom и rating_1200 не восстанавливаются (требуют
     снапшот рейтинга/роли на момент КОНКРЕТНОГО исторического матча, а не
     текущее значение) — будут начислены в реальном времени.
+
+    guard_change/abdication/fortress (v2.135.3) — ВОССТАНАВЛИВАЮТСЯ, в
+    отличие от throne_denied/chance_blown: боссфайт-переход трона и границы
+    правления оставляют постоянный след в ChampionReign (в отличие от
+    непереходящего поражения претендента, throne_denied, после которого не
+    остаётся никакой записи вообще) — см. глобальный проход по ChampionReign
+    ниже, использующий ту же связку ended_at↔completed_at, что и
+    _reign_end_narrative (leaderboard.py).
 
     С v2.106.0 попутно (BACKFILL_VERSION 10→11, форсирует повторный проход
     ДАЖЕ для уже полностью забэкфилленных игроков) заполняет даты получения
@@ -896,6 +1096,57 @@ async def backfill_achievements(session: AsyncSession) -> None:
         club_streaks[m.winner_id] = club_streaks.get(m.winner_id, 0) + 1
         club_streaks[loser_id] = 0
 
+    # ── Смена караула / Отпустил трон / Несокрушимый: глобальный проход по
+    # ChampionReign (v2.135.3) — та же связка ended_at↔completed_at боссфайта,
+    # что использует _reign_end_narrative (leaderboard.py) для нарратива «как
+    # закончилось правление», здесь используется для определения id игрока.
+    reigns_r = await session.execute(select(ChampionReign))
+    reigns = reigns_r.scalars().all()
+    now_for_reigns = datetime.now(timezone.utc).replace(tzinfo=None)
+    guard_change_dates: dict[int, datetime] = {}
+    abdication_dates: dict[int, datetime] = {}
+    fortress_dates: dict[int, datetime] = {}
+    for reign in reigns:
+        # Несокрушимый — 3+ защит подряд — считаем для ЛЮБОГО правления,
+        # открытого или закрытого. Явный Match.winner_id == reign.player_id
+        # (а не просто «любой боссфайт внутри диапазона дат», как у клубного
+        # рекорда most_boss_fight_defenses в utils.py) — для ЗАКРЫТОГО
+        # правления диапазон [started_at, ended_at] ВКЛЮЧАЕТ саму проигранную
+        # партию, закрывшую правление (её completed_at и есть ended_at) —
+        # без явного фильтра по победителю она посчиталась бы четвёртой
+        # «защитой», хотя это как раз потеря трона (поймано тестом).
+        end = reign.ended_at or now_for_reigns
+        defenses_r = await session.execute(
+            select(Match).where(
+                Match.is_boss_fight == True,  # noqa: E712
+                Match.status == MatchStatus.completed,
+                Match.winner_id == reign.player_id,
+                or_(Match.challenger_id == reign.player_id, Match.challenged_id == reign.player_id),
+                Match.completed_at >= reign.started_at,
+                Match.completed_at <= end,
+            ).order_by(Match.completed_at)
+        )
+        defenses = defenses_r.scalars().all()
+        if len(defenses) >= 3 and reign.player_id not in fortress_dates:
+            fortress_dates[reign.player_id] = defenses[2].completed_at
+
+        if reign.ended_at is None:
+            continue
+        end_match_r = await session.execute(
+            select(Match).where(
+                Match.is_boss_fight == True,  # noqa: E712
+                Match.status == MatchStatus.completed,
+                Match.completed_at == reign.ended_at,
+                or_(Match.challenger_id == reign.player_id, Match.challenged_id == reign.player_id),
+                Match.winner_id != reign.player_id,
+            ).limit(1)
+        )
+        end_match = end_match_r.scalar_one_or_none()
+        if end_match is not None:
+            guard_change_dates[reign.player_id] = end_match.completed_at
+        else:
+            abdication_dates[reign.player_id] = reign.ended_at
+
     for player in players:
         earned = get_achievements(player)
         dates: dict[str, datetime | None] = {}  # ach_id -> дата первого срабатывания в ЭТОМ проходе
@@ -923,6 +1174,16 @@ async def backfill_achievements(session: AsyncSession) -> None:
         mark("press_start", matches[0].completed_at)
         if matches[0].winner_id is not None and matches[0].winner_id != player.id:
             mark("first_pancake", matches[0].completed_at)
+        elif matches[0].winner_id is None:
+            mark("first_draw", matches[0].completed_at)
+
+        # Смена караула / Отпустил трон / Несокрушимый (из глобального прохода выше)
+        if player.id in guard_change_dates:
+            mark("guard_change", guard_change_dates[player.id])
+        if player.id in abdication_dates:
+            mark("abdication", abdication_dates[player.id])
+        if player.id in fortress_dates:
+            mark("fortress", fortress_dates[player.id])
 
         # Вынес терминатора (из глобального прохода выше)
         if player.id in terminator_dates:
@@ -949,6 +1210,8 @@ async def backfill_achievements(session: AsyncSession) -> None:
         # на котором вехи по очкам/партиям пересечены, а не просто финальную сумму.
         running_points = 0
         running_sets_won = 0
+        running_points_conceded = 0
+        lost_to_opponents: set[int] = set()  # «Прошёл школу клуба»
 
         for m in matches:
             opp_id = m.challenged_id if m.challenger_id == player.id else m.challenger_id
@@ -977,6 +1240,7 @@ async def backfill_achievements(session: AsyncSession) -> None:
                 for s in m.sets_data:
                     mine, theirs = (s["w"], s["l"]) if is_favored else (s["l"], s["w"])
                     running_points += mine
+                    running_points_conceded += theirs
                     if mine > theirs:
                         running_sets_won += 1
             if running_points >= 4000:
@@ -991,6 +1255,12 @@ async def backfill_achievements(session: AsyncSession) -> None:
                 mark("set_veteran", m.completed_at)
             if running_sets_won >= 1000:
                 mark("set_legend", m.completed_at)
+            if running_points_conceded >= 4000:
+                mark("resilient", m.completed_at)
+            if running_points_conceded >= 8000:
+                mark("battle_tested", m.completed_at)
+            if running_points_conceded >= 12000:
+                mark("through_fire", m.completed_at)
 
             if is_win:
                 total_wins += 1
@@ -1095,6 +1365,14 @@ async def backfill_achievements(session: AsyncSession) -> None:
                     mark("valley_of_tears", m.completed_at)
                 if total_losses == 50:
                     mark("punching_bag", m.completed_at)
+                if total_losses == 150:
+                    mark("unbreakable", m.completed_at)
+                if total_losses == 300:
+                    mark("tempered", m.completed_at)
+
+                lost_to_opponents.add(opp_id)
+                if other_ids and other_ids.issubset(lost_to_opponents):
+                    mark("club_school", m.completed_at)
 
                 # no_sweat: проигравший мог выиграть партию 11:0
                 if m.sets_data:

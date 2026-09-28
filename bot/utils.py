@@ -447,10 +447,17 @@ async def longest_champion_reign(session: AsyncSession) -> tuple[int, int] | Non
 
 async def most_boss_fight_defenses(session: AsyncSession) -> tuple[int, int] | None:
     """(player_id, число побед) — больше всего успешных защит трона за ОДНО
-    правление. Защита = боссфайт-победа чемпиона в рамках его ChampionReign;
-    поражение в боссфайте по конструкции try_transfer_champion немедленно
-    закрывает правление, поэтому все боссфайты чемпиона внутри его правления
-    заведомо победы — отдельно сверять исход каждого не нужно.
+    правление. Защита = боссфайт-победа чемпиона в рамках его ChampionReign.
+
+    Явный Match.winner_id == reign.player_id (v2.135.3, найдено тестами на
+    fortress-ачивку) — для ЗАКРЫТОГО правления диапазон [started_at, ended_at]
+    ВКЛЮЧАЕТ саму проигранную партию, которая это правление закрыла (её
+    completed_at и есть ended_at, см. try_transfer_champion в этом же файле):
+    без явного фильтра по победителю она бы посчиталась ещё одной «защитой»,
+    хотя это как раз потеря трона. Для ОТКРЫТОГО правления фильтр — no-op
+    (там и так по конструкции try_transfer_champion все боссфайты — победы,
+    поражение немедленно закрыло бы правление), поэтому раньше отсутствие
+    фильтра маскировалось для типичного случая «текущий чемпион».
 
     None, если правлений не было (фича ни разу не бутстрапилась) или ни в одном
     правлении не было ни одной защиты."""
@@ -467,6 +474,7 @@ async def most_boss_fight_defenses(session: AsyncSession) -> tuple[int, int] | N
             select(func.count()).select_from(Match).where(
                 Match.is_boss_fight == True,  # noqa: E712
                 Match.status == MatchStatus.completed,
+                Match.winner_id == reign.player_id,
                 or_(Match.challenger_id == reign.player_id, Match.challenged_id == reign.player_id),
                 Match.completed_at >= reign.started_at,
                 Match.completed_at <= end,

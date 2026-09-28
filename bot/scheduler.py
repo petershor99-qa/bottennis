@@ -14,6 +14,11 @@ from sqlalchemy.orm import selectinload
 from bot.db.database import DATABASE_URL, async_session
 from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import busy_with_match_kb, year_vote_invite_kb
+from bot.services.achievements import (
+    check_throne_abdication_achievement,
+    notify_new_achievements,
+    record_achievements_earned,
+)
 from bot.services.stats import _compute_player_stats, _nearest_achievement_progress
 from bot.services.year_vote import (
     YEAR_VOTE_CLOSE_AT,
@@ -245,13 +250,18 @@ async def send_match_reminders(bot: Bot) -> None:
             logger.info("Отправлено напоминаний: %d", len(matches))
 
 
-# ── Авто-освобождение трона (7 дней бездействия чемпиона) ─────────────────────
+# ── Авто-освобождение трона (14 дней бездействия чемпиона) ────────────────────
+# Было 7 дней — по живой жалобе пользователя (2026-09-28): чемпион ушёл в
+# отпуск на выходные + начало недели, трон освободился, хотя разумный срок
+# терпимости для 5-7-игрокового клуба с редкими перерывами в игре ощутимо
+# больше недели. Поднято до 14 — тот же принцип «пересмотреть решение, когда
+# видим реальные последствия», что и у других порогов в проекте.
 
-CHAMPION_INACTIVITY_DAYS = 7
+CHAMPION_INACTIVITY_DAYS = 14
 
 
 async def check_champion_auto_release(bot: Bot) -> None:
-    """Раз в час: если чемпион не завершал матчей больше 7 дней — трон
+    """Раз в час: если чемпион не завершал матчей больше 14 дней — трон
     переходит топу по очкам среди игроков с ≥NEWCOMER_THRESHOLD матчей, без
     босс-файта. Судим по дате последнего ЗАВЕРШЁННОГО матча чемпиона —
     активный незавершённый матч в счёт не идёт. Кандидатов нет → трон остаётся.
@@ -303,13 +313,18 @@ async def check_champion_auto_release(bot: Bot) -> None:
         # (например, чемпион только что завершил босс-файт) — тихо отступаем.
         if not await try_transfer_champion(session, champion.id, heir.id, at=now):
             return
+        new_ach_abdication = await check_throne_abdication_achievement(champion)
+        if new_ach_abdication:
+            record_achievements_earned(session, champion.id, new_ach_abdication, now)
         await session.commit()
 
         await notify_all_players(
             bot, session,
-            f"👑 <b>Трон освободился</b> — {h(old_champion_name)} не играл больше недели.\n"
+            f"👑 <b>Трон освободился</b> — {h(old_champion_name)} не играл больше двух недель.\n"
             f"Новый чемпион: <b>{h(heir.display_name)}</b>.",
         )
+        if new_ach_abdication:
+            await notify_new_achievements(bot, champion, new_ach_abdication)
 
         logger.info("Авто-освобождение трона: %s → %s", old_champion_name, heir.display_name)
 
