@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from bot.utils import (
     _ORDINAL_FEM,
+    _ORDINAL_FEM_NOM,
     BLOWOUT_PHRASES,
     CLOSE_DECIDER_FRAGMENTS,
     COMEBACK_OPENERS,
@@ -183,13 +184,17 @@ def test_report_comeback_opener_varies_by_match_id():
     (_stable_pool_index, v2.119.0), поэтому точное совпадение «N подряд id
     → все N вариантов пула» больше не гарантировано (в отличие от простого
     m.id % len) — проверяем достаточную вариативность на широкой выборке,
-    не строгое покрытие ровно len(COMEBACK_OPENERS) подряд идущих id."""
+    не строгое покрытие ровно len(COMEBACK_OPENERS) подряд идущих id.
+    Выборка (200) подобрана с запасом под текущий размер пула (v2.135.2 —
+    пул расширен 8→15, на 40 id ожидаемое покрытие уже не гарантирует
+    len(pool)-1 разных вариантов — это вопрос коллекционирования купонов,
+    не порог декорреляции)."""
     sets = [{"w": 6, "l": 11}, {"w": 8, "l": 11}, {"w": 11, "l": 6}, {"w": 11, "l": 6}]
     openers = {
         match_report(make_match(sets, winner_id=1, rating_change=5.0, match_id=mid), "Игрок")
-        for mid in range(40)
+        for mid in range(200)
     }
-    assert len(openers) >= len(COMEBACK_OPENERS) - 1
+    assert len(openers) >= len(COMEBACK_OPENERS) - 2
 
 
 def test_report_only_first_set_lost_is_not_comeback():
@@ -214,7 +219,7 @@ def test_report_marathon_only():
     m = make_match(sets, winner_id=1, rating_change=5.0)
     text = match_report(m, "Игрок")
     idx = _stable_pool_index(m.id, "marathon", len(MARATHON_FRAGMENTS))
-    fragment = MARATHON_FRAGMENTS[idx].format(n=5, ord="пятой")
+    fragment = MARATHON_FRAGMENTS[idx].format(n=5, ord="пятой", ord_nom="пятая")
     expected = fragment[0].upper() + fragment[1:] + "."
     assert text == expected
     assert "влетел в яму" not in text and "провалил старт" not in text
@@ -225,15 +230,20 @@ def test_report_marathon_uses_real_set_count_not_hardcoded_five():
     партиями (marathon триггерится от len(sets) >= 5, MAX_SETS в
     match_result.py = 10) раньше всегда показывали «дошло до пятой»/«все 5
     партий», даже если партий было реально 7. Текст обязан отражать реальное
-    число партий и правильное порядковое слово (см. _ORDINAL_FEM)."""
+    число партий и правильное порядковое слово (см. _ORDINAL_FEM/_ORDINAL_FEM_NOM).
+    Не каждый фрагмент пула вообще упоминает число (например «дошли до
+    решающей — оба явно не хотели уступать») — поэтому сравниваем с точно
+    вычисленным ожидаемым текстом, а не ищем «7»/«седьмой» вслепую."""
     sets = [{"w": 11, "l": 9}] * 7
     m = make_match(sets, winner_id=1, rating_change=5.0)
     text = match_report(m, "Игрок")
     assert "5" not in text
     assert "пятой" not in text
-    assert "7" in text or "седьмой" in text
+    assert "пятая" not in text
     idx = _stable_pool_index(m.id, "marathon", len(MARATHON_FRAGMENTS))
-    fragment = MARATHON_FRAGMENTS[idx].format(n=7, ord=_ORDINAL_FEM[7])
+    fragment = MARATHON_FRAGMENTS[idx].format(
+        n=7, ord=_ORDINAL_FEM[7], ord_nom=_ORDINAL_FEM_NOM[7],
+    )
     expected = fragment[0].upper() + fragment[1:] + "."
     assert text == expected
 
@@ -283,7 +293,7 @@ def test_report_all_factors_combined():
     opener = COMEBACK_OPENERS[opener_idx].format(name="Игрок")
     tail_fragments = [
         MARATHON_FRAGMENTS[_stable_pool_index(m.id, "marathon", len(MARATHON_FRAGMENTS))]
-        .format(n=5, ord="пятой"),
+        .format(n=5, ord="пятой", ord_nom="пятая"),
         DEUCE_FRAGMENTS[_stable_pool_index(m.id, "deuce", len(DEUCE_FRAGMENTS))],
         UPSET_FRAGMENT_TEMPLATES[_stable_pool_index(m.id, "upset", len(UPSET_FRAGMENT_TEMPLATES))].format(delta=20.0),
     ]
