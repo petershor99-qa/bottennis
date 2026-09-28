@@ -187,21 +187,29 @@ EOF
 gh pr checks <N> --watch
 ```
 
-## Step 7 — Merging main is the user's call, not yours, by default
+## Step 7 — Merge main automatically once CI is green
 
 This is the one action in the whole flow with real, hard-to-undo consequences
-(it ships to real players immediately via autodeploy) — that's why it's the
-established convention that **the user clicks merge on develop→main**, even
-though you drive everything else. Tell them the PR is green and ready, then
-stop and wait. Only merge it yourself if they've explicitly said to ship/deploy
-this round (e.g. "делай всё", "и задеплой", "смёржи и в прод") — in that case,
-merge it the same way as step 3:
+(it ships to real players immediately via autodeploy) — for a long time the
+convention here was that the user clicks merge on develop→main themselves.
+**The user explicitly changed this on 2026-09-28**: merge develop→main
+automatically, without asking each time, as soon as CI is green and the PR
+is mergeable (no conflicts, no unresolved review threads). Don't wait for a
+"смёржи"/"в прод" go-ahead anymore — treat a green, clean PR from this flow
+as already authorized to merge. Still don't merge on red CI, a conflict, or
+an open review thread asking for changes — those still need a fix or a
+question first, same as ever.
 ```bash
 gh pr merge <N> --merge --delete-branch
 ```
-Either way, before you do anything with it, check whether it's already been
-merged out from under you — the user merging main PRs on their own, between
-your turns, without telling you first, happens routinely in this project:
+(On a session restricted to a single designated branch — e.g. a
+Claude Code Remote/web session that can only push to one branch — don't pass
+`--delete-branch` if that branch is your own working branch; deleting it out
+from under yourself breaks the session.)
+
+Before you do anything with it, check whether it's already been merged out
+from under you — the user merging main PRs on their own, between your turns,
+without telling you first, can still happen:
 ```bash
 gh pr view <N> --json state,mergedAt
 ```
