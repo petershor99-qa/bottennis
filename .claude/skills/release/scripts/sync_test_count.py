@@ -20,7 +20,17 @@ CLAUDE.md остаётся на ручной/Клодовской сверке �
 в отличие от количества тестов (трёхзначное, коллизий не было).
 
 Использование (из корня репозитория):
-    py -3.13 .claude/skills/release/scripts/sync_test_count.py
+    py -3.13 .claude/skills/release/scripts/sync_test_count.py       # Windows
+    python3 .claude/skills/release/scripts/sync_test_count.py        # Linux/macOS/облачные сессии
+
+Раньше жёстко вызывал `py -3.13` (Windows py-launcher) — на любой другой
+платформе (Linux-контейнер облачной сессии, macOS) команда просто не
+существует, скрипт падал `FileNotFoundError` ещё до первой попытки прогнать
+тесты (живой случай — см. RELEASE_NOTES.md/git log при отладке в облачной
+сессии). Теперь пробует по очереди несколько способов запустить pytest
+тем же интерпретатором, что уже используется для самого скрипта — так
+играть с версией Python не нужно вообще, и одна кодовая база работает
+одинаково что на Windows-компьютере разработчика, что в CI, что в облаке.
 """
 import re
 import subprocess
@@ -56,11 +66,31 @@ ACHIEVEMENT_TOTAL_HIDDEN_PATTERNS = [
 ]
 
 
-def get_current_test_count() -> int:
-    result = subprocess.run(
+def _run_pytest() -> subprocess.CompletedProcess:
+    """Пробует запустить pytest по очереди несколькими способами и возвращает
+    первый результат, который вообще смог стартовать (FileNotFoundError —
+    команда не найдена, пробуем следующую; сам pytest после старта уже может
+    быть красным — это не повод пробовать другую команду, вывод разбирает
+    вызывающий). `sys.executable -m pytest` идёт первым: это тот же
+    интерпретатор, что уже запустил этот скрипт, — не нужно ни знать, ни
+    угадывать версию Python или наличие Windows py-launcher."""
+    candidates = [
+        [sys.executable, "-m", "pytest", "-q"],
         ["py", "-3.13", "-m", "pytest", "-q"],
-        cwd=ROOT, capture_output=True, text=True,
-    )
+        ["python3", "-m", "pytest", "-q"],
+    ]
+    last_error = None
+    for cmd in candidates:
+        try:
+            return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+        except FileNotFoundError as e:
+            last_error = e
+            continue
+    raise RuntimeError(f"Не нашлось рабочей команды для запуска pytest: {last_error}")
+
+
+def get_current_test_count() -> int:
+    result = _run_pytest()
     match = re.search(r"(\d+) passed", result.stdout)
     if not match:
         print("Не удалось распарсить число тестов из вывода pytest — тесты красные?", file=sys.stderr)
