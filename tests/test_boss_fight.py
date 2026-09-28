@@ -478,6 +478,62 @@ async def test_boss_fight_winner_does_not_get_throne_denied_on_transfer(db):
     assert "throne_denied" not in get_achievements(challenger_p)
 
 
+async def test_boss_fight_guard_change_awarded_to_ex_champion_on_transfer(db):
+    """'Смена караула' (v2.135.3) — бывший чемпион получает её, когда трон
+    переходит через боссфайт (зеркало throne_denied, но с позиции чемпиона,
+    а не проигравшего претендента)."""
+    champion = _player(1, "Champion", rating=1000.0)
+    champion.is_champion = True
+    challenger_p = _player(2, "Challenger", rating=999.0)
+    db.add_all([champion, challenger_p])
+    await db.flush()
+    m = await _accepted_match(db, challenger_p, champion, is_boss_fight=True)
+    await db.commit()
+    st = await _confirming_state(
+        m.id, challenger_p.id,
+        [{"reporter": 11, "opponent": 0}, {"reporter": 11, "opponent": 0}],
+    )
+    cb, bot = _callback(2, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+
+    assert challenger_p.is_champion is True
+    assert "guard_change" in get_achievements(champion)
+    assert "guard_change" not in get_achievements(challenger_p)
+
+
+async def test_boss_fight_fortress_after_3rd_consecutive_defense(db):
+    """'Несокрушимый' (v2.135.3) — даётся ровно на 3-й защите подряд в рамках
+    одного правления, не раньше."""
+    champion = _player(1, "Champion", rating=1000.0)
+    champion.is_champion = True
+    challenger_p = _player(2, "Challenger", rating=999.0)
+    db.add_all([champion, challenger_p])
+    await db.flush()
+    db.add(ChampionReign(player_id=champion.id, started_at=datetime(2026, 1, 1), ended_at=None))
+    await db.commit()
+
+    for _ in range(2):
+        m = await _accepted_match(db, champion, challenger_p, is_boss_fight=True)
+        await db.commit()
+        st = await _confirming_state(
+            m.id, champion.id,
+            [{"reporter": 11, "opponent": 0}, {"reporter": 11, "opponent": 0}],
+        )
+        cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+        await confirm_result(cb, db, st, bot)
+        assert "fortress" not in get_achievements(champion)
+
+    m = await _accepted_match(db, champion, challenger_p, is_boss_fight=True)
+    await db.commit()
+    st = await _confirming_state(
+        m.id, champion.id,
+        [{"reporter": 11, "opponent": 0}, {"reporter": 11, "opponent": 0}],
+    )
+    cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
+    await confirm_result(cb, db, st, bot)
+    assert "fortress" in get_achievements(champion)
+
+
 async def test_regular_match_loss_does_not_grant_throne_denied(db):
     """Обычное (не боссфайт) поражение не выдаёт 'throne_denied'."""
     p1 = _player(1, "Alice", rating=1000.0)
@@ -622,13 +678,15 @@ async def test_confirm_result_hides_rematch_button_after_boss_fight(db):
 
 # ── E. Авто-освобождение трона ────────────────────────────────────────────────
 
-async def test_champion_auto_release_transfers_after_7_days_inactive(monkeypatch, db_factory):
+async def test_champion_auto_release_transfers_after_14_days_inactive(monkeypatch, db_factory):
+    """Порог поднят с 7 до 14 дней (v2.135.3, живая жалоба пользователя —
+    неделя оказалась слишком коротким сроком терпимости)."""
     import bot.scheduler as sched
 
     factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
-    old_completed = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=8)
+    old_completed = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=15)
     async with factory() as s:
         champion = _player(1, "Champion", rating=1200.0)
         champion.is_champion = True
@@ -652,6 +710,8 @@ async def test_champion_auto_release_transfers_after_7_days_inactive(monkeypatch
     assert heir_after.is_champion is True
     texts = [c.args[1] for c in bot.send_message.await_args_list]
     assert any("Трон освободился" in t for t in texts)
+    assert any("больше двух недель" in t for t in texts)
+    assert "abdication" in get_achievements(champion_after)
 
 
 async def test_throne_cracking_notifies_champion_when_chaser_close(monkeypatch, db_factory):
@@ -800,7 +860,7 @@ async def test_champion_auto_release_no_candidates_keeps_throne(monkeypatch, db_
     factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
-    old_completed = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=8)
+    old_completed = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=15)
     async with factory() as s:
         champion = _player(1, "Champion", rating=1200.0)
         champion.is_champion = True
@@ -823,7 +883,7 @@ async def test_champion_auto_release_no_candidates_keeps_throne(monkeypatch, db_
     bot.send_message.assert_not_called()
 
 
-async def test_champion_auto_release_not_triggered_within_7_days(monkeypatch, db_factory):
+async def test_champion_auto_release_not_triggered_within_14_days(monkeypatch, db_factory):
     import bot.scheduler as sched
 
     factory = db_factory
@@ -1136,7 +1196,7 @@ async def test_auto_release_skipped_when_champion_has_active_match(monkeypatch, 
     factory = db_factory
     monkeypatch.setattr(sched, "async_session", factory)
 
-    old_completed = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=8)
+    old_completed = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=15)
     async with factory() as s:
         champion = _player(1, "Champion", rating=1200.0)
         champion.is_champion = True
@@ -1172,7 +1232,7 @@ async def test_auto_release_quiet_when_cas_fails(monkeypatch, db_factory):
     monkeypatch.setattr(sched, "async_session", factory)
     monkeypatch.setattr(sched, "try_transfer_champion", AsyncMock(return_value=False))
 
-    old_completed = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=8)
+    old_completed = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=15)
     async with factory() as s:
         champion = _player(1, "Champion", rating=1200.0)
         champion.is_champion = True
@@ -1481,6 +1541,35 @@ async def test_most_boss_fight_defenses_none_when_no_reigns(db):
     db.add(p1)
     await db.flush()
     assert await most_boss_fight_defenses(db) is None
+
+
+async def test_most_boss_fight_defenses_excludes_the_reign_ending_loss(db):
+    """Регресс (v2.135.3, найдено тестами на fortress-ачивку): диапазон
+    [started_at, ended_at] ЗАКРЫТОГО правления включает саму проигранную
+    партию, которая правление закрыла (её completed_at == ended_at) — без
+    явного фильтра по победителю она бы посчиталась ещё одной «защитой»."""
+    p1, p2 = _player(1, "Champ"), _player(2, "Challenger")
+    db.add_all([p1, p2])
+    await db.flush()
+    loss_at = datetime(2026, 1, 5, 12, 0, 0)
+    db.add(ChampionReign(player_id=p1.id, started_at=datetime(2026, 1, 1), ended_at=loss_at))
+    db.add(ChampionReign(player_id=p2.id, started_at=loss_at, ended_at=None))
+    for i in range(2):
+        db.add(Match(
+            challenger_id=p2.id, challenged_id=p1.id, status=MatchStatus.completed,
+            winner_id=p1.id, is_boss_fight=True, sets_data=[{"w": 11, "l": 5}],
+            completed_at=datetime(2026, 1, 2 + i, 12, 0, 0),
+        ))
+    # Партия, закрывшая правление p1 — p1 её ПРОИГРАЛ (winner_id=p2).
+    db.add(Match(
+        challenger_id=p2.id, challenged_id=p1.id, status=MatchStatus.completed,
+        winner_id=p2.id, is_boss_fight=True, sets_data=[{"w": 11, "l": 5}],
+        completed_at=loss_at,
+    ))
+    await db.commit()
+
+    result = await most_boss_fight_defenses(db)
+    assert result == (p1.id, 2)  # не 3 — проигранная партия не защита
 
 
 async def test_club_records_shows_most_defenses(db):
