@@ -14,7 +14,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import AchievementEarned, Match, MatchStatus, Player
@@ -384,20 +384,12 @@ async def check_win_achievements(
         maybe("maniac")
 
     # ── То что мертво: 10+ побед подряд над одним соперником ─────────────────
-    dom_r = await session.execute(
-        select(Match)
-        .where(
-            or_(
-                and_(Match.challenger_id == winner.id, Match.challenged_id == loser.id),
-                and_(Match.challenger_id == loser.id, Match.challenged_id == winner.id),
-            ),
-            Match.status == MatchStatus.completed,
-        )
-        .order_by(desc(Match.completed_at))
-    )
-    dom_matches = dom_r.scalars().all()
-    dom_streak = 0
-    for m in dom_matches:
+    # h2h_matches — desc completed_at, БЕЗ текущего матча (переиспользован от
+    # вызывающего вместо отдельного запроса, v2.135.0 — тот же принцип, что у
+    # зеркального personal_prey в check_loss_achievements) — счёт стартует с 1
+    # (сам текущий матч уже победа над loser).
+    dom_streak = 1
+    for m in h2h_matches:
         if m.winner_id == winner.id:
             dom_streak += 1
         else:
@@ -593,7 +585,10 @@ async def check_loss_achievements(
     # ── День сурка: все матчи за сегодня — поражения (от 3), зеркало «Неистого» ─
     # Ничья прерывает цепочку так же, как и в «Неистого» (там winner_id должен
     # РАВНЯТЬСЯ id победителя — ничья с winner_id=None этому не удовлетворяет).
-    today_matches = [m for m in all_matches if m.completed_at and m.completed_at >= today_start]
+    today_matches = [
+        m for m in all_matches
+        if m.completed_at and as_naive(m.completed_at) >= today_start
+    ]
     if len(today_matches) >= 3 and all(
         m.winner_id is not None and m.winner_id != loser.id for m in today_matches
     ):
@@ -725,6 +720,12 @@ async def check_draw_achievements(
         maybe("monument")
     if total >= 1000:
         maybe("superstar")
+
+    # ── Рейтинг 1200 (v2.135.0, найдено код-ревью) — раньше проверялся только
+    # в check_win_achievements, но ничья тоже может поднять рейтинг андердога
+    # выше 1200 (см. правило про peak_rating: растёт и на победе, и на ничьей).
+    if player.rating >= 1200.0:
+        maybe("rating_1200")
 
     career_points, career_sets_won = _career_points_and_sets(all_matches, player.id)
     if career_points >= 4000:

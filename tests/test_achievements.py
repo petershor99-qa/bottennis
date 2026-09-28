@@ -645,6 +645,27 @@ async def test_no_rating_1200_below_threshold(db):
     assert "rating_1200" not in new
 
 
+async def test_rating_1200_on_draw(db):
+    """Регресс на код-ревью (v2.135.0): rating_1200 раньше проверялся только
+    в check_win_achievements, хотя ничья тоже может поднять рейтинг андердога
+    выше 1200 (peak_rating растёт и на победе, и на ничьей — то же правило)."""
+    p1, p2 = _player(1, "Alice", rating=1200.0), _player(2, "Bob", rating=1000.0)
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = await check_draw_achievements(db, p1, _DEFAULT_SETS, is_challenger=True)
+    assert "rating_1200" in new
+
+
+async def test_no_rating_1200_on_draw_below_threshold(db):
+    p1, p2 = _player(1, "Alice", rating=1199.9), _player(2, "Bob", rating=1000.0)
+    db.add_all([p1, p2])
+    await db.flush()
+
+    new = await check_draw_achievements(db, p1, _DEFAULT_SETS, is_challenger=True)
+    assert "rating_1200" not in new
+
+
 # ── idempotency ────────────────────────────────────────────────────────────────
 
 # ── takova_zhis ─────────────────────────────────────────────────────────────────
@@ -1314,6 +1335,23 @@ async def test_no_groundhog_day_with_a_win_today(db):
     await _do_win(db, p1, p2, dt=today + timedelta(minutes=1))  # победа p1
     new = await _do_loss(db, p2, p1, dt=today + timedelta(minutes=2))
     assert "groundhog_day" not in new
+
+
+async def test_groundhog_day_survives_tz_aware_completed_at(db):
+    """Регресс на код-ревью (v2.135.0): единственное место в файле, где
+    сравнение с today_start шло БЕЗ as_naive() — тогда как зеркальный
+    relentless эту защиту уже имел. Tz-aware completed_at (as_naive защищает
+    именно от такой примеси) не должен ронять TypeError."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    today = msk_day_start() + timedelta(hours=9)
+    aware_today = today.replace(tzinfo=timezone.utc)
+    await _do_loss(db, p2, p1, dt=aware_today)
+    await _do_loss(db, p2, p1, dt=today + timedelta(minutes=1))
+    new = await _do_loss(db, p2, p1, dt=today + timedelta(minutes=2))
+    assert "groundhog_day" in new
 
 
 async def test_backfill_groundhog_day(db):

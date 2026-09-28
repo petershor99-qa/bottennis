@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from html import escape as h
@@ -36,6 +37,12 @@ from bot.utils import (
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+# Сериализует проверку «нет активного матча» + создание Match в send_challenge
+# (v2.135.0) — единственная защита от гонки, описанной в CLAUDE.md «Известные
+# ограничения»: бот работает одним процессом, поэтому обычного asyncio.Lock
+# достаточно, атомарная перепроверка на уровне БД не нужна.
+_CHALLENGE_LOCK = asyncio.Lock()
 
 
 # ── Show player list ──────────────────────────────────────────────────────────
@@ -230,75 +237,83 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
     # Игрок может иметь только ОДИН активный матч одновременно (стол один,
     # матчи строго последовательные) — перекрывает и старый кейс «уже есть
     # активный матч именно с этим соперником» (это частный случай «занят»).
-    my_active = await get_active_match(session, challenger.id)
-    if my_active:
-        busy_opp_id = (
-            my_active.challenged_id if my_active.challenger_id == challenger.id
-            else my_active.challenger_id
-        )
-        busy_opp_r = await session.execute(select(Player).where(Player.id == busy_opp_id))
-        busy_opp = busy_opp_r.scalar_one()
-        await callback.answer()
-        await callback.message.edit_text(
-            f"⚔️ У тебя уже есть активный матч с <b>{h(busy_opp.display_name)}</b>.\n"
-            f"Заверши его, чтобы вызвать нового соперника.",
-            reply_markup=busy_with_match_kb(my_active.id),
-        )
-        return
-
-    # Пара (чемпион, текущий претендент) в любом направлении — босс-файт,
-    # независимо от того, через ярлык «БОСС-ФАЙТ» или обычный вызов пришли.
-    champion, current_challenger = await get_champion_and_challenger(session)
-    is_boss_fight = (
-        champion is not None and current_challenger is not None
-        and {challenger.id, opponent.id} == {champion.id, current_challenger.id}
-    )
-
-    if await get_active_match(session, opponent.id):
-        if champion is not None and opponent.id == champion.id:
-            await callback.answer(
-                "Чемпион сейчас занят другим матчем, попробуй позже.",
-                show_alert=True,
+    #
+    # Проверка «нет активного матча» и создание нового Match — гонка между
+    # ними закрыта _CHALLENGE_LOCK (v2.135.0): бот — один Python-процесс
+    # (long polling, не несколько воркеров), поэтому вся гонка существует
+    # только из-за того, что aiogram обрабатывает апдейты параллельными
+    # asyncio-тасками ВНУТРИ одного процесса — обычного asyncio.Lock
+    # достаточно, атомарность на уровне БД (CAS/SERIALIZABLE) не нужна.
+    async with _CHALLENGE_LOCK:
+        my_active = await get_active_match(session, challenger.id)
+        if my_active:
+            busy_opp_id = (
+                my_active.challenged_id if my_active.challenger_id == challenger.id
+                else my_active.challenger_id
             )
+            busy_opp_r = await session.execute(select(Player).where(Player.id == busy_opp_id))
+            busy_opp = busy_opp_r.scalar_one()
+            await callback.answer()
+            await callback.message.edit_text(
+                f"⚔️ У тебя уже есть активный матч с <b>{h(busy_opp.display_name)}</b>.\n"
+                f"Заверши его, чтобы вызвать нового соперника.",
+                reply_markup=busy_with_match_kb(my_active.id),
+            )
+            return
+
+        # Пара (чемпион, текущий претендент) в любом направлении — босс-файт,
+        # независимо от того, через ярлык «БОСС-ФАЙТ» или обычный вызов пришли.
+        champion, current_challenger = await get_champion_and_challenger(session)
+        is_boss_fight = (
+            champion is not None and current_challenger is not None
+            and {challenger.id, opponent.id} == {champion.id, current_challenger.id}
+        )
+
+        if await get_active_match(session, opponent.id):
+            if champion is not None and opponent.id == champion.id:
+                await callback.answer(
+                    "Чемпион сейчас занят другим матчем, попробуй позже.",
+                    show_alert=True,
+                )
+            else:
+                await callback.answer(
+                    f"{opponent.display_name} сейчас занят другим матчем. Попробуй позже.",
+                    show_alert=True,
+                )
+            return
+
+        # Счёт личных встреч
+        h2h_r = await session.execute(
+            select(Match).where(
+                Match.status == MatchStatus.completed,
+                or_(
+                    and_(Match.challenger_id == challenger.id, Match.challenged_id == opponent.id),
+                    and_(Match.challenger_id == opponent.id, Match.challenged_id == challenger.id),
+                ),
+            )
+        )
+        h2h = h2h_r.scalars().all()
+        if h2h:
+            ch_wins = sum(1 for m in h2h if m.winner_id == challenger.id)
+            op_wins = sum(1 for m in h2h if m.winner_id == opponent.id)
+            draws = sum(1 for m in h2h if m.winner_id is None)
+            draws_str = f" (+{draws} 🤝)" if draws else ""
+            h2h_ch = f"\n⚔️ Встречи: <b>{ch_wins}–{op_wins}</b>{draws_str}"
+            h2h_op = f"\n⚔️ Встречи: <b>{op_wins}–{ch_wins}</b>{draws_str}"
         else:
-            await callback.answer(
-                f"{opponent.display_name} сейчас занят другим матчем. Попробуй позже.",
-                show_alert=True,
-            )
-        return
+            h2h_ch = h2h_op = ""
 
-    # Счёт личных встреч
-    h2h_r = await session.execute(
-        select(Match).where(
-            Match.status == MatchStatus.completed,
-            or_(
-                and_(Match.challenger_id == challenger.id, Match.challenged_id == opponent.id),
-                and_(Match.challenger_id == opponent.id, Match.challenged_id == challenger.id),
-            ),
+        # Матч сразу активен — без шага принятия
+        match = Match(
+            challenger_id=challenger.id,
+            challenged_id=opponent.id,
+            status=MatchStatus.accepted,
+            accepted_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            is_boss_fight=is_boss_fight,
         )
-    )
-    h2h = h2h_r.scalars().all()
-    if h2h:
-        ch_wins = sum(1 for m in h2h if m.winner_id == challenger.id)
-        op_wins = sum(1 for m in h2h if m.winner_id == opponent.id)
-        draws = sum(1 for m in h2h if m.winner_id is None)
-        draws_str = f" (+{draws} 🤝)" if draws else ""
-        h2h_ch = f"\n⚔️ Встречи: <b>{ch_wins}–{op_wins}</b>{draws_str}"
-        h2h_op = f"\n⚔️ Встречи: <b>{op_wins}–{ch_wins}</b>{draws_str}"
-    else:
-        h2h_ch = h2h_op = ""
-
-    # Матч сразу активен — без шага принятия
-    match = Match(
-        challenger_id=challenger.id,
-        challenged_id=opponent.id,
-        status=MatchStatus.accepted,
-        accepted_at=datetime.now(timezone.utc).replace(tzinfo=None),
-        is_boss_fight=is_boss_fight,
-    )
-    session.add(match)
-    await session.commit()
-    await session.refresh(match)
+        session.add(match)
+        await session.commit()
+        await session.refresh(match)
 
     opponent_chance = round(win_probability(opponent.rating, challenger.rating) * 100)
     opponent_phrase = match_phrase(opponent_chance, match.id)
