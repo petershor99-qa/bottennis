@@ -207,6 +207,11 @@ def pluralize_points(n: int) -> str:
     return _ru_plural(n, "очко", "очка", "очков")
 
 
+def pluralize_votes(n: int) -> str:
+    """1 голос / 2 голоса / 5 голосов"""
+    return _ru_plural(n, "голос", "голоса", "голосов")
+
+
 async def get_player(session: AsyncSession, telegram_id: int) -> Player | None:
     r = await session.execute(select(Player).where(Player.telegram_id == telegram_id))
     return r.scalar_one_or_none()
