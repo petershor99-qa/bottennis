@@ -10,7 +10,7 @@ from sqlalchemy import select
 from bot.db.models import ChampionReign, Match, MatchStatus, Player
 from bot.handlers.challenge import send_challenge, show_players_for_challenge
 from bot.handlers.history import show_h2h
-from bot.handlers.leaderboard import show_club_records, show_hall_of_fame, show_leaderboard
+from bot.handlers.leaderboard import show_hall_of_fame, show_leaderboard
 from bot.handlers.match_result import confirm_result, finish_sets
 from bot.handlers.profile import show_my_stats, show_player_profile
 from bot.keyboards.inline import players_list_kb, rematch_kb
@@ -32,7 +32,7 @@ from bot.utils import (
     steadiest_career,
     try_transfer_champion,
 )
-from tests.conftest import _callback, _completed, _player, _state
+from tests.conftest import _callback, _completed, _player, _state, show_all_club_records
 
 # ── Фикстуры и хелперы ────────────────────────────────────────────────────────
 
@@ -1445,7 +1445,7 @@ async def test_biggest_upset_excludes_boss_fight_matches(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.await_args.args[0]
     assert "Крупнейший апсет" in text
@@ -1483,7 +1483,7 @@ async def test_club_records_shows_longest_reign(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.await_args.args[0]
     assert "Дольше всех лидировал" in text
@@ -1586,7 +1586,7 @@ async def test_club_records_shows_most_defenses(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.await_args.args[0]
     assert "Больше всего защит трона подряд" in text
@@ -1624,7 +1624,7 @@ async def test_club_records_shows_longest_boss_fight(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.await_args.args[0]
     assert "Самый долгий боссфайт" in text
@@ -1839,7 +1839,7 @@ async def test_club_records_shows_shortest_reign(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.await_args.args[0]
     assert "Самое короткое правление" in text
@@ -1857,7 +1857,7 @@ async def test_club_records_shows_throne_ascensions(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.await_args.args[0]
     assert "Больше всего восхождений на трон" in text
@@ -1873,7 +1873,7 @@ async def test_club_records_shows_longest_awaited_revenge(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.await_args.args[0]
     assert "Долгожданная месть" in text
@@ -1894,7 +1894,7 @@ async def test_club_records_shows_steadiest_career(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.await_args.args[0]
     assert "Железные нервы" in text

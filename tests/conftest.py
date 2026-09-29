@@ -92,3 +92,27 @@ def _completed(
         status=MatchStatus.completed, winner_id=winner_id,
         sets_data=[{"w": 11, "l": 5}], rating_change=rc, completed_at=when,
     )
+
+
+async def show_all_club_records(cb, session) -> None:
+    """Тест-хелпер: экран «Рекорды клуба» разбит на категории (v2.136.0), а
+    старые тесты проверяют «рекорд X есть в тексте». Хелпер собирает текст всех
+    категорий и кладёт его в cb.message.edit_text одним вызовом — проверки
+    остаются валидными без правки каждой. Пустой клуб идёт через настоящий
+    хендлер (там свой текст «Матчей ещё не было»)."""
+    from bot.handlers.leaderboard import (
+        RECORD_CATEGORIES,
+        _collect_club_records,
+        _render_records_category,
+        show_club_records,
+    )
+
+    groups = await _collect_club_records(session)
+    if groups is None:
+        await show_club_records(cb, session)
+        return
+    text = "\n".join(
+        _render_records_category(title, groups[key])
+        for key, title in RECORD_CATEGORIES if groups[key]
+    )
+    await cb.message.edit_text(text)
