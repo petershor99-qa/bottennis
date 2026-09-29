@@ -1675,6 +1675,40 @@ def style_radar_url(name: str, radar: dict[str, float]) -> str:
     return f"https://quickchart.io/chart?w=500&h=500&bkg=white&c={encoded}"
 
 
+def style_compare_url(
+    name_a: str, radar_a: dict[str, float], name_b: str, radar_b: dict[str, float],
+) -> str:
+    """URL радар-графика с ДВУМЯ игроками на одних осях (v2.138.0): первый —
+    синий, второй — оранжевый, легенда включена (иначе не отличить, кто есть кто).
+    Оси берутся у первого радара — у обоих они одни и те же (_build_style_radar)."""
+    def dataset(label: str, radar: dict[str, float], rgb: str) -> dict:
+        return {
+            "label": label,
+            "data": [radar[k] for k in radar_a],
+            "backgroundColor": f"rgba({rgb},0.2)",
+            "borderColor": f"rgb({rgb})",
+            "pointBackgroundColor": f"rgb({rgb})",
+        }
+
+    config = {
+        "type": "radar",
+        "data": {
+            "labels": list(radar_a.keys()),
+            "datasets": [
+                dataset(name_a, radar_a, "54,162,235"),
+                dataset(name_b, radar_b, "255,159,64"),
+            ],
+        },
+        "options": {
+            "title": {"display": True, "text": "Сравнение стилей"},
+            "legend": {"display": True},
+            "scale": {"ticks": {"beginAtZero": True, "max": 100, "min": 0}},
+        },
+    }
+    encoded = urllib.parse.quote(json.dumps(config, separators=(",", ":"), ensure_ascii=False))
+    return f"https://quickchart.io/chart?w=500&h=500&bkg=white&c={encoded}"
+
+
 # ── Тепловая карта активности (quickchart.io) ─────────────────────────────────
 # v2.107.0. Окно 90 дней, не год — у клуба несколько месяцев реальной истории
 # (на сентябрь 2026), full-year сетка была бы наполовину пустой.

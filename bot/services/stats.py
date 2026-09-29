@@ -528,6 +528,58 @@ AXIS_GLOSSARY: dict[str, str] = {
 }
 
 
+# ── Сравнение стилей двух игроков (v2.138.0) ────────────────────────────────────
+# Разница по оси меньше STYLE_COMPARE_MIN_DIFF пунктов считается «поровну» —
+# на 5-7 игроках и малой выборке разница в 1-3 пункта это шум, а не преимущество.
+STYLE_COMPARE_MIN_DIFF = 5
+
+
+def _compare_styles(
+    radar_a: dict[str, float], radar_b: dict[str, float],
+) -> tuple[list[str], list[str]]:
+    """Оси, по которым A заметно сильнее B, и наоборот. Все шесть осей — «чем
+    больше, тем лучше», поэтому сравнение прямое. Порядок — как на радаре."""
+    a_better = [n for n in radar_a if radar_a[n] - radar_b[n] >= STYLE_COMPARE_MIN_DIFF]
+    b_better = [n for n in radar_a if radar_b[n] - radar_a[n] >= STYLE_COMPARE_MIN_DIFF]
+    return a_better, b_better
+
+
+def _style_comparison_caption(
+    name_b: str, radar_a: dict[str, float], radar_b: dict[str, float],
+) -> str:
+    """Подпись под графиком сравнения. A — тот, кто смотрит («Ты»), B — соперник
+    (name_b, уже НЕ экранированное — экранируется здесь). Укладывается в лимит
+    подписи к фото (1024) с большим запасом — см. тест."""
+    nb = h(name_b)
+    lines = [f"🕸 <b>Сравнение стилей</b>\n<b>Ты</b> 🆚 <b>{nb}</b>"]
+
+    arch_a, arch_b = _style_archetype(radar_a), _style_archetype(radar_b)
+    if arch_a or arch_b:
+        lines.append(f"🏷 Ты — <b>{arch_a or '—'}</b>, {nb} — <b>{arch_b or '—'}</b>")
+
+    axes = []
+    for axis in radar_a:
+        va, vb = round(radar_a[axis]), round(radar_b[axis])
+        if radar_a[axis] - radar_b[axis] >= STYLE_COMPARE_MIN_DIFF:
+            axes.append(f"{axis}: <b>{va}%</b> vs {vb}%")
+        elif radar_b[axis] - radar_a[axis] >= STYLE_COMPARE_MIN_DIFF:
+            axes.append(f"{axis}: {va}% vs <b>{vb}%</b>")
+        else:
+            axes.append(f"{axis}: {va}% vs {vb}%")
+    lines.append("<i>" + "\n".join(axes) + "</i>")
+
+    a_better, b_better = _compare_styles(radar_a, radar_b)
+    if a_better:
+        lines.append(f"💪 Ты сильнее: {', '.join(a_better)}")
+    if b_better:
+        lines.append(f"🎯 {nb} сильнее: {', '.join(b_better)}")
+    if not a_better and not b_better:
+        lines.append(
+            f"🤝 Стили почти одинаковые — все оси в пределах {STYLE_COMPARE_MIN_DIFF} пунктов"
+        )
+    return "\n\n".join(lines)
+
+
 # ── «Есть над чем поработать» (v2.125.0) ────────────────────────────────────────
 # Зеркало _style_archetype выше — там ищем самую сильную черту, здесь самую
 # слабую среди трёх кандидатов (дьюс/конвертация лидерства/стабильность).
