@@ -111,6 +111,23 @@ def achievements_kb(category_progress: list[tuple[str, int, int]]) -> InlineKeyb
     return b.as_markup()
 
 
+def club_records_kb(categories: list[tuple[str, str, int]]) -> InlineKeyboardMarkup:
+    """Оглавление «Рекордов клуба»: по кнопке на непустую категорию, по одной в
+    ряд, число рекордов прямо на кнопке. categories — [(ключ, заголовок, число)]."""
+    b = InlineKeyboardBuilder()
+    for key, title, count in categories:
+        b.row(InlineKeyboardButton(text=f"{title} {count}", callback_data=f"rec_cat_{key}"))
+    b.row(InlineKeyboardButton(text="« К рейтингу", callback_data="menu_leaderboard"))
+    return b.as_markup()
+
+
+def records_category_kb() -> InlineKeyboardMarkup:
+    """Под экраном одной категории рекордов — назад к оглавлению."""
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="« Все рекорды", callback_data="club_records"))
+    return b.as_markup()
+
+
 def player_achievements_kb(
     player_id: int, category_progress: list[tuple[str, int, int]],
 ) -> InlineKeyboardMarkup:
