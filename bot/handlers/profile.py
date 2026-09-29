@@ -12,7 +12,9 @@ from bot.keyboards.inline import (
     back_to_stats_kb,
     player_achievements_kb,
     player_profile_kb,
+    player_stats_section_kb,
     stats_kb,
+    stats_section_kb,
     what_if_kb,
 )
 from bot.services.achievements import (
@@ -66,8 +68,8 @@ async def _load_ranking_context(session: AsyncSession, player: Player):
 
 # ── Общий рендер строк статистики ─────────────────────────────────────────────
 
-def _render_stats_lines(player, s: dict) -> list[str]:
-    """Формирует общие строки статистики (форма, серии, соперники, рекорды и т.д.).
+def _stats_groups(player, s: dict) -> dict[str, list[str]]:
+    """Формирует группы строк статистики (форма, серии, соперники, рекорды и т.д.).
 
     Используется и в личной статистике, и в публичном профиле. Возвращает список
     строк без заголовка и без блока «Последние матчи» — их добавляет вызывающий.
@@ -190,13 +192,104 @@ def _render_stats_lines(player, s: dict) -> list[str]:
                 f"🐢 Ты марафонец: <b>{own_wr}%</b> побед в длинных матчах (vs {other_wr}% в коротких)"
             )
 
+    return {
+        "form": form_lines,
+        "opp": opponent_lines,
+        "rating": rating_lines,
+        "misc": misc_lines,
+        "insight": insight_lines,
+    }
+
+
+def _render_stats_lines(player, s: dict) -> list[str]:
+    """Все группы статистики подряд, каждая непустая отделена пустой строкой.
+    Плоский вариант (одно сообщение) — для тестов и как база двухуровневого
+    экрана (v2.137.0): см. _stats_groups и STATS_SECTIONS."""
+    groups = _stats_groups(player, s)
     lines: list[str] = []
-    for group in (form_lines, opponent_lines, rating_lines, misc_lines, insight_lines):
+    for key in ("form", "opp", "rating", "misc", "insight"):
+        group = groups[key]
         if group:
             if lines:
                 lines.append("")
             lines.extend(group)
     return lines
+
+
+# ── Разделы подробной статистики (v2.137.0) ────────────────────────────────────
+# Экран статистики/профиля раньше был одной простынёй (~25 строк + последние
+# матчи) без проверки на лимит Telegram. Теперь основной экран короткий (шапка,
+# форма, индекс легенды, разрыв до соседа/трона, цель), а остальное — в разделах
+# на кнопках, по образцу «Достижений» и «Рекордов клуба». Ключ раздела в
+# callback_data — стабильная строка, не индекс.
+
+STATS_SECTIONS: list[tuple[str, str]] = [
+    ("opp", "🆚 Соперники"),
+    ("rating", "📈 Рейтинг"),
+    ("game", "🎮 Игра и советы"),
+    ("recent", "🕘 Последние матчи"),
+]
+
+RECENT_MATCHES_ON_SECTION = 10
+
+
+def _section_lines(
+    key: str, player, s: dict, all_matches: list, include_growth: bool,
+) -> list[str]:
+    """Строки одного раздела статистики. Пустой список — раздел не показываем.
+    include_growth — «Есть над чем поработать» только на личной статистике
+    (слабость показываем себе, не другим — см. _growth_area)."""
+    groups = _stats_groups(player, s)
+    if key == "opp":
+        return groups["opp"]
+    if key == "rating":
+        return groups["rating"]
+    if key == "game":
+        lines = list(groups["misc"])
+        if groups["insight"]:
+            if lines:
+                lines.append("")
+            lines.extend(groups["insight"])
+        growth = _growth_area(s) if include_growth else None
+        if growth:
+            if lines:
+                lines.append("")
+            lines.append(growth)
+        return lines
+    if key == "recent":
+        return [_match_line(m, player.id) for m in all_matches[:RECENT_MATCHES_ON_SECTION]]
+    return []
+
+
+def _available_sections(
+    player, s: dict, all_matches: list, include_growth: bool,
+) -> list[tuple[str, str]]:
+    return [
+        (key, title) for key, title in STATS_SECTIONS
+        if _section_lines(key, player, s, all_matches, include_growth)
+    ]
+
+
+async def _build_stats_section(
+    session: AsyncSession, player: Player, key: str, *, personal: bool,
+) -> str | None:
+    """Текст раздела статистики; None — раздела с таким ключом нет или он пуст."""
+    titles = dict(STATS_SECTIONS)
+    if key not in titles:
+        return None
+    all_matches = await get_career_matches(session, player.id, with_opponents=True)
+    if not all_matches:
+        return None
+    s = _compute_player_stats(player, all_matches)
+    lines = _section_lines(key, player, s, all_matches, include_growth=personal)
+    if not lines:
+        return None
+    name = h(player.display_name)
+    head = (
+        f"📈 <b>Статистика — {name}</b> · {titles[key]}" if personal
+        else f"👤 <b>{name}</b> · {titles[key]}"
+    )
+    return "\n".join([head, "", *lines])
 
 
 # ── Разрыв до соседей по таблице / до трона ───────────────────────────────────
@@ -292,7 +385,6 @@ async def _build_stats_screen(session: AsyncSession, player: Player):
             stats_kb(),
         )
 
-    matches = all_matches[:5]
     s = _compute_player_stats(player, all_matches)
 
     mvp_id = await get_mvp_of_month(session)
@@ -307,7 +399,10 @@ async def _build_stats_screen(session: AsyncSession, player: Player):
     if mvp_id == player.id:
         lines.append("🌟 Ты MVP месяца!")
 
-    lines.extend(_render_stats_lines(player, s))
+    form = _stats_groups(player, s)["form"]
+    if form:
+        lines.append("")
+        lines.extend(form)
 
     legend_index, legend_rank, legend_total = await _legend_index_with_rank(session, player, players_all)
     lines.append("")
@@ -323,16 +418,8 @@ async def _build_stats_screen(session: AsyncSession, player: Player):
     if progress:
         lines.append(progress)
 
-    growth_area = _growth_area(s)
-    if growth_area:
-        lines.append(growth_area)
-
-    if matches:
-        lines.append("\n<b>Последние матчи:</b>")
-        for m in matches:
-            lines.append(_match_line(m, player.id))
-
-    return "\n".join(lines), stats_kb()
+    sections = _available_sections(player, s, all_matches, include_growth=True)
+    return "\n".join(lines), stats_kb(sections)
 
 
 @router.callback_query(F.data == "menu_stats")
@@ -355,6 +442,42 @@ async def show_my_stats_from_reply_kb(message: Message, session: AsyncSession):
         return
     text, kb = await _build_stats_screen(session, player)
     await message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("stat_sec_"))
+async def show_my_stats_section(callback: CallbackQuery, session: AsyncSession):
+    player = await get_player(session, callback.from_user.id)
+    if not player:
+        await callback.answer("Сначала напиши /start", show_alert=True)
+        return
+    key = callback.data.removeprefix("stat_sec_")
+    text = await _build_stats_section(session, player, key, personal=True)
+    if text is None:
+        await callback.answer("Раздел не найден или пока пуст.", show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.edit_text(text, reply_markup=stats_section_kb())
+
+
+@router.callback_query(F.data.startswith("pstat_"))
+async def show_player_stats_section(callback: CallbackQuery, session: AsyncSession):
+    try:
+        _, raw_id, key = callback.data.split("_", 2)
+        target_id = int(raw_id)
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
+    tp_r = await session.execute(select(Player).where(Player.id == target_id))
+    target = tp_r.scalar_one_or_none()
+    if not target:
+        await callback.answer("Игрок не найден.", show_alert=True)
+        return
+    text = await _build_stats_section(session, target, key, personal=False)
+    if text is None:
+        await callback.answer("Раздел не найден или пока пуст.", show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.edit_text(text, reply_markup=player_stats_section_kb(target.id))
 
 
 # ── Карьер-рекап ──────────────────────────────────────────────────────────────
@@ -470,7 +593,6 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
     )
 
     all_matches = await get_career_matches(session, player.id, with_opponents=True)
-    matches = all_matches[:5]
 
     s = _compute_player_stats(player, all_matches)
 
@@ -482,7 +604,10 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
         f"📊 Винрейт: <b>{s['win_rate']}%</b>",
     ]
 
-    lines.extend(_render_stats_lines(player, s))
+    form = _stats_groups(player, s)["form"]
+    if form:
+        lines.append("")
+        lines.extend(form)
 
     legend_index, legend_rank, legend_total = await _legend_index_with_rank(session, player, players_all)
     lines.append("")
@@ -494,14 +619,12 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
     )
     _append_rank_and_throne_lines(lines, rank_gap, throne_line)
 
-    if matches:
-        lines.append("\n<b>Последние матчи:</b>")
-        for m in matches:
-            lines.append(_match_line(m, player.id))
-
+    sections = _available_sections(player, s, all_matches, include_growth=False)
     await callback.message.edit_text(
         "\n".join(lines),
-        reply_markup=player_profile_kb(player.id, viewer_id=viewer_id, can_challenge=can_challenge),
+        reply_markup=player_profile_kb(
+            player.id, viewer_id=viewer_id, can_challenge=can_challenge, sections=sections,
+        ),
     )
 
 
