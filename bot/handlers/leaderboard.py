@@ -12,8 +12,10 @@ from bot.keyboards.inline import (
     back_to_leaderboard_kb,
     back_to_menu_kb,
     back_to_stats_kb,
+    club_records_kb,
     hall_of_fame_kb,
     leaderboard_kb,
+    records_category_kb,
 )
 from bot.utils import (
     MSK_OFFSET,
@@ -296,10 +298,21 @@ async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
 
 # ── Рекорды клуба ─────────────────────────────────────────────────────────────
 
-@router.callback_query(F.data == "club_records")
-async def show_club_records(callback: CallbackQuery, session: AsyncSession):
-    await callback.answer()
+# Категории экрана «Рекорды клуба» (v2.136.0): ключ → заголовок кнопки/экрана.
+# Ключ — стабильная строка, не индекс в списке (тот же урок, что у голосования,
+# v2.134.3): порядок/состав категорий можно менять без риска, что у открытого
+# экрана кнопка поедет на чужую категорию.
+RECORD_CATEGORIES: list[tuple[str, str]] = [
+    ("volume", "📊 Объёмы"),
+    ("rivalry", "⚔️ Противостояния"),
+    ("streak", "🔥 Серии"),
+    ("highlight", "🌟 Топ-моменты"),
+]
 
+
+async def _collect_club_records(session: AsyncSession) -> dict[str, list[str]] | None:
+    """Собирает все рекорды клуба, сгруппированные по ключам RECORD_CATEGORIES.
+    None — если завершённых матчей ещё не было."""
     matches_r = await session.execute(
         select(Match)
         .where(Match.status == MatchStatus.completed)
@@ -309,11 +322,7 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
     all_matches = matches_r.scalars().all()
 
     if not all_matches:
-        await callback.message.edit_text(
-            "🏆 <b>Рекорды клуба</b>\n\nМатчей ещё не было.",
-            reply_markup=back_to_leaderboard_kb(),
-        )
-        return
+        return None
 
     players_r = await session.execute(select(Player))
     players = players_r.scalars().all()
@@ -627,18 +636,68 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
                 f"<i>{reason}</i>"
             )
 
-    # Пустая строка перед КАЖДОЙ записью (не только между группами) — иначе
-    # длинные записи (счёт марафона на 10 партий и т.п.) визуально сливаются
-    # со следующей строкой в той же группе, границу между рекордами не видно.
-    lines = ["🏆 <b>Рекорды клуба</b>"]
-    for group in (volume_lines, rivalry_lines, streak_lines, highlight_lines):
-        for record in group:
-            lines.append("")
-            lines.append(record)
+    return {
+        "volume": volume_lines,
+        "rivalry": rivalry_lines,
+        "streak": streak_lines,
+        "highlight": highlight_lines,
+    }
 
+
+def _render_records_category(title: str, records: list[str]) -> str:
+    """Текст экрана одной категории. Пустая строка перед КАЖДОЙ записью — иначе
+    длинные записи (счёт марафона на 10 партий и т.п.) визуально сливаются со
+    следующей строкой, границу между рекордами не видно."""
+    lines = [f"🏆 <b>Рекорды клуба — {title}</b>"]
+    for record in records:
+        lines.append("")
+        lines.append(record)
+    return "\n".join(lines)
+
+
+@router.callback_query(F.data == "club_records")
+async def show_club_records(callback: CallbackQuery, session: AsyncSession):
+    """Оглавление рекордов (v2.136.0): все ~20 рекордов одним сообщением росли с
+    каждой версией и не имели проверки на лимит Telegram, поэтому экран в два
+    уровня — как «Достижения»: категории на кнопках, рекорды внутри категории."""
+    await callback.answer()
+
+    groups = await _collect_club_records(session)
+    if groups is None:
+        await callback.message.edit_text(
+            "🏆 <b>Рекорды клуба</b>\n\nМатчей ещё не было.",
+            reply_markup=back_to_leaderboard_kb(),
+        )
+        return
+
+    counts = [(key, title, len(groups[key])) for key, title in RECORD_CATEGORIES if groups[key]]
+    total = sum(n for _, _, n in counts)
     await callback.message.edit_text(
-        "\n".join(lines),
-        reply_markup=back_to_leaderboard_kb(),
+        f"🏆 <b>Рекорды клуба</b>\n\nВсего рекордов: <b>{total}</b>. Выбери раздел:",
+        reply_markup=club_records_kb(counts),
+    )
+
+
+@router.callback_query(F.data.startswith("rec_cat_"))
+async def show_club_records_category(callback: CallbackQuery, session: AsyncSession):
+    key = callback.data.removeprefix("rec_cat_")
+    titles = dict(RECORD_CATEGORIES)
+    if key not in titles:
+        await callback.answer("Раздел не найден.", show_alert=True)
+        return
+    await callback.answer()
+
+    groups = await _collect_club_records(session)
+    records = groups[key] if groups else []
+    if not records:
+        await callback.message.edit_text(
+            f"🏆 <b>Рекорды клуба — {titles[key]}</b>\n\nПока здесь пусто.",
+            reply_markup=records_category_kb(),
+        )
+        return
+    await callback.message.edit_text(
+        _render_records_category(titles[key], records),
+        reply_markup=records_category_kb(),
     )
 
 

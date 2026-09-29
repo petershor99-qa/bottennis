@@ -2392,7 +2392,7 @@ def test_previous_h2h_line_deterministic_by_match_id():
 # ── Дерби клуба ─────────────────────────────────────────────────────────────────
 
 async def test_club_records_shows_derby(db):
-    from bot.handlers.leaderboard import show_club_records
+    from tests.conftest import show_all_club_records
 
     p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
     db.add_all([p1, p2, p3])
@@ -2403,7 +2403,7 @@ async def test_club_records_shows_derby(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Дерби клуба" in text
@@ -2824,7 +2824,7 @@ async def test_today_screen_back_button_returns_to_stats(db):
 
 async def test_club_records_shows_peak_rating(db):
     """Высший рейтинг в истории — по peak_rating среди игравших."""
-    from bot.handlers.leaderboard import show_club_records
+    from tests.conftest import show_all_club_records
 
     p1, p2 = _player(1, "Alice", 1050.0), _player(2, "Bob", 980.0)
     p1.peak_rating = 1075.0
@@ -2834,7 +2834,7 @@ async def test_club_records_shows_peak_rating(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Высший рейтинг в истории" in text
@@ -2843,7 +2843,7 @@ async def test_club_records_shows_peak_rating(db):
 
 async def test_club_records_shows_nagibator(db):
     """Нагибатор клуба — самое одностороннее противостояние (≥3 побед, есть перевес)."""
-    from bot.handlers.leaderboard import show_club_records
+    from tests.conftest import show_all_club_records
 
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
     db.add_all([p1, p2])
@@ -2853,7 +2853,7 @@ async def test_club_records_shows_nagibator(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Нагибатор клуба" in text
@@ -2862,7 +2862,7 @@ async def test_club_records_shows_nagibator(db):
 
 async def test_club_records_shows_equal_rivalry(db):
     """Равный бой — самое сбалансированное противостояние (≥4 матча, разница ≤1)."""
-    from bot.handlers.leaderboard import show_club_records
+    from tests.conftest import show_all_club_records
 
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
     db.add_all([p1, p2])
@@ -2874,7 +2874,7 @@ async def test_club_records_shows_equal_rivalry(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Равный бой" in text
@@ -2883,7 +2883,7 @@ async def test_club_records_shows_equal_rivalry(db):
 
 async def test_club_records_no_equal_rivalry_below_threshold(db):
     """Меньше 4 очных матчей — «Равный бой» не показывается, даже если счёт 1:1."""
-    from bot.handlers.leaderboard import show_club_records
+    from tests.conftest import show_all_club_records
 
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
     db.add_all([p1, p2])
@@ -2893,7 +2893,7 @@ async def test_club_records_no_equal_rivalry_below_threshold(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Равный бой" not in text
@@ -2901,7 +2901,7 @@ async def test_club_records_no_equal_rivalry_below_threshold(db):
 
 async def test_club_records_no_equal_rivalry_when_lopsided(db):
     """Нагибатор (4–0) не должен одновременно засчитываться как «Равный бой»."""
-    from bot.handlers.leaderboard import show_club_records
+    from tests.conftest import show_all_club_records
 
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
     db.add_all([p1, p2])
@@ -2911,7 +2911,7 @@ async def test_club_records_no_equal_rivalry_when_lopsided(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Равный бой" not in text
@@ -2919,7 +2919,7 @@ async def test_club_records_no_equal_rivalry_when_lopsided(db):
 
 async def test_club_records_shows_current_streak(db):
     """В ударе сейчас — текущая активная серия побед (от последнего матча назад)."""
-    from bot.handlers.leaderboard import show_club_records
+    from tests.conftest import show_all_club_records
 
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
     db.add_all([p1, p2])
@@ -2931,7 +2931,7 @@ async def test_club_records_shows_current_streak(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.call_args[0][0]
     assert "В ударе сейчас" in text  # текущая серия Alice = 3
@@ -2939,7 +2939,7 @@ async def test_club_records_shows_current_streak(db):
 
 async def test_club_records_shows_most_draws(db):
     """Больше всего ничьих — от 3 ничьих у игрока."""
-    from bot.handlers.leaderboard import show_club_records
+    from tests.conftest import show_all_club_records
 
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
     db.add_all([p1, p2])
@@ -2949,7 +2949,7 @@ async def test_club_records_shows_most_draws(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Больше всего ничьих" in text
@@ -2958,7 +2958,7 @@ async def test_club_records_shows_most_draws(db):
 
 async def test_no_most_draws_below_threshold(db):
     """2 ничьи — рекорд ещё не показывается (порог 3)."""
-    from bot.handlers.leaderboard import show_club_records
+    from tests.conftest import show_all_club_records
 
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
     db.add_all([p1, p2])
@@ -2968,7 +2968,7 @@ async def test_no_most_draws_below_threshold(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Больше всего ничьих" not in text
@@ -2976,7 +2976,7 @@ async def test_no_most_draws_below_threshold(db):
 
 async def test_club_records_shows_hottest_day(db):
     """Самый жаркий день клуба — сумма матчей всех игроков за день (от 3)."""
-    from bot.handlers.leaderboard import show_club_records
+    from tests.conftest import show_all_club_records
 
     p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
     db.add_all([p1, p2, p3])
@@ -2989,7 +2989,7 @@ async def test_club_records_shows_hottest_day(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Самый жаркий день клуба" in text
@@ -2999,7 +2999,7 @@ async def test_club_records_shows_hottest_day(db):
 
 async def test_club_records_shows_fastest_match(db):
     """Самый быстрый матч — по accepted_at → completed_at."""
-    from bot.handlers.leaderboard import show_club_records
+    from tests.conftest import show_all_club_records
 
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
     db.add_all([p1, p2])
@@ -3015,7 +3015,7 @@ async def test_club_records_shows_fastest_match(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)
+    await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Самый быстрый матч" in text
@@ -3024,7 +3024,7 @@ async def test_club_records_shows_fastest_match(db):
 
 async def test_fastest_match_skipped_without_accepted_at(db):
     """Матчи без accepted_at (старые записи) не участвуют в рекорде — не падаем."""
-    from bot.handlers.leaderboard import show_club_records
+    from tests.conftest import show_all_club_records
 
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
     db.add_all([p1, p2])
@@ -3033,7 +3033,7 @@ async def test_fastest_match_skipped_without_accepted_at(db):
     await db.commit()
 
     cb = _callback(1, "club_records")
-    await show_club_records(cb, db)  # не должно упасть
+    await show_all_club_records(cb, db)  # не должно упасть
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Самый быстрый матч" not in text
