@@ -23,6 +23,7 @@ from bot.services.stats import (
     _build_style_radar,
     _compute_player_stats,
     _style_archetype,
+    _style_comparison_caption,
 )
 from bot.utils import (
     HEATMAP_DAYS,
@@ -38,6 +39,7 @@ from bot.utils import (
     get_player,
     get_rec_signal,
     rating_chart_url,
+    style_compare_url,
     style_radar_url,
 )
 
@@ -303,6 +305,66 @@ async def show_player_style_radar(callback: CallbackQuery, session: AsyncSession
         await callback.answer("Игрок не найден.", show_alert=True)
         return
     await _send_style_radar(target, session, callback, bot)
+
+
+@router.callback_query(F.data.startswith("style_cmp_"))
+async def show_style_comparison(callback: CallbackQuery, session: AsyncSession, bot: Bot):
+    """Сравнение стилей зрителя и выбранного игрока (v2.138.0) — один график с
+    двумя радарами + подпись. Кнопка живёт на экране личных встреч (h2h_kb)."""
+    try:
+        target_id = int(callback.data.rsplit("_", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
+
+    viewer = await get_player(session, callback.from_user.id)
+    if not viewer:
+        await callback.answer("Сначала напиши /start", show_alert=True)
+        return
+    tp_r = await session.execute(select(Player).where(Player.id == target_id))
+    target = tp_r.scalar_one_or_none()
+    if not target:
+        await callback.answer("Игрок не найден.", show_alert=True)
+        return
+    if target.id == viewer.id:
+        await callback.answer("Сравнивать стиль самого с собой нечем 🙂", show_alert=True)
+        return
+
+    radars = []
+    for player, who in ((viewer, "У тебя"), (target, f"У {target.display_name}")):
+        matches = await get_career_matches(session, player.id, with_opponents=True)
+        if len(matches) < MIN_MATCHES_FOR_RADAR:
+            await callback.answer(
+                f"{who} пока меньше {MIN_MATCHES_FOR_RADAR} матчей — для сравнения "
+                f"нужно минимум {MIN_MATCHES_FOR_RADAR} у обоих 🏓",
+                show_alert=True,
+            )
+            return
+        radar = _build_style_radar(_compute_player_stats(player, matches))
+        if radar is None:
+            await callback.answer("Пока не сыграно ни одной партии.", show_alert=True)
+            return
+        radars.append(radar)
+    radar_a, radar_b = radars
+
+    chat_id = callback.message.chat.id
+    prev_id = _last_radar_msg.get(chat_id)
+    if prev_id is not None:
+        try:
+            await bot.delete_message(chat_id, prev_id)
+        except Exception:
+            pass
+
+    try:
+        sent = await bot.send_photo(
+            chat_id,
+            style_compare_url(viewer.display_name, radar_a, target.display_name, radar_b),
+            caption=_style_comparison_caption(target.display_name, radar_a, radar_b),
+        )
+        _last_radar_msg[chat_id] = sent.message_id
+        await callback.answer()
+    except Exception:
+        await callback.answer("Не удалось построить сравнение, попробуй позже 🙁", show_alert=True)
 
 
 # ── Полная история матчей (своя) ──────────────────────────────────────────────

@@ -449,6 +449,7 @@ def h2h_kb(
         b.row(*nav)
     if can_challenge:
         b.row(InlineKeyboardButton(text="⚔️ Вызвать", callback_data=f"challenge_{player_id}"))
+    b.row(InlineKeyboardButton(text="🕸 Сравнить стили", callback_data=f"style_cmp_{player_id}"))
     b.row(InlineKeyboardButton(text="« К профилю", callback_data=f"player_profile_{player_id}"))
     return b.as_markup()
 
