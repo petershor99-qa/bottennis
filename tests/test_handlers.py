@@ -2033,8 +2033,6 @@ async def test_my_stats_no_mvp_callout_when_viewer_is_not_mvp(db):
 
 
 async def test_my_stats_shows_growth_area_when_stability_is_low(db):
-    from bot.handlers.profile import show_my_stats
-
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
     db.add_all([p1, p2])
     await db.flush()
@@ -2045,8 +2043,10 @@ async def test_my_stats_shows_growth_area_when_stability_is_low(db):
         db.add(_completed(p1, p2, winner, delta, datetime(2026, 1, 1 + i, 12, 0, 0)))
     await db.commit()
 
-    cb = _callback(1, "menu_stats")
-    await show_my_stats(cb, db)
+    # «Есть над чем поработать» — в разделе «Игра и советы» (v2.137.0)
+    from bot.handlers.profile import show_my_stats_section
+    cb = _callback(1, "stat_sec_game")
+    await show_my_stats_section(cb, db)
 
     text = cb.message.edit_text.call_args[0][0]
     assert "скачет" in text

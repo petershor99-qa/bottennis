@@ -1649,8 +1649,10 @@ async def test_stats_screen_shows_boss_fight_record(db):
     ))
     await db.commit()
 
-    cb = _callback(1, "menu_stats")
-    await show_my_stats(cb, db)
+    # Боссфайты — строка раздела «Рейтинг» (v2.137.0), не основного экрана
+    from bot.handlers.profile import show_my_stats_section
+    cb = _callback(1, "stat_sec_rating")
+    await show_my_stats_section(cb, db)
 
     text = cb.message.edit_text.await_args.args[0]
     assert "Боссфайты" in text
