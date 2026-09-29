@@ -70,14 +70,43 @@ def back_to_menu_kb() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def stats_kb() -> InlineKeyboardMarkup:
+def _section_rows(b: InlineKeyboardBuilder, sections: list[tuple[str, str]], prefix: str) -> None:
+    """Кнопки разделов статистики по 2 в ряд (нечётная последняя — одна)."""
+    for i in range(0, len(sections), 2):
+        b.row(*[
+            InlineKeyboardButton(text=title, callback_data=f"{prefix}{key}")
+            for key, title in sections[i:i + 2]
+        ])
+
+
+def stats_section_kb() -> InlineKeyboardMarkup:
+    """Под экраном раздела личной статистики — назад к основному экрану."""
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="« К статистике", callback_data="menu_stats"))
+    return b.as_markup()
+
+
+def player_stats_section_kb(player_id: int) -> InlineKeyboardMarkup:
+    """Под экраном раздела статистики другого игрока — назад к его профилю."""
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="« К профилю", callback_data=f"player_profile_{player_id}"))
+    return b.as_markup()
+
+
+def stats_kb(sections: list[tuple[str, str]] | None = None) -> InlineKeyboardMarkup:
     """Клавиатура под экраном статистики.
 
     По 2 кнопки в ряд (v2.114.0) — 6 экранных ссылок в один столбец растягивали
     экран на 7 строк, читалось хуже, чем сгруппированное. Подписи сокращены
     (полные названия — в тексте самих экранов, тут только ярлыки для навигации).
+
+    sections (v2.137.0) — [(ключ, заголовок), ...] разделов подробной
+    статистики (STATS_SECTIONS, profile.py), только непустые; идут ПЕРВЫМИ
+    рядами, по 2 в ряд, callback_data "stat_sec_{ключ}".
     """
     b = InlineKeyboardBuilder()
+    if sections:
+        _section_rows(b, sections, "stat_sec_")
     b.row(
         InlineKeyboardButton(text="📜 История", callback_data="history_0"),
         InlineKeyboardButton(text="📊 График", callback_data="rating_chart"),
@@ -363,9 +392,11 @@ def year_vote_nomination_kb(
 
 
 def player_profile_kb(
-    player_id: int, viewer_id: int | None = None, can_challenge: bool = True
+    player_id: int, viewer_id: int | None = None, can_challenge: bool = True,
+    sections: list[tuple[str, str]] | None = None,
 ) -> InlineKeyboardMarkup:
-    """Клавиатура под профилем другого игрока."""
+    """Клавиатура под профилем другого игрока. sections (v2.137.0) — разделы
+    подробной статистики, callback_data "pstat_{player_id}_{ключ}"."""
     b = InlineKeyboardBuilder()
     if viewer_id is not None and viewer_id != player_id:
         if can_challenge:
@@ -376,6 +407,8 @@ def player_profile_kb(
         else:
             b.row(InlineKeyboardButton(text="🎲 Что если?", callback_data=f"what_if_{player_id}"))
         b.row(InlineKeyboardButton(text="🆚 Личные встречи", callback_data=f"h2h_{player_id}_0"))
+    if sections:
+        _section_rows(b, sections, f"pstat_{player_id}_")
     b.row(InlineKeyboardButton(
         text="📜 Вся история матчей",
         callback_data=f"player_history_{player_id}_0",
