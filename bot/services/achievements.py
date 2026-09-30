@@ -11,6 +11,7 @@
 """
 import json
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -144,7 +145,7 @@ TERMINATOR_STREAK_LEN = 5  # активная серия соперника дл
 ALTERNATING_STREAK_LEN = 6  # длина цепочки для «Такова жись»
 
 
-def _has_alternating_tail(matches_asc: list, player_id: int, length: int = ALTERNATING_STREAK_LEN) -> bool:
+def _has_alternating_tail(matches_asc: Sequence, player_id: int, length: int = ALTERNATING_STREAK_LEN) -> bool:
     """Проверяет, что последние `length` завершённых матчей игрока строго
     чередуют победу/поражение (W-L-W-L… или L-W-L-W…). Ничья в окне рвёт
     цепочку — считаем её отсутствующей. matches_asc — по возрастанию даты."""
@@ -159,7 +160,7 @@ def _has_alternating_tail(matches_asc: list, player_id: int, length: int = ALTER
     return all(outcomes[i] != outcomes[i + 1] for i in range(length - 1))
 
 
-def _career_points_and_sets(matches: list, player_id: int) -> tuple[int, int, int]:
+def _career_points_and_sets(matches: Sequence, player_id: int) -> tuple[int, int, int]:
     """Суммарные набранные очки, выигранные партии И отданные сопернику очки
     за карьеру — с перспективы player_id, независимо от исхода матча (для вех
     «Копил по очку»/«Сетовый снайпёр» и их старших ступеней, а также
@@ -235,7 +236,7 @@ async def check_win_achievements(
     completed_at), из общего bot.utils.get_h2h_matches() — переиспользуется
     вызывающим вместо повторного похода в БД за той же историей.
     """
-    sets_data = match.sets_data  # winner perspective: [{"w": winner_pts, "l": loser_pts}, ...]
+    sets_data = match.sets_data or []  # winner perspective: [{"w": winner_pts, "l": loser_pts}, ...]
     earned = get_achievements(winner)
     new_ids: list[str] = []
 
@@ -419,7 +420,7 @@ async def check_win_achievements(
             Match.completed_at >= today_start,
         )
     )
-    if today_r.scalar() >= 10:
+    if today_r.scalar_one() >= 10:
         maybe("maniac")
 
     # ── То что мертво: 10+ побед подряд над одним соперником ─────────────────
@@ -626,7 +627,7 @@ async def check_loss_achievements(
             Match.completed_at >= today_start,
         )
     )
-    if today_r.scalar() >= 10:
+    if today_r.scalar_one() >= 10:
         maybe("maniac")
 
     # ── День сурка: все матчи за сегодня — поражения (от 3), зеркало «Неистого» ─
@@ -825,7 +826,7 @@ async def check_draw_achievements(
             Match.completed_at >= today_start,
         )
     )
-    if today_r.scalar() >= 10:
+    if today_r.scalar_one() >= 10:
         maybe("maniac")
 
     # ── Дьюсмейкер: выиграл партию на дьюсе (с перспективы игрока) ───────────

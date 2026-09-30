@@ -20,6 +20,8 @@ from bot.keyboards.inline import (
 from bot.utils import (
     MSK_OFFSET,
     _pin_champion,
+    cb_data,
+    cb_msg,
     compute_alltime_streak,
     get_champion_and_challenger,
     get_mvp_of_month,
@@ -33,6 +35,7 @@ from bot.utils import (
     match_score_challenger_first,
     most_boss_fight_defenses,
     most_throne_ascensions,
+    msg_user,
     msk_day_start,
     pluralize_days,
     pluralize_defenses,
@@ -190,13 +193,13 @@ async def _build_leaderboard_screen(session: AsyncSession, telegram_id: int):
 async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
     await callback.answer()
     text, kb = await _build_leaderboard_screen(session, callback.from_user.id)
-    await callback.message.edit_text(text, reply_markup=kb)
+    await cb_msg(callback).edit_text(text, reply_markup=kb)
 
 
 @router.message(F.text == "📊 Рейтинг")
 async def show_leaderboard_from_reply_kb(message: Message, session: AsyncSession):
     """Тот же экран, что и menu_leaderboard, но с постоянной клавиатуры снизу."""
-    text, kb = await _build_leaderboard_screen(session, message.from_user.id)
+    text, kb = await _build_leaderboard_screen(session, msg_user(message).id)
     await message.answer(text, reply_markup=kb)
 
 
@@ -220,7 +223,7 @@ async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
     matches = matches_r.scalars().all()
 
     if not matches:
-        await callback.message.edit_text(
+        await cb_msg(callback).edit_text(
             "📅 <b>Сегодня</b>\n\nМатчей пока не было. Первым сделай ход! 🏓",
             reply_markup=back_to_stats_kb(),
         )
@@ -290,7 +293,7 @@ async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
         inactive_names = ", ".join(h(p.display_name) for p in inactive)
         lines.append(f"\n😴 Не играли: {inactive_names}")
 
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         "\n".join(lines),
         reply_markup=back_to_stats_kb(),
     )
@@ -342,7 +345,7 @@ async def _collect_club_records(session: AsyncSession) -> dict[str, list[str]] |
         for pid in (m.challenger_id, m.challenged_id):
             match_count[pid] = match_count.get(pid, 0) + 1
     if match_count:
-        most_id = max(match_count, key=match_count.get)
+        most_id = max(match_count, key=match_count.__getitem__)
         volume_lines.append(
             f"🏓 Больше всего матчей — <b>{h(name_map.get(most_id, '?'))}</b>: "
             f"{pluralize_matches(match_count[most_id])}"
@@ -433,7 +436,7 @@ async def _collect_club_records(session: AsyncSession) -> dict[str, list[str]] |
             draw_count[m.challenger_id] = draw_count.get(m.challenger_id, 0) + 1
             draw_count[m.challenged_id] = draw_count.get(m.challenged_id, 0) + 1
     if draw_count:
-        most_draws_id = max(draw_count, key=draw_count.get)
+        most_draws_id = max(draw_count, key=draw_count.__getitem__)
         if draw_count[most_draws_id] >= 3:
             volume_lines.append(
                 f"🤝 Больше всего ничьих — <b>{h(name_map.get(most_draws_id, '?'))}</b>: "
@@ -563,28 +566,28 @@ async def _collect_club_records(session: AsyncSession) -> dict[str, list[str]] |
     # Самый длинный матч (больше всего партий)
     with_sets = [m for m in all_matches if m.sets_data]
     if with_sets:
-        longest = max(with_sets, key=lambda m: len(m.sets_data))
+        longest = max(with_sets, key=lambda m: len(m.sets_data or []))
         ch = name_map.get(longest.challenger_id, "?")
         cd = name_map.get(longest.challenged_id, "?")
         score_str = match_score_challenger_first(longest)
         date_str = longest.completed_at.strftime("%d.%m.%y") if longest.completed_at else ""
         streak_lines.append(
             f"🎯 Самый длинный матч — <b>{h(ch)}</b> vs <b>{h(cd)}</b>: "
-            f"{len(longest.sets_data)} партий  <i>{score_str}  {date_str}</i>"
+            f"{len(longest.sets_data or [])} партий  <i>{score_str}  {date_str}</i>"
         )
 
     # Самый долгий боссфайт (больше всего партий среди боссфайтов) — та же
     # метрика, что у «Самого длинного матча», просто отфильтрована по is_boss_fight.
     bf_with_sets = [m for m in all_matches if m.sets_data and m.is_boss_fight]
     if bf_with_sets:
-        longest_bf = max(bf_with_sets, key=lambda m: len(m.sets_data))
+        longest_bf = max(bf_with_sets, key=lambda m: len(m.sets_data or []))
         ch = name_map.get(longest_bf.challenger_id, "?")
         cd = name_map.get(longest_bf.challenged_id, "?")
         score_str = match_score_challenger_first(longest_bf)
         date_str = longest_bf.completed_at.strftime("%d.%m.%y") if longest_bf.completed_at else ""
         streak_lines.append(
             f"⚔️ Самый долгий боссфайт — <b>{h(ch)}</b> vs <b>{h(cd)}</b>: "
-            f"{len(longest_bf.sets_data)} партий  <i>{score_str}  {date_str}</i>"
+            f"{len(longest_bf.sets_data or [])} партий  <i>{score_str}  {date_str}</i>"
         )
 
     # Самый быстрый матч — от принятия вызова до внесения результата
@@ -664,7 +667,7 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
 
     groups = await _collect_club_records(session)
     if groups is None:
-        await callback.message.edit_text(
+        await cb_msg(callback).edit_text(
             "🏆 <b>Рекорды клуба</b>\n\nМатчей ещё не было.",
             reply_markup=back_to_leaderboard_kb(),
         )
@@ -672,7 +675,7 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
 
     counts = [(key, title, len(groups[key])) for key, title in RECORD_CATEGORIES if groups[key]]
     total = sum(n for _, _, n in counts)
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         f"🏆 <b>Рекорды клуба</b>\n\nВсего рекордов: <b>{total}</b>. Выбери раздел:",
         reply_markup=club_records_kb(counts),
     )
@@ -680,7 +683,7 @@ async def show_club_records(callback: CallbackQuery, session: AsyncSession):
 
 @router.callback_query(F.data.startswith("rec_cat_"))
 async def show_club_records_category(callback: CallbackQuery, session: AsyncSession):
-    key = callback.data.removeprefix("rec_cat_")
+    key = cb_data(callback).removeprefix("rec_cat_")
     titles = dict(RECORD_CATEGORIES)
     if key not in titles:
         await callback.answer("Раздел не найден.", show_alert=True)
@@ -690,12 +693,12 @@ async def show_club_records_category(callback: CallbackQuery, session: AsyncSess
     groups = await _collect_club_records(session)
     records = groups[key] if groups else []
     if not records:
-        await callback.message.edit_text(
+        await cb_msg(callback).edit_text(
             f"🏆 <b>Рекорды клуба — {titles[key]}</b>\n\nПока здесь пусто.",
             reply_markup=records_category_kb(),
         )
         return
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         _render_records_category(titles[key], records),
         reply_markup=records_category_kb(),
     )
@@ -716,7 +719,7 @@ async def show_dominance_matrix(callback: CallbackQuery, session: AsyncSession):
     all_matches = matches_r.scalars().all()
 
     if not all_players:
-        await callback.message.edit_text(
+        await cb_msg(callback).edit_text(
             "⚔️ <b>Матрица доминирования</b>\n\nИгроков пока нет.",
             reply_markup=back_to_leaderboard_kb(),
         )
@@ -739,7 +742,7 @@ async def show_dominance_matrix(callback: CallbackQuery, session: AsyncSession):
     n = len(top)
 
     if n < 2:
-        await callback.message.edit_text(
+        await cb_msg(callback).edit_text(
             "⚔️ <b>Матрица доминирования</b>\n\nНедостаточно игроков.",
             reply_markup=back_to_leaderboard_kb(),
         )
@@ -793,7 +796,7 @@ async def show_dominance_matrix(callback: CallbackQuery, session: AsyncSession):
         f"(победы-поражения).</i>"
     )
 
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         text,
         reply_markup=back_to_leaderboard_kb(),
     )
@@ -844,7 +847,7 @@ async def show_form_index(callback: CallbackQuery, session: AsyncSession):
         rows.append((p, wins, losses, draws, delta, len(recent)))
 
     if not rows:
-        await callback.message.edit_text(
+        await cb_msg(callback).edit_text(
             "🌡 <b>Индекс формы</b>\n\nМатчей ещё не было.",
             reply_markup=back_to_leaderboard_kb(),
         )
@@ -869,7 +872,7 @@ async def show_form_index(callback: CallbackQuery, session: AsyncSession):
             f"{wins}–{losses}{draws_str}  <i>({sign}{delta} pts за {total})</i>"
         )
 
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         "\n".join(lines),
         reply_markup=back_to_leaderboard_kb(),
     )
@@ -914,7 +917,7 @@ async def _reign_end_narrative(session: AsyncSession, reign: ChampionReign, name
 @router.callback_query(F.data.startswith("hall_of_fame"))
 async def show_hall_of_fame(callback: CallbackQuery, session: AsyncSession):
     try:
-        page = int(callback.data.rsplit("_", 1)[-1])
+        page = int(cb_data(callback).rsplit("_", 1)[-1])
     except ValueError:
         page = 0  # старая кнопка без номера страницы (до пагинации, v2.116.0)
 
@@ -926,7 +929,7 @@ async def show_hall_of_fame(callback: CallbackQuery, session: AsyncSession):
     reigns = reigns_r.scalars().all()
 
     if not reigns:
-        await callback.message.edit_text(
+        await cb_msg(callback).edit_text(
             "🏛 <b>Зал славы</b>\n\nБоссфайт за 1-е место ещё ни разу не активировался.",
             reply_markup=back_to_leaderboard_kb(),
         )
@@ -990,7 +993,7 @@ async def show_hall_of_fame(callback: CallbackQuery, session: AsyncSession):
     elif current_reign is not None:
         lines.append("<i>Прошлых правлений пока не было — это первое.</i>")
 
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         "\n".join(lines).rstrip(),
         reply_markup=hall_of_fame_kb(page, total_pages),
     )

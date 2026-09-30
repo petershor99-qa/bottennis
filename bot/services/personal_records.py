@@ -260,7 +260,7 @@ async def backfill_personal_records(session: AsyncSession) -> None:
             select(func.count()).select_from(PersonalRecordEarned)
             .where(PersonalRecordEarned.player_id == player.id)
         )
-        if count_r.scalar() > 0:
+        if count_r.scalar_one() > 0:
             continue  # уже был бэкфилл или идут реал-тайм записи — не трогаем
 
         matches = list(reversed(await get_career_matches(session, player.id)))  # по возрастанию даты

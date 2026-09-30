@@ -35,12 +35,15 @@ from bot.services.validation import validate_set_score
 from bot.states.states import MatchResultStates
 from bot.utils import (
     NEWCOMER_THRESHOLD,
+    cb_data,
+    cb_msg,
     get_career_matches,
     get_challenger,
     get_champion,
     get_h2h_matches,
     get_player,
     match_report,
+    msg_user,
     msk_day_start,
     msk_hour_and_weekday,
     notify_all_players,
@@ -505,7 +508,7 @@ def _confirm_kb(match_id: int) -> InlineKeyboardMarkup:
 async def cancel_report(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
-    await callback.message.edit_text("Отменено.", reply_markup=back_to_menu_kb())
+    await cb_msg(callback).edit_text("Отменено.", reply_markup=back_to_menu_kb())
 
 
 # ── Сброс FSM рестартом бота ──────────────────────────────────────────────────
@@ -521,7 +524,7 @@ async def cancel_report(callback: CallbackQuery, state: FSMContext):
 )
 async def fsm_reset_notice(callback: CallbackQuery):
     await callback.answer()
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         "⚠️ Бот перезапускался, ввод результата сбросился.\n\n"
         "Начни заново через «Внести результат» в 🎯 <b>Рекомендации</b>.",
         reply_markup=_restart_notice_kb(),
@@ -533,7 +536,7 @@ async def fsm_reset_notice(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("report_"))
 async def start_report(callback: CallbackQuery, session: AsyncSession, state: FSMContext):
     try:
-        match_id = int(callback.data.split("_")[1])
+        match_id = int(cb_data(callback).split("_")[1])
     except (ValueError, IndexError):
         await callback.answer("Некорректные данные.", show_alert=True)
         return
@@ -556,11 +559,11 @@ async def start_report(callback: CallbackQuery, session: AsyncSession, state: FS
         match_id=match_id,
         reporter_player_id=player.id,
         sets_data=[],
-        fsm_chat_id=callback.message.chat.id,
-        fsm_bot_message_id=callback.message.message_id,
+        fsm_chat_id=cb_msg(callback).chat.id,
+        fsm_bot_message_id=cb_msg(callback).message_id,
     )
 
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         "🏓 <b>Вносим результат</b>\n\n"
         "Введи счёт <b>партии 1</b> — <b>твои:соперника</b>\n"
         "Например: <code>11:7</code>\n"
@@ -622,7 +625,7 @@ async def finish_sets(callback: CallbackQuery, state: FSMContext, session: Async
     match = r.scalar_one_or_none()
     if not match or match.status != MatchStatus.accepted:
         await state.clear()
-        await callback.message.edit_text(
+        await cb_msg(callback).edit_text(
             "⚠️ Матч уже завершён или отменён — возможно, соперник внёс результат раньше тебя.",
             reply_markup=main_menu_kb(),
         )
@@ -656,7 +659,7 @@ async def finish_sets(callback: CallbackQuery, state: FSMContext, session: Async
     await state.update_data(is_draw=is_draw)
     await state.set_state(MatchResultStates.confirming)
 
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         f"📋 <b>Проверь результат:</b>\n\n"
         f"Счёт партий: <b>{sets_preview}</b>\n"
         f"{summary}\n\n"
@@ -678,7 +681,7 @@ async def undo_set(callback: CallbackQuery, state: FSMContext):
         sets_data.pop()
     await state.update_data(sets_data=sets_data)
 
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         _sets_progress_text(sets_data),
         reply_markup=after_set_kb(match_id, has_sets=bool(sets_data)),
     )
@@ -697,7 +700,7 @@ async def handle_direct_score(message: Message, session: AsyncSession, state: FS
     Срабатывает только вне FSM (StateFilter(None)) — на экране подтверждения
     счёт текстом игнорируется, чтобы случайно не сбросить ввод.
     """
-    player = await get_player(session, message.from_user.id)
+    player = await get_player(session, msg_user(message).id)
     if not player:
         return
 
@@ -853,7 +856,7 @@ async def redo_result(callback: CallbackQuery, state: FSMContext):
     await state.update_data(sets_data=[])
     await state.set_state(MatchResultStates.entering_set_score)
 
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         "🔄 Начинаем заново.\n\n"
         "Введи счёт <b>партии 1</b> — <b>твои:соперника</b>\n"
         "Например: <code>11:7</code>",
@@ -1092,7 +1095,7 @@ async def _notify_challenger_status_change(
 @router.callback_query(F.data.startswith("confirm_"), MatchResultStates.confirming)
 async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: FSMContext, bot: Bot):
     try:
-        match_id = int(callback.data.split("_")[1])
+        match_id = int(cb_data(callback).split("_")[1])
     except (ValueError, IndexError):
         await callback.answer("Некорректные данные.", show_alert=True)
         return
@@ -1128,7 +1131,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
         .values(status=MatchStatus.completed)
     )
     if guard.rowcount == 0:
-        await callback.message.edit_text("Матч уже завершён или не найден.", reply_markup=main_menu_kb())
+        await cb_msg(callback).edit_text("Матч уже завершён или не найден.", reply_markup=main_menu_kb())
         await state.clear()
         await callback.answer()
         return
@@ -1175,8 +1178,8 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                 Match.id != match_id,
             )
         )
-        challenger_floor = NEWCOMER_FLOOR if ch_count_r.scalar() < NEWCOMER_THRESHOLD else VETERAN_FLOOR
-        challenged_floor = NEWCOMER_FLOOR if cd_count_r.scalar() < NEWCOMER_THRESHOLD else VETERAN_FLOOR
+        challenger_floor = NEWCOMER_FLOOR if ch_count_r.scalar_one() < NEWCOMER_THRESHOLD else VETERAN_FLOOR
+        challenged_floor = NEWCOMER_FLOOR if cd_count_r.scalar_one() < NEWCOMER_THRESHOLD else VETERAN_FLOOR
 
         # ELO-ничья: challenger_delta может быть положительным или отрицательным
         challenger_delta = calculate_draw_rating_change(challenger.rating, challenged.rating)
@@ -1224,7 +1227,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             f"<b>{round(challenged.rating, 1)}</b> ({_fmt_delta(actual_challenged_delta)})"
         )
         draw_opponent_id = challenged.id if reporter_player_id == match.challenger_id else challenger.id
-        await callback.message.edit_text(result_text, reply_markup=rematch_kb(draw_opponent_id))
+        await cb_msg(callback).edit_text(result_text, reply_markup=rematch_kb(draw_opponent_id))
 
         # Уведомляем второго участника (того, кто не вносил результат)
         notify_player = challenged if reporter_player_id == match.challenger_id else challenger
@@ -1317,7 +1320,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                 Match.id != match_id,
             )
         )
-        loser_match_count = loser_count_r.scalar()
+        loser_match_count = loser_count_r.scalar_one()
 
         # ── Множители ─────────────────────────────────────────────────────────
         loser_floor = NEWCOMER_FLOOR if loser_match_count < NEWCOMER_THRESHOLD else VETERAN_FLOOR
@@ -1363,7 +1366,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
         )
         reporter_opponent_id = loser_db_id if reporter_player_id == winner_db_id else winner_db_id
         reporter_is_winner = reporter_player_id == winner_db_id
-        await callback.message.edit_text(
+        await cb_msg(callback).edit_text(
             result_text,
             reply_markup=rematch_kb(
                 reporter_opponent_id,
@@ -1427,7 +1430,7 @@ async def send_share_card(callback: CallbackQuery, session: AsyncSession):
     # ответить на один и тот же callback дважды, второй вызов до пользователя
     # не долетит (алерт «не твоя карточка» иначе никогда бы не показался).
     try:
-        match_id = int(callback.data.split("_")[2])
+        match_id = int(cb_data(callback).split("_")[2])
     except (ValueError, IndexError):
         await callback.answer("Некорректные данные.", show_alert=True)
         return
@@ -1470,6 +1473,6 @@ async def send_share_card(callback: CallbackQuery, session: AsyncSession):
         f"<i>{report}</i>"
     )
     try:
-        await callback.message.answer(card_text)
+        await cb_msg(callback).answer(card_text)
     except Exception:
         logger.exception("Не удалось отправить карточку победы, матч %s", match_id)
