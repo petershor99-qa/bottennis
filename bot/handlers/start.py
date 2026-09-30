@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import back_to_menu_kb, main_menu_kb, main_reply_kb
 from bot.services.achievements import ACHIEVEMENTS_LIST
-from bot.utils import MSK_OFFSET, compute_ranks, env_int, format_rank, get_match_counts, get_player
+from bot.utils import MSK_OFFSET, cb_msg, compute_ranks, env_int, format_rank, get_match_counts, get_player, msg_user
 
 router = Router()
 
@@ -44,7 +44,7 @@ async def _active_matches_for(session: AsyncSession, player: Player) -> list:
 @router.message(CommandStart())
 async def cmd_start(message: Message, command: CommandObject, session: AsyncSession, state: FSMContext, bot: Bot):
     await state.clear()
-    player = await get_player(session, message.from_user.id)
+    player = await get_player(session, msg_user(message).id)
 
     if player:
         if player.last_menu_message_id:
@@ -82,9 +82,9 @@ async def cmd_start(message: Message, command: CommandObject, session: AsyncSess
             return
 
     player = Player(
-        telegram_id=message.from_user.id,
-        username=message.from_user.username,
-        display_name=message.from_user.full_name or message.from_user.username or "Игрок",
+        telegram_id=msg_user(message).id,
+        username=msg_user(message).username,
+        display_name=msg_user(message).full_name or msg_user(message).username or "Игрок",
         rating=1000.0,
         peak_rating=1000.0,
     )
@@ -213,7 +213,7 @@ async def cmd_fix_rating(message: Message, session: AsyncSession):
 
     Использование: /fix_rating @username +18.3
     """
-    if not ADMIN_ID or message.from_user.id != ADMIN_ID:
+    if not ADMIN_ID or msg_user(message).id != ADMIN_ID:
         return
 
     parts = (message.text or "").split()
@@ -260,4 +260,4 @@ async def cmd_fix_rating(message: Message, session: AsyncSession):
 async def back_to_menu(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
-    await callback.message.edit_text("Главное меню 🏓", reply_markup=main_menu_kb())
+    await cb_msg(callback).edit_text("Главное меню 🏓", reply_markup=main_menu_kb())

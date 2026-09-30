@@ -23,12 +23,15 @@ from bot.utils import (
     CHALLENGE_BUTTON_LABELS,
     _pin_champion,
     boss_fight_rematch_blocked,
+    cb_data,
+    cb_msg,
     compute_ranks,
     get_active_match,
     get_champion_and_challenger,
     get_mvp_of_month,
     get_player,
     match_phrase,
+    msg_user,
     notify_all_players,
     random_challenge_greeting,
     safe_send,
@@ -191,7 +194,7 @@ async def _build_challenge_screen(session: AsyncSession, telegram_id: int):
 async def show_players_for_challenge(callback: CallbackQuery, session: AsyncSession):
     await callback.answer()
     text, kb = await _build_challenge_screen(session, callback.from_user.id)
-    await callback.message.edit_text(text, reply_markup=kb)
+    await cb_msg(callback).edit_text(text, reply_markup=kb)
 
 
 @router.message(F.text.in_(CHALLENGE_BUTTON_LABELS))
@@ -199,7 +202,7 @@ async def show_players_for_challenge_from_reply_kb(message: Message, session: As
     """Тот же экран, что и menu_play, но с постоянной клавиатуры снизу —
     у входящего текстового сообщения нет своего сообщения для редактирования,
     поэтому шлём новое (см. _build_challenge_screen)."""
-    text, kb = await _build_challenge_screen(session, message.from_user.id)
+    text, kb = await _build_challenge_screen(session, msg_user(message).id)
     await message.answer(text, reply_markup=kb)
 
 
@@ -210,7 +213,7 @@ async def show_players_for_challenge_from_reply_kb(message: Message, session: As
 )
 async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bot):
     try:
-        opponent_db_id = int(callback.data.split("_")[-1])
+        opponent_db_id = int(cb_data(callback).split("_")[-1])
     except (ValueError, IndexError):
         await callback.answer("Некорректные данные.", show_alert=True)
         return
@@ -254,7 +257,7 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
             busy_opp_r = await session.execute(select(Player).where(Player.id == busy_opp_id))
             busy_opp = busy_opp_r.scalar_one()
             await callback.answer()
-            await callback.message.edit_text(
+            await cb_msg(callback).edit_text(
                 f"⚔️ У тебя уже есть активный матч с <b>{h(busy_opp.display_name)}</b>.\n"
                 f"Заверши его, чтобы вызвать нового соперника.",
                 reply_markup=busy_with_match_kb(my_active.id),
@@ -341,7 +344,7 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
         await session.delete(match)
         await session.commit()
         await callback.answer()
-        await callback.message.edit_text(
+        await cb_msg(callback).edit_text(
             "❗ Не удалось отправить уведомление.\n"
             "Попроси соперника написать боту /start хотя бы раз.",
             reply_markup=back_to_menu_kb(),
@@ -364,7 +367,7 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
     win_chance = round(win_probability(challenger.rating, opponent.rating) * 100)
     win_phrase = match_phrase(win_chance, match.id)
 
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         f"🏓 Матч с <b>{h(opponent.display_name)}</b> начат!\n"
         f"{h2h_ch}\n\n"
         f"⚡ Твои шансы на победу: <b>~{win_chance}%</b>\n"
@@ -392,7 +395,7 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
 @router.callback_query(F.data.startswith("cancel_match_"))
 async def cancel_match(callback: CallbackQuery, session: AsyncSession):
     try:
-        match_id = int(callback.data.split("_")[2])
+        match_id = int(cb_data(callback).split("_")[2])
     except (ValueError, IndexError):
         await callback.answer("Некорректные данные.", show_alert=True)
         return
@@ -415,7 +418,7 @@ async def cancel_match(callback: CallbackQuery, session: AsyncSession):
     r2 = await session.execute(select(Player).where(Player.id == opponent_id))
     opponent = r2.scalar_one()
 
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         f"❓ Точно отменить матч с <b>{h(opponent.display_name)}</b>?",
         reply_markup=cancel_match_confirm_kb(match_id),
     )
@@ -426,7 +429,7 @@ async def cancel_match(callback: CallbackQuery, session: AsyncSession):
 @router.callback_query(F.data.startswith("cancel_yes_"))
 async def do_cancel_match(callback: CallbackQuery, session: AsyncSession, bot: Bot):
     try:
-        match_id = int(callback.data.split("_")[2])
+        match_id = int(cb_data(callback).split("_")[2])
     except (ValueError, IndexError):
         await callback.answer("Некорректные данные.", show_alert=True)
         return
@@ -459,7 +462,7 @@ async def do_cancel_match(callback: CallbackQuery, session: AsyncSession, bot: B
         return
     await session.commit()
 
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         f"❌ Матч с <b>{h(opponent.display_name)}</b> отменён.",
         reply_markup=back_to_menu_kb(),
     )

@@ -1,5 +1,6 @@
 import logging
 import os
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from html import escape as h
 
@@ -57,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 # ── Общие блоки для итогов недели/месяца ──────────────────────────────────────
 
-def _top_match_block(matches: list, name_map: dict, title: str) -> str | None:
+def _top_match_block(matches: Sequence, name_map: dict, title: str) -> str | None:
     """Блок «топ-матча» периода — одинаковый во всех пяти дайджестах (день/неделя/
     месяц/квартал/год), отличается только заголовок. None, если ни один матч не
     набрал порог драмы `pick_match_of_day`."""
@@ -74,7 +75,7 @@ def _top_match_block(matches: list, name_map: dict, title: str) -> str | None:
     )
 
 
-def _most_played_pair(matches: list, name_map: dict) -> str | None:
+def _most_played_pair(matches: Sequence, name_map: dict) -> str | None:
     """«Чаще всего самбовались» — самая играющая пара за период (от 2 матчей)."""
     pair: dict[tuple[int, int], int] = {}
     for m in matches:
@@ -91,7 +92,7 @@ def _most_played_pair(matches: list, name_map: dict) -> str | None:
     )
 
 
-def _longest_streak(matches: list, name_map: dict, period: str) -> str | None:
+def _longest_streak(matches: Sequence, name_map: dict, period: str) -> str | None:
     """«Нагибатель периода» — самая длинная серия побед внутри периода (от 2)."""
     by_player: dict[int, list] = {}
     for m in sorted(matches, key=lambda m: m.completed_at or datetime.min):
@@ -110,7 +111,7 @@ def _longest_streak(matches: list, name_map: dict, period: str) -> str | None:
     )
 
 
-def _longest_no_loss_streak(matches: list, name_map: dict) -> str | None:
+def _longest_no_loss_streak(matches: Sequence, name_map: dict) -> str | None:
     """«Без поражений» — самая длинная серия без поражений (победа ИЛИ ничья,
     прерывается только поражением) внутри периода (от 2). Отдельная метрика от
     _longest_streak (тот считает только чистые победные серии, ничья их обнуляет).
@@ -139,7 +140,7 @@ def _longest_no_loss_streak(matches: list, name_map: dict) -> str | None:
     )
 
 
-def _biggest_swing(matches: list, name_map: dict) -> str | None:
+def _biggest_swing(matches: Sequence, name_map: dict) -> str | None:
     """«Американские горки» — у кого рейтинг сильнее всего мотало туда-обратно
     за период: сумма |дельт| минус |итоговая дельта| — то, что отыграно назад,
     а значит НЕ видно в «Лучшем росте»/«Отрицательном росте» (те смотрят только
@@ -155,7 +156,7 @@ def _biggest_swing(matches: list, name_map: dict) -> str | None:
     if not abs_total:
         return None
     swing = {pid: abs_total[pid] - abs(net.get(pid, 0.0)) for pid in abs_total}
-    best_pid = max(swing, key=swing.get)
+    best_pid = max(swing, key=swing.__getitem__)
     if swing[best_pid] < 20:
         return None
     return (
@@ -164,12 +165,12 @@ def _biggest_swing(matches: list, name_map: dict) -> str | None:
     )
 
 
-def _total_points(matches: list) -> int:
+def _total_points(matches: Sequence) -> int:
     """Суммарное число разыгранных очков (оба игрока, все партии) за период."""
     return sum((s["w"] + s["l"]) for m in matches if m.sets_data for s in m.sets_data)
 
 
-def _career_matches_by_player(all_completed: list) -> dict[int, list]:
+def _career_matches_by_player(all_completed: Sequence) -> dict[int, list]:
     """Группирует уже загруженные завершённые матчи КЛУБА по игроку — замена
     N+1 отдельных get_career_matches(session, player.id) на игрока в
     еженедельном/ежемесячном дайджесте (эффективность: одна выборка вместо
@@ -182,7 +183,7 @@ def _career_matches_by_player(all_completed: list) -> dict[int, list]:
     return by_player
 
 
-def _compute_player_form(matches: list) -> dict[int, list[str]]:
+def _compute_player_form(matches: Sequence) -> dict[int, list[str]]:
     """Полоска формы за период: исход каждого матча в хронологии (по возрастанию
     даты), на игрока — список иконок 🟩 (победа) / 🟥 (поражение) / 🟨 (ничья).
     Общая для итогов дня/недели/месяца — раньше считалась только в итогах дня."""
@@ -499,24 +500,24 @@ async def send_weekly_digest(bot: Bot) -> None:
 
         hero_lines = ["🦸 <b>Герои недели:</b>", activity_line]
 
-        most_active_id = max(match_count, key=match_count.get)
+        most_active_id = max(match_count, key=match_count.__getitem__)
         hero_lines.append(
             f"🏅 Главный теннисист недели — <b>{h(player_name_map[most_active_id])}</b> "
             f"({pluralize_matches(match_count[most_active_id])})"
         )
         if wins_count:
-            most_wins_id = max(wins_count, key=wins_count.get)
+            most_wins_id = max(wins_count, key=wins_count.__getitem__)
             hero_lines.append(
                 f"🥇 Больше всех побед — <b>{h(player_name_map[most_wins_id])}</b> "
                 f"({wins_count[most_wins_id]})"
             )
-        best_gain_id = max(delta_sum, key=delta_sum.get)
+        best_gain_id = max(delta_sum, key=delta_sum.__getitem__)
         if delta_sum[best_gain_id] > 0:
             hero_lines.append(
                 f"📈 Лучший рост — <b>{h(player_name_map[best_gain_id])}</b> "
                 f"(+{round(delta_sum[best_gain_id], 1)} pts)"
             )
-        worst_id = min(delta_sum, key=delta_sum.get)
+        worst_id = min(delta_sum, key=delta_sum.__getitem__)
         if delta_sum[worst_id] < 0:
             hero_lines.append(
                 f"📉 Отрицательный рост — <b>{h(player_name_map[worst_id])}</b> "
@@ -672,8 +673,8 @@ async def send_daily_summary(bot: Bot) -> None:
 
         # Рост рейтинга за день: лучший (+) и отрицательный (−)
         if delta_sum:
-            best_id = max(delta_sum, key=delta_sum.get)
-            worst_id = min(delta_sum, key=delta_sum.get)
+            best_id = max(delta_sum, key=delta_sum.__getitem__)
+            worst_id = min(delta_sum, key=delta_sum.__getitem__)
             growth_lines = []
             if delta_sum[best_id] > 0:
                 growth_lines.append(
@@ -917,19 +918,19 @@ async def send_monthly_summary(bot: Bot) -> None:
             f"⚡ Сыграно за месяц: <b>{pluralize_matches(len(matches))}</b>, "
             f"<b>{pluralize_sets(total_sets)}</b>, <b>{pluralize_points(total_points)}</b>",
         ]
-        most_active_id = max(match_count, key=match_count.get)
+        most_active_id = max(match_count, key=match_count.__getitem__)
         hero_lines.append(
             f"🏓 Главный теннисист — <b>{h(name_map.get(most_active_id, '?'))}</b>: "
             f"{pluralize_matches(match_count[most_active_id])}"
         )
         if delta_sum:
-            best_id = max(delta_sum, key=delta_sum.get)
+            best_id = max(delta_sum, key=delta_sum.__getitem__)
             if delta_sum[best_id] > 0:
                 hero_lines.append(
                     f"📈 Лучший рост — <b>{h(name_map.get(best_id, '?'))}</b>: "
                     f"+{round(delta_sum[best_id], 1)} pts"
                 )
-            worst_id = min(delta_sum, key=delta_sum.get)
+            worst_id = min(delta_sum, key=delta_sum.__getitem__)
             if delta_sum[worst_id] < 0:
                 hero_lines.append(
                     f"📉 Отрицательный рост — <b>{h(name_map.get(worst_id, '?'))}</b>: "
@@ -1106,20 +1107,20 @@ async def send_quarterly_summary(bot: Bot) -> None:
             )
 
         if delta_sum:
-            best_id = max(delta_sum, key=delta_sum.get)
+            best_id = max(delta_sum, key=delta_sum.__getitem__)
             if delta_sum[best_id] > 0:
                 lines.append(
                     f"\n📈 Лучший рост — <b>{h(name_map.get(best_id, '?'))}</b>: "
                     f"+{round(delta_sum[best_id], 1)} pts"
                 )
-            worst_id = min(delta_sum, key=delta_sum.get)
+            worst_id = min(delta_sum, key=delta_sum.__getitem__)
             if delta_sum[worst_id] < 0:
                 lines.append(
                     f"📉 Отрицательный рост — <b>{h(name_map.get(worst_id, '?'))}</b>: "
                     f"{round(delta_sum[worst_id], 1)} pts"
                 )
 
-        most_active_id = max(match_count, key=match_count.get)
+        most_active_id = max(match_count, key=match_count.__getitem__)
         lines.append(
             f"🏓 Главный теннисист — <b>{h(name_map.get(most_active_id, '?'))}</b>: "
             f"{pluralize_matches(match_count[most_active_id])}"
@@ -1253,14 +1254,14 @@ async def send_yearly_summary(bot: Bot) -> None:
             )
 
         if delta_sum:
-            best_id = max(delta_sum, key=delta_sum.get)
+            best_id = max(delta_sum, key=delta_sum.__getitem__)
             if delta_sum[best_id] > 0:
                 lines.append(
                     f"\n🚀 <b>Взлёт года</b> — <b>{h(name_map.get(best_id, '?'))}</b>: "
                     f"+{round(delta_sum[best_id], 1)} pts\n"
                     f"<i>Взлетел, как акции Tesla в лучшие времена.</i>"
                 )
-            worst_id = min(delta_sum, key=delta_sum.get)
+            worst_id = min(delta_sum, key=delta_sum.__getitem__)
             if delta_sum[worst_id] < 0:
                 lines.append(
                     f"\n📉 <b>Падение года</b> — <b>{h(name_map.get(worst_id, '?'))}</b>: "
@@ -1283,7 +1284,7 @@ async def send_yearly_summary(bot: Bot) -> None:
         if swing:
             lines.append(f"\n{swing}")
 
-        most_active_id = max(match_count, key=match_count.get)
+        most_active_id = max(match_count, key=match_count.__getitem__)
         lines.append(
             f"\n🏓 Главный теннисист года — <b>{h(name_map.get(most_active_id, '?'))}</b>: "
             f"{pluralize_matches(match_count[most_active_id])}"

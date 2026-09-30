@@ -36,6 +36,8 @@ from bot.utils import (
     _challenger_among,
     _match_line,
     boss_fight_rematch_blocked,
+    cb_data,
+    cb_msg,
     compute_ranks,
     format_rank,
     get_active_match,
@@ -43,6 +45,7 @@ from bot.utils import (
     get_match_counts,
     get_mvp_of_month,
     get_player,
+    msg_user,
     pluralize_days,
     pluralize_matches,
     rank_title,
@@ -430,13 +433,13 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
         return
     await callback.answer()
     text, kb = await _build_stats_screen(session, player)
-    await callback.message.edit_text(text, reply_markup=kb)
+    await cb_msg(callback).edit_text(text, reply_markup=kb)
 
 
 @router.message(F.text == "📈 Статистика")
 async def show_my_stats_from_reply_kb(message: Message, session: AsyncSession):
     """Тот же экран, что и menu_stats, но с постоянной клавиатуры снизу."""
-    player = await get_player(session, message.from_user.id)
+    player = await get_player(session, msg_user(message).id)
     if not player:
         await message.answer("Сначала напиши /start 🏓")
         return
@@ -450,19 +453,19 @@ async def show_my_stats_section(callback: CallbackQuery, session: AsyncSession):
     if not player:
         await callback.answer("Сначала напиши /start", show_alert=True)
         return
-    key = callback.data.removeprefix("stat_sec_")
+    key = cb_data(callback).removeprefix("stat_sec_")
     text = await _build_stats_section(session, player, key, personal=True)
     if text is None:
         await callback.answer("Раздел не найден или пока пуст.", show_alert=True)
         return
     await callback.answer()
-    await callback.message.edit_text(text, reply_markup=stats_section_kb())
+    await cb_msg(callback).edit_text(text, reply_markup=stats_section_kb())
 
 
 @router.callback_query(F.data.startswith("pstat_"))
 async def show_player_stats_section(callback: CallbackQuery, session: AsyncSession):
     try:
-        _, raw_id, key = callback.data.split("_", 2)
+        _, raw_id, key = cb_data(callback).split("_", 2)
         target_id = int(raw_id)
     except (ValueError, IndexError):
         await callback.answer("Некорректные данные.", show_alert=True)
@@ -477,7 +480,7 @@ async def show_player_stats_section(callback: CallbackQuery, session: AsyncSessi
         await callback.answer("Раздел не найден или пока пуст.", show_alert=True)
         return
     await callback.answer()
-    await callback.message.edit_text(text, reply_markup=player_stats_section_kb(target.id))
+    await cb_msg(callback).edit_text(text, reply_markup=player_stats_section_kb(target.id))
 
 
 # ── Карьер-рекап ──────────────────────────────────────────────────────────────
@@ -499,7 +502,7 @@ async def show_career_recap(callback: CallbackQuery, session: AsyncSession):
 
     all_matches = await get_career_matches(session, player.id, with_opponents=True)
     if not all_matches:
-        await callback.message.edit_text(
+        await cb_msg(callback).edit_text(
             f"🎬 <b>Моя история — {h(player.display_name)}</b>\n\n"
             f"Пока рассказывать нечего — сыграй свой первый матч! 🏓",
             reply_markup=back_to_stats_kb(),
@@ -551,7 +554,7 @@ async def show_career_recap(callback: CallbackQuery, session: AsyncSession):
     lines.append(achievements_line)
     lines.append(pr_line)
 
-    await callback.message.edit_text("\n".join(lines), reply_markup=back_to_stats_kb())
+    await cb_msg(callback).edit_text("\n".join(lines), reply_markup=back_to_stats_kb())
 
 
 # ── Player profile (public view) ──────────────────────────────────────────────
@@ -559,7 +562,7 @@ async def show_career_recap(callback: CallbackQuery, session: AsyncSession):
 @router.callback_query(F.data.startswith("player_profile_"))
 async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
     try:
-        target_id = int(callback.data.split("_")[2])
+        target_id = int(cb_data(callback).split("_")[2])
     except (ValueError, IndexError):
         await callback.answer("Некорректные данные.", show_alert=True)
         return
@@ -620,7 +623,7 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
     _append_rank_and_throne_lines(lines, rank_gap, throne_line)
 
     sections = _available_sections(player, s, all_matches, include_growth=False)
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         "\n".join(lines),
         reply_markup=player_profile_kb(
             player.id, viewer_id=viewer_id, can_challenge=can_challenge, sections=sections,
@@ -638,7 +641,7 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
 @router.callback_query(F.data.startswith("what_if_"))
 async def show_what_if(callback: CallbackQuery, session: AsyncSession):
     try:
-        target_id = int(callback.data.rsplit("_", 1)[-1])
+        target_id = int(cb_data(callback).rsplit("_", 1)[-1])
     except (ValueError, IndexError):
         await callback.answer("Некорректные данные.", show_alert=True)
         return
@@ -670,7 +673,7 @@ async def show_what_if(callback: CallbackQuery, session: AsyncSession):
         viewer.rating, opponent.rating, viewer_is_newcomer,
     )
 
-    await callback.message.answer(
+    await cb_msg(callback).answer(
         f"🎲 Если сыграешь с <b>{h(opponent.display_name)}</b> сейчас:\n\n"
         f"Твой рейтинг: <b>{round(viewer.rating)}</b> pts\n"
         f"Рейтинг соперника: <b>{round(opponent.rating)}</b> pts\n\n"
@@ -748,13 +751,13 @@ async def show_my_achievements(callback: CallbackQuery, session: AsyncSession):
     earned = get_achievements(player)
     text = _render_achievements_toc(earned, "Мои достижения")
     progress = _achievement_category_progress(earned)
-    await callback.message.edit_text(text, reply_markup=achievements_kb(progress))
+    await cb_msg(callback).edit_text(text, reply_markup=achievements_kb(progress))
 
 
 @router.callback_query(F.data.startswith("player_achievements_"))
 async def show_player_achievements(callback: CallbackQuery, session: AsyncSession):
     try:
-        target_id = int(callback.data.removeprefix("player_achievements_"))
+        target_id = int(cb_data(callback).removeprefix("player_achievements_"))
     except ValueError:
         await callback.answer("Некорректные данные.", show_alert=True)
         return
@@ -767,7 +770,7 @@ async def show_player_achievements(callback: CallbackQuery, session: AsyncSessio
     earned = get_achievements(player)
     text = _render_achievements_toc(earned, f"Достижения — {h(player.display_name)}")
     progress = _achievement_category_progress(earned)
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         text,
         reply_markup=player_achievements_kb(target_id, progress),
     )
@@ -781,14 +784,14 @@ async def show_my_achievement_category(callback: CallbackQuery, session: AsyncSe
         await callback.answer("Сначала напиши /start", show_alert=True)
         return
     try:
-        category = CATEGORY_ORDER[int(callback.data.removeprefix("ach_cat_"))]
+        category = CATEGORY_ORDER[int(cb_data(callback).removeprefix("ach_cat_"))]
     except (ValueError, IndexError):
         await callback.answer("Некорректные данные.", show_alert=True)
         return
     await callback.answer()
     earned = get_achievements(player)
     text = _render_achievement_category(earned, category)
-    await callback.message.edit_text(text, reply_markup=achievement_category_kb())
+    await cb_msg(callback).edit_text(text, reply_markup=achievement_category_kb())
 
 
 @router.callback_query(F.data.startswith("pach_"))
@@ -798,7 +801,7 @@ async def show_player_achievement_category(callback: CallbackQuery, session: Asy
     callback_data: pach_{player_id}_{индекс категории в CATEGORY_ORDER}. Не
     начинается с "player_achievements_", чтобы не попасть под startswith
     хендлера оглавления выше."""
-    raw = callback.data.removeprefix("pach_")
+    raw = cb_data(callback).removeprefix("pach_")
     try:
         player_id_str, idx_str = raw.rsplit("_", 1)
         target_id = int(player_id_str)
@@ -814,4 +817,4 @@ async def show_player_achievement_category(callback: CallbackQuery, session: Asy
     await callback.answer()
     earned = get_achievements(player)
     text = _render_achievement_category(earned, category)
-    await callback.message.edit_text(text, reply_markup=achievement_category_kb(target_id))
+    await cb_msg(callback).edit_text(text, reply_markup=achievement_category_kb(target_id))
