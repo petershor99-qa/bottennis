@@ -406,7 +406,10 @@ def player_profile_kb(
             )
         else:
             b.row(InlineKeyboardButton(text="🎲 Что если?", callback_data=f"what_if_{player_id}"))
-        b.row(InlineKeyboardButton(text="🆚 Личные встречи", callback_data=f"h2h_{player_id}_0"))
+        b.row(
+            InlineKeyboardButton(text="🆚 Личные встречи", callback_data=f"h2h_{player_id}_0"),
+            InlineKeyboardButton(text="🕸 Сравнить стили", callback_data=f"style_cmp_{player_id}"),
+        )
     if sections:
         _section_rows(b, sections, f"pstat_{player_id}_")
     b.row(InlineKeyboardButton(

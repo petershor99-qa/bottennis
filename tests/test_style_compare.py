@@ -172,3 +172,15 @@ async def test_compare_photo_error_is_reported_not_raised(db):
     bot.send_photo.side_effect = RuntimeError("boom")
     await show_style_comparison(cb, db, bot)
     assert "Не удалось" in cb.answer.await_args.args[0]
+
+
+def test_profile_kb_has_compare_button_only_for_other_players():
+    from bot.keyboards.inline import player_profile_kb
+
+    def cbs(kb):
+        return [b.callback_data for row in kb.inline_keyboard for b in row]
+
+    assert "style_cmp_7" in cbs(player_profile_kb(7, viewer_id=1))
+    assert "style_cmp_7" in cbs(player_profile_kb(7, viewer_id=1, can_challenge=False))
+    assert "style_cmp_7" not in cbs(player_profile_kb(7, viewer_id=7))  # свой профиль
+    assert "style_cmp_7" not in cbs(player_profile_kb(7))  # зритель неизвестен
