@@ -23,7 +23,7 @@ from bot.services.year_vote import (
     render_nomination_screen,
     set_vote,
 )
-from bot.utils import MSK_OFFSET, get_player
+from bot.utils import MSK_OFFSET, cb_data, cb_msg, get_player
 
 router = Router()
 
@@ -71,7 +71,7 @@ async def show_bulletin(callback: CallbackQuery, session: AsyncSession):
     name_map = {p.id: p.display_name for p in candidates}
     choices = await get_voter_choices(session, year, player.id)
     text = render_bulletin(year, choices, name_map)
-    await callback.message.edit_text(text, reply_markup=year_vote_bulletin_kb())
+    await cb_msg(callback).edit_text(text, reply_markup=year_vote_bulletin_kb())
 
 
 @router.callback_query(F.data.startswith("yv_nom_"))
@@ -81,7 +81,7 @@ async def show_nomination(callback: CallbackQuery, session: AsyncSession):
         return
     player, year, eligible_ids = guard
 
-    nomination_id = callback.data.removeprefix("yv_nom_")
+    nomination_id = cb_data(callback).removeprefix("yv_nom_")
     nomination = get_nomination(nomination_id)
     if nomination is None:
         await callback.answer("Некорректные данные.", show_alert=True)
@@ -91,7 +91,7 @@ async def show_nomination(callback: CallbackQuery, session: AsyncSession):
     candidates = await get_nominees(session, year, exclude_id=player.id, eligible_ids=eligible_ids)
     choices = await get_voter_choices(session, year, player.id)
     text = render_nomination_screen(nomination)
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         text,
         reply_markup=year_vote_nomination_kb(nomination.id, candidates, choices.get(nomination.id)),
     )
@@ -104,7 +104,7 @@ async def pick_nominee(callback: CallbackQuery, session: AsyncSession):
         return
     player, year, eligible_ids = guard
 
-    raw = callback.data.removeprefix("yv_pick_")
+    raw = cb_data(callback).removeprefix("yv_pick_")
     try:
         nomination_id, nominee_id_str = raw.rsplit("_", 1)
         nominee_id = int(nominee_id_str)
@@ -128,4 +128,4 @@ async def pick_nominee(callback: CallbackQuery, session: AsyncSession):
     name_map = {p.id: p.display_name for p in candidates}
     choices = await get_voter_choices(session, year, player.id)
     text = render_bulletin(year, choices, name_map)
-    await callback.message.edit_text(text, reply_markup=year_vote_bulletin_kb())
+    await cb_msg(callback).edit_text(text, reply_markup=year_vote_bulletin_kb())

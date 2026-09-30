@@ -5,11 +5,14 @@ import math
 import os
 import random
 import urllib.parse
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from html import escape as h
+from typing import cast
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError
+from aiogram.types import CallbackQuery, Message, User
 from sqlalchemy import and_, desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -241,7 +244,7 @@ async def get_career_matches(
     if with_opponents:
         stmt = stmt.options(selectinload(Match.challenger), selectinload(Match.challenged))
     r = await session.execute(stmt)
-    return r.scalars().all()
+    return list(r.scalars().all())
 
 
 async def get_h2h_matches(
@@ -266,7 +269,7 @@ async def get_h2h_matches(
     r = await session.execute(
         select(Match).where(*conditions).order_by(desc(Match.completed_at))
     )
-    return r.scalars().all()
+    return list(r.scalars().all())
 
 
 async def get_active_match(session: AsyncSession, player_id: int) -> Match | None:
@@ -300,7 +303,7 @@ async def get_champion(session: AsyncSession) -> Player | None:
     return r.scalar_one_or_none()
 
 
-def _challenger_among(candidates: list[Player], champion: Player, match_counts: dict[int, int]) -> Player | None:
+def _challenger_among(candidates: Sequence[Player], champion: Player, match_counts: dict[int, int]) -> Player | None:
     """Претендент среди уже загруженного списка игроков — та же логика, что и
     get_challenger(), но без похода в БД. Для мест, где players_all и
     match_counts уже на руках (профиль/статистика) — экономит повторный
@@ -519,7 +522,7 @@ async def most_throne_ascensions(session: AsyncSession) -> tuple[int, int] | Non
     counts: dict[int, int] = {}
     for reign in reigns:
         counts[reign.player_id] = counts.get(reign.player_id, 0) + 1
-    best_pid = max(counts, key=counts.get)
+    best_pid = max(counts, key=counts.__getitem__)
     return (best_pid, counts[best_pid]) if counts[best_pid] >= 2 else None
 
 
@@ -583,8 +586,30 @@ async def steadiest_career(session: AsyncSession) -> tuple[int, float] | None:
     }
     if not eligible:
         return None
-    best_pid = min(eligible, key=eligible.get)
+    best_pid = min(eligible, key=eligible.__getitem__)
     return (best_pid, round(eligible[best_pid], 1))
+
+
+def cb_msg(callback: CallbackQuery) -> Message:
+    """Сообщение, под которым нажата inline-кнопка. Только для типизации: aiogram
+    объявляет `CallbackQuery.message` как `Message | InaccessibleMessage | None`,
+    но для кнопок, которые бот сам отправил, это всегда доступное сообщение —
+    рантайм-поведение прежнее (`typing.cast` ничего не делает), просто mypy
+    перестаёт видеть в каждом `callback.message.edit_text(...)` ложную ошибку."""
+    return cast(Message, callback.message)
+
+
+def cb_data(callback: CallbackQuery) -> str:
+    """`callback.data` как `str` (aiogram объявляет `str | None`). Только для
+    типизации, см. cb_msg."""
+    return cast(str, callback.data)
+
+
+def msg_user(message: Message) -> User:
+    """Отправитель сообщения как `User` (aiogram объявляет `User | None` — None
+    только у сообщений из каналов, в личке с ботом отправитель есть всегда).
+    Только для типизации, см. cb_msg."""
+    return cast(User, message.from_user)
 
 
 async def safe_send(bot: Bot, chat_id: int, text: str, **kwargs) -> bool:
@@ -651,7 +676,7 @@ async def get_mvp_of_month(session: AsyncSession) -> int | None:
     for m in matches:
         for pid in (m.challenger_id, m.challenged_id):
             delta_sum[pid] = delta_sum.get(pid, 0.0) + match_rating_delta(m, pid)
-    best_id = max(delta_sum, key=delta_sum.get)
+    best_id = max(delta_sum, key=delta_sum.__getitem__)
     return best_id if delta_sum[best_id] > 0 else None
 
 
@@ -723,7 +748,7 @@ async def get_match_counts(session: AsyncSession) -> dict[int, int]:
 
 
 def compute_ranks(
-    players: list[Player],
+    players: Sequence[Player],
     match_counts: dict[int, int],
     champion_id: int | None = None,
 ) -> dict[int, int]:
@@ -1264,7 +1289,7 @@ def _my_opp_points(m: Match, s: dict, viewer_id: int) -> tuple[int, int]:
     return s["l"], s["w"]
 
 
-def compute_h2h(matches: list[Match], viewer_id: int, opponent_id: int) -> dict:
+def compute_h2h(matches: Sequence[Match], viewer_id: int, opponent_id: int) -> dict:
     """Статистика личных встреч viewer против opponent.
 
     matches — завершённые матчи между этими двумя игроками,
@@ -1543,7 +1568,7 @@ CHART_MAX_POINTS = 40  # сколько последних матчей пока
 
 
 def build_rating_series(
-    matches: list[Match], player_id: int, current_rating: float, limit: int = CHART_MAX_POINTS
+    matches: Sequence[Match], player_id: int, current_rating: float, limit: int = CHART_MAX_POINTS
 ) -> tuple[list[str], list[float]]:
     """Строит ряд рейтинга игрока для графика.
 
@@ -1744,7 +1769,7 @@ def _heatmap_tier(count: int) -> int:
     return 3
 
 
-def activity_counts_by_day(matches: list[Match]) -> dict:
+def activity_counts_by_day(matches: Sequence[Match]) -> dict:
     """Число матчей по дням (МСК) — общий хелпер для личной и клубной карты
     активности. Ключи — datetime.date."""
     counts: dict = {}

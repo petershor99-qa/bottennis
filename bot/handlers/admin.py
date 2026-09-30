@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.db.models import Match, MatchStatus, Player, UsageEvent
 from bot.scheduler import send_backup_file
 from bot.services.usage import action_label
-from bot.utils import MSK_OFFSET, env_int, pluralize_opens, pluralize_players
+from bot.utils import MSK_OFFSET, env_int, msg_user, pluralize_opens, pluralize_players
 
 router = Router()
 
@@ -30,7 +30,7 @@ ADMIN_ID: int = env_int("ADMIN_ID")
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def _is_admin(message: Message) -> bool:
-    return ADMIN_ID != 0 and message.from_user.id == ADMIN_ID
+    return ADMIN_ID != 0 and msg_user(message).id == ADMIN_ID
 
 
 _SEND_CHUNK = 4000  # с запасом от лимита Telegram в 4096 символов
@@ -70,7 +70,7 @@ async def _send(message: Message, text: str) -> None:
 @router.message(Command("myid"))
 async def cmd_myid(message: Message) -> None:
     """Показывает Telegram ID текущего пользователя."""
-    await message.answer(f"Твой Telegram ID: <code>{message.from_user.id}</code>")
+    await message.answer(f"Твой Telegram ID: <code>{msg_user(message).id}</code>")
 
 
 # ── /backup ────────────────────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ async def cmd_dbstats(message: Message, session: AsyncSession) -> None:
         if ADMIN_ID == 0:
             await message.answer(
                 "⚙️ <b>ADMIN_ID не настроен.</b>\n\n"
-                f"Твой ID: <code>{message.from_user.id}</code>\n\n"
+                f"Твой ID: <code>{msg_user(message).id}</code>\n\n"
                 "Добавь переменную <code>ADMIN_ID</code> в <code>.env</code> с этим значением, "
                 "затем перезапусти бота и повтори команду.",
             )
@@ -181,7 +181,7 @@ async def cmd_dbstats(message: Message, session: AsyncSession) -> None:
 
     # Распределение по диапазонам
     lines.append("\n<b>Распределение Δ:</b>")
-    buckets = defaultdict(int)
+    buckets: defaultdict[int, int] = defaultdict(int)
     for d in deltas:
         b = int(d // 5) * 5
         buckets[b] += 1
@@ -213,8 +213,8 @@ async def cmd_dbstats(message: Message, session: AsyncSession) -> None:
 
     # ── 3. Текущие рейтинги ───────────────────────────────────────────────────
     lines.append("\n<b>🏆 Текущие рейтинги:</b>\n")
-    win_map = defaultdict(int)
-    loss_map = defaultdict(int)
+    win_map: defaultdict[int, int] = defaultdict(int)
+    loss_map: defaultdict[int, int] = defaultdict(int)
     for m in matches:
         win_map[m.winner_id] += 1
         loser_id = m.challenged_id if m.winner_id == m.challenger_id else m.challenger_id

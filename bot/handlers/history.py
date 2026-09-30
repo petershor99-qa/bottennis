@@ -32,6 +32,8 @@ from bot.utils import (
     activity_heatmap_url,
     boss_fight_rematch_blocked,
     build_rating_series,
+    cb_data,
+    cb_msg,
     compute_h2h,
     favor_icon,
     get_active_match,
@@ -76,7 +78,7 @@ async def _send_rating_chart(
 
     labels, values = build_rating_series(matches, target.id, target.rating)
     url = rating_chart_url(target.display_name, labels, values)
-    chat_id = callback.message.chat.id
+    chat_id = cb_msg(callback).chat.id
 
     # Удаляем предыдущий график в этом чате, чтобы они не копились в переписке.
     prev_id = _last_chart_msg.get(chat_id)
@@ -116,7 +118,7 @@ async def show_rating_chart(callback: CallbackQuery, session: AsyncSession, bot:
 @router.callback_query(F.data.startswith("player_chart_"))
 async def show_player_rating_chart(callback: CallbackQuery, session: AsyncSession, bot: Bot):
     try:
-        target_id = int(callback.data.rsplit("_", 1)[1])
+        target_id = int(cb_data(callback).rsplit("_", 1)[1])
     except (ValueError, IndexError):
         await callback.answer("Некорректные данные.", show_alert=True)
         return
@@ -163,7 +165,7 @@ async def _send_activity_heatmap(
     matches = r.scalars().all()
     counts = activity_counts_by_day(matches)
     url = activity_heatmap_url(title, counts)
-    chat_id = callback.message.chat.id
+    chat_id = cb_msg(callback).chat.id
 
     prev_id = _last_activity_msg.get(chat_id)
     if prev_id is not None:
@@ -244,7 +246,7 @@ async def _send_style_radar(
         return
 
     url = style_radar_url(target.display_name, radar)
-    chat_id = callback.message.chat.id
+    chat_id = cb_msg(callback).chat.id
 
     prev_id = _last_radar_msg.get(chat_id)
     if prev_id is not None:
@@ -294,7 +296,7 @@ async def show_style_radar(callback: CallbackQuery, session: AsyncSession, bot: 
 @router.callback_query(F.data.startswith("player_style_radar_"))
 async def show_player_style_radar(callback: CallbackQuery, session: AsyncSession, bot: Bot):
     try:
-        target_id = int(callback.data.rsplit("_", 1)[1])
+        target_id = int(cb_data(callback).rsplit("_", 1)[1])
     except (ValueError, IndexError):
         await callback.answer("Некорректные данные.", show_alert=True)
         return
@@ -312,7 +314,7 @@ async def show_style_comparison(callback: CallbackQuery, session: AsyncSession, 
     """Сравнение стилей зрителя и выбранного игрока (v2.138.0) — один график с
     двумя радарами + подпись. Кнопка живёт на экране личных встреч (h2h_kb)."""
     try:
-        target_id = int(callback.data.rsplit("_", 1)[1])
+        target_id = int(cb_data(callback).rsplit("_", 1)[1])
     except (ValueError, IndexError):
         await callback.answer("Некорректные данные.", show_alert=True)
         return
@@ -347,7 +349,7 @@ async def show_style_comparison(callback: CallbackQuery, session: AsyncSession, 
         radars.append(radar)
     radar_a, radar_b = radars
 
-    chat_id = callback.message.chat.id
+    chat_id = cb_msg(callback).chat.id
     prev_id = _last_radar_msg.get(chat_id)
     if prev_id is not None:
         try:
@@ -377,7 +379,7 @@ async def show_match_history(callback: CallbackQuery, session: AsyncSession):
         return
 
     try:
-        page = int(callback.data.split("_")[1])
+        page = int(cb_data(callback).split("_")[1])
     except (ValueError, IndexError):
         await callback.answer("Некорректные данные.", show_alert=True)
         return
@@ -396,7 +398,7 @@ async def show_match_history(callback: CallbackQuery, session: AsyncSession):
     all_matches = r.scalars().all()
 
     if not all_matches:
-        await callback.message.edit_text(
+        await cb_msg(callback).edit_text(
             "У тебя пока нет сыгранных матчей. 🏓",
             reply_markup=back_to_menu_kb(),
         )
@@ -413,7 +415,7 @@ async def show_match_history(callback: CallbackQuery, session: AsyncSession):
     for m in chunk:
         lines.append(_match_line(m, player.id))
 
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         "\n".join(lines),
         reply_markup=history_kb(page, total_pages),
     )
@@ -423,7 +425,7 @@ async def show_match_history(callback: CallbackQuery, session: AsyncSession):
 
 @router.callback_query(F.data.startswith("player_history_"))
 async def show_player_match_history(callback: CallbackQuery, session: AsyncSession):
-    parts = callback.data.split("_")
+    parts = cb_data(callback).split("_")
     # format: player_history_{player_id}_{page}
     try:
         target_id = int(parts[2])
@@ -455,7 +457,7 @@ async def show_player_match_history(callback: CallbackQuery, session: AsyncSessi
     all_matches = r.scalars().all()
 
     if not all_matches:
-        await callback.message.edit_text(
+        await cb_msg(callback).edit_text(
             f"У <b>{h(player.display_name)}</b> пока нет сыгранных матчей. 🏓",
             reply_markup=player_profile_kb(target_id, viewer_id=viewer_id),
         )
@@ -472,7 +474,7 @@ async def show_player_match_history(callback: CallbackQuery, session: AsyncSessi
     for m in chunk:
         lines.append(_match_line(m, player.id))
 
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         "\n".join(lines),
         reply_markup=player_history_kb(target_id, page, total_pages),
     )
@@ -482,7 +484,7 @@ async def show_player_match_history(callback: CallbackQuery, session: AsyncSessi
 
 @router.callback_query(F.data.startswith("h2h_"))
 async def show_h2h(callback: CallbackQuery, session: AsyncSession):
-    parts = callback.data.split("_")
+    parts = cb_data(callback).split("_")
     try:
         target_id = int(parts[1])
         page = int(parts[2]) if len(parts) > 2 else 0
@@ -529,7 +531,7 @@ async def show_h2h(callback: CallbackQuery, session: AsyncSession):
     title = f"⚔️ <b>Личные встречи</b>\nТы 🆚 <b>{h(opponent.display_name)}</b>\n"
 
     if not matches:
-        await callback.message.edit_text(
+        await cb_msg(callback).edit_text(
             f"{title}\nВы ещё не встречались за столом 🏓",
             reply_markup=h2h_kb(target_id, can_challenge=can_challenge),
         )
@@ -572,7 +574,7 @@ async def show_h2h(callback: CallbackQuery, session: AsyncSession):
     for m in chunk:
         lines.append(_match_line(m, viewer.id))
 
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         "\n".join(lines),
         reply_markup=h2h_kb(target_id, page, total_pages, can_challenge=can_challenge),
     )
@@ -703,7 +705,7 @@ async def show_my_matches(callback: CallbackQuery, session: AsyncSession):
 
     builder.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
 
-    await callback.message.edit_text(
+    await cb_msg(callback).edit_text(
         "\n".join(lines),
         reply_markup=builder.as_markup(),
     )
