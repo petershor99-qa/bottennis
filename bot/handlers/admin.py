@@ -5,22 +5,31 @@
 /myid     — показать свой Telegram ID (для настройки ADMIN_ID)
 /backup   — снять бэкап БД по запросу, без ожидания ежемесячной джобы
 /usage    — какие экраны реально открывают (счётчик, этап 1 дорожной карты)
+/whatsnew — показать текст «Что нового» и по кнопке разослать его всем игрокам
 """
 import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from html import escape as h
 
-from aiogram import Bot, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Match, MatchStatus, Player, UsageEvent
 from bot.scheduler import send_backup_file
 from bot.services.usage import action_label
-from bot.utils import MSK_OFFSET, env_int, msg_user, pluralize_opens, pluralize_players
+from bot.utils import (
+    MSK_OFFSET,
+    cb_msg,
+    env_int,
+    msg_user,
+    pluralize_opens,
+    pluralize_players,
+    safe_send,
+)
 
 router = Router()
 
@@ -131,6 +140,58 @@ async def cmd_usage(message: Message, session: AsyncSession) -> None:
             f"последнее {last_str}"
         )
     await _send(message, "\n".join(lines))
+
+
+# ── /whatsnew ─────────────────────────────────────────────────────────────────
+# Рассылка «Что нового» (v2.140.0): новые кнопки игроки могут просто не заметить.
+# Двухшаговая — сначала предпросмотр админу, рассылка только по кнопке, чтобы
+# случайная команда не разослала сообщение всему клубу. Текст правится здесь,
+# перед каждой новой рассылкой.
+
+WHATS_NEW_TEXT = (
+    "🆕 <b>Что нового в боте</b>\n\n"
+    "• Рекорды, статистика и профиль игрока разбиты на разделы кнопками — меньше простыни.\n"
+    "• «Сравнить стили» — на профиле и в личных встречах: два радара на одном графике.\n"
+    "• Радар стиля теперь на 6 осей, с архетипом и расшифровкой.\n"
+    "• 10 новых достижений.\n"
+    "• Трон освобождается после 14 дней без игр (было 7).\n"
+    "• 21 декабря откроется голосование за неформальные звания года "
+    "(если мы не развалимся. А мы не развалимся)."
+)
+
+
+def _whatsnew_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="📢 Разослать всем игрокам", callback_data="whatsnew_send"),
+    ]])
+
+
+@router.message(Command("whatsnew"))
+async def cmd_whatsnew(message: Message) -> None:
+    """Предпросмотр рассылки «Что нового» — админу, с кнопкой отправки."""
+    if not _is_admin(message):
+        return
+    await message.answer(
+        f"Предпросмотр рассылки:\n\n{WHATS_NEW_TEXT}",
+        reply_markup=_whatsnew_kb(),
+    )
+
+
+@router.callback_query(F.data == "whatsnew_send")
+async def send_whatsnew(callback: CallbackQuery, bot: Bot, session: AsyncSession) -> None:
+    if ADMIN_ID == 0 or callback.from_user.id != ADMIN_ID:
+        await callback.answer()
+        return
+    await callback.answer()
+    # Кнопку убираем ДО рассылки — двойной тап не отправит сообщение дважды.
+    await cb_msg(callback).edit_reply_markup(reply_markup=None)
+
+    players = (await session.execute(select(Player))).scalars().all()
+    delivered = 0
+    for p in players:
+        if await safe_send(bot, p.telegram_id, WHATS_NEW_TEXT):
+            delivered += 1
+    await cb_msg(callback).answer(f"✅ Разослано: {delivered} из {len(players)}.")
 
 
 # ── /dbstats ──────────────────────────────────────────────────────────────────
