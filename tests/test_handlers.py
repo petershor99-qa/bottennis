@@ -4009,7 +4009,7 @@ async def test_weekly_digest_club_pulse_vs_4week_average(monkeypatch, db_factory
     text = bot.send_message.call_args_list[0][0][1]
     # 2 матча в эту неделю vs среднее 1/неделю за 4 недели = +100%
     assert "+100%" in text
-    assert "к среднему за 4 недели" in text
+    assert "К среднему за 4 недели" in text
 
 
 # ── send_match_reminders (напоминание про незавершённый матч, от 24ч) ──────────
