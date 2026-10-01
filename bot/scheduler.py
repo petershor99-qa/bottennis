@@ -9,7 +9,8 @@ from aiogram.types import FSInputFile
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, desc, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from bot.db.database import DATABASE_URL, async_session
@@ -168,6 +169,115 @@ def _biggest_swing(matches: Sequence, name_map: dict) -> str | None:
 def _total_points(matches: Sequence) -> int:
     """Суммарное число разыгранных очков (оба игрока, все партии) за период."""
     return sum((s["w"] + s["l"]) for m in matches if m.sets_data for s in m.sets_data)
+
+
+def _period_totals(matches: Sequence) -> dict[str, float]:
+    """Объём периода — матчи, партии, очки. Общая база для сравнения периодов
+    (`_comparison_line`): текущий период против предыдущего/среднего."""
+    return {
+        "matches": len(matches),
+        "sets": sum(len(m.sets_data) if m.sets_data else 0 for m in matches),
+        "points": _total_points(matches),
+    }
+
+
+def _pct_change(current: float, baseline: float) -> int | None:
+    """Изменение в процентах к базе. База 0 (прошлый период пуст) — None:
+    деление на ноль молча пропускаем, как и «Клубный пульс» до v2.141.0."""
+    if baseline <= 0:
+        return None
+    return round((current - baseline) / baseline * 100)
+
+
+def _comparison_line(
+    current: dict[str, float], baseline: dict[str, float], vs_label: str
+) -> str | None:
+    """Строка «📊 К {vs_label}: матчи ▲ +25%, партии ▼ -5%, очки ▬ 0%» (v2.141.0).
+
+    Общая для недели (база — среднее за 4 недели), месяца и квартала (база —
+    предыдущий месяц/квартал). Метрика с нулевой базой пропускается; если не
+    осталось ни одной — строки нет. Дневной дайджест не сравнивается (решение
+    пользователя): день недели и выходные давали бы шум.
+    """
+    parts = []
+    for key, name in (("matches", "матчи"), ("sets", "партии"), ("points", "очки")):
+        pct = _pct_change(current[key], baseline[key])
+        if pct is None:
+            continue
+        arrow = "▲" if pct > 0 else "▼" if pct < 0 else "▬"
+        sign = "+" if pct > 0 else ""
+        parts.append(f"{name} {arrow} {sign}{pct}%")
+    if not parts:
+        return None
+    return f"📊 <i>К {vs_label}: {', '.join(parts)}</i>"
+
+
+def _personal_vs_previous_line(
+    player_id: int, matches: Sequence, prev_matches: Sequence, vs_label: str
+) -> str | None:
+    """Личное сравнение в шапке итогов месяца (v2.141.0): матчи, винрейт и прирост
+    рейтинга игрока против прошлого месяца. Нужны матчи игрока в ОБОИХ периодах —
+    иначе сравнивать не с чем, строка молча пропускается."""
+    def mine(ms: Sequence) -> list:
+        return [m for m in ms if player_id in (m.challenger_id, m.challenged_id)]
+
+    cur, prev = mine(matches), mine(prev_matches)
+    if not cur or not prev:
+        return None
+
+    def winrate(ms: list) -> int:
+        return int(sum(1 for m in ms if m.winner_id == player_id) / len(ms) * 100)
+
+    def delta(ms: list) -> float:
+        return round(sum(match_rating_delta(m, player_id) for m in ms), 1) + 0.0
+
+    return (
+        f"🆚 <i>Ты против {vs_label}: матчей {len(prev)} → {len(cur)}, "
+        f"винрейт {winrate(prev)}% → {winrate(cur)}%, "
+        f"прирост рейтинга {delta(prev):+.1f} → {delta(cur):+.1f}</i>"
+    )
+
+
+async def _fetch_completed_between(
+    session: AsyncSession, start_utc: datetime, end_utc: datetime
+) -> Sequence[Match]:
+    """Завершённые матчи в окне [start_utc, end_utc) — для базы сравнения периодов."""
+    r = await session.execute(
+        select(Match).where(
+            Match.status == MatchStatus.completed,
+            Match.completed_at >= start_utc,
+            Match.completed_at < end_utc,
+        )
+    )
+    return r.scalars().all()
+
+
+async def _previous_best_day(session: AsyncSession, day_start_utc: datetime) -> int:
+    """Рекорд клуба по матчам за один день (по МСК) среди дней ДО day_start_utc."""
+    r = await session.execute(
+        select(Match.completed_at).where(
+            Match.status == MatchStatus.completed,
+            Match.completed_at.is_not(None),
+            Match.completed_at < day_start_utc,
+        )
+    )
+    per_day: dict = {}
+    for (completed_at,) in r.all():
+        day = (completed_at + MSK_OFFSET).date()
+        per_day[day] = per_day.get(day, 0) + 1
+    return max(per_day.values(), default=0)
+
+
+def _club_record_line(today_count: int, previous_best: int) -> str | None:
+    """Пометка рекорда клуба в итогах дня (v2.141.0). Рекорд — только если он уже
+    существовал (до сегодня был день хотя бы с 3 матчами, тот же порог, что у
+    «Самого жаркого дня клуба») и сегодня его строго побили."""
+    if previous_best < 3 or today_count <= previous_best:
+        return None
+    return (
+        f"🔥 <b>Рекорд клуба:</b> {pluralize_matches(today_count)} за день — "
+        f"столько ещё не играли (прежний рекорд — {previous_best})"
+    )
 
 
 def _career_matches_by_player(all_completed: Sequence) -> dict[int, list]:
@@ -427,16 +537,9 @@ async def send_weekly_digest(bot: Bot) -> None:
         )
         career_by_player = _career_matches_by_player(all_completed_r.scalars().all())
 
-        # Матчи за предыдущие 4 недели — среднее для «пульса» клуба
-        baseline_r = await session.execute(
-            select(func.count()).select_from(Match)
-            .where(
-                Match.status == MatchStatus.completed,
-                Match.completed_at >= baseline_start,
-                Match.completed_at < week_ago,
-            )
-        )
-        baseline_avg = (baseline_r.scalar() or 0) / 4
+        # Матчи за предыдущие 4 недели — среднее (матчи/партии/очки) для «пульса» клуба
+        baseline_matches = await _fetch_completed_between(session, baseline_start, week_ago)
+        baseline_avg = {k: v / 4 for k, v in _period_totals(baseline_matches).items()}
 
         # ── Клубные агрегаты за неделю ─────────────────────────────────────────
         match_count: dict[int, int] = {}
@@ -484,19 +587,16 @@ async def send_weekly_digest(bot: Bot) -> None:
             )
 
         # ── Герои недели ───────────────────────────────────────────────────────
-        if baseline_avg > 0:
-            diff_pct = round((cur_count - baseline_avg) / baseline_avg * 100)
-            diff_str = f"+{diff_pct}%" if diff_pct >= 0 else f"{diff_pct}%"
-            activity_line = (
-                f"⚡ Сыграно за неделю: <b>{pluralize_matches(cur_count)}</b>, "
-                f"<b>{pluralize_sets(total_sets)}</b>, <b>{pluralize_points(total_points)}</b>"
-                f"  <i>({diff_str} к среднему за 4 недели)</i>"
-            )
-        else:
-            activity_line = (
-                f"⚡ Сыграно за неделю: <b>{pluralize_matches(cur_count)}</b>, "
-                f"<b>{pluralize_sets(total_sets)}</b>, <b>{pluralize_points(total_points)}</b>"
-            )
+        activity_line = (
+            f"⚡ Сыграно за неделю: <b>{pluralize_matches(cur_count)}</b>, "
+            f"<b>{pluralize_sets(total_sets)}</b>, <b>{pluralize_points(total_points)}</b>"
+        )
+        # «Клубный пульс» с v2.141.0 сравнивает не только матчи, но и партии с очками
+        pulse = _comparison_line(
+            _period_totals(all_week_matches), baseline_avg, "среднему за 4 недели"
+        )
+        if pulse:
+            activity_line += f"\n{pulse}"
 
         hero_lines = ["🦸 <b>Герои недели:</b>", activity_line]
 
@@ -650,10 +750,19 @@ async def send_daily_summary(bot: Bot) -> None:
         total_points = _total_points(matches)
         date_str = msk_now.strftime("%d.%m")
 
+        played_line = (
+            f"⚡ Сыграно: <b>{pluralize_matches(len(matches))}</b>, "
+            f"<b>{pluralize_sets(total_sets)}</b>, <b>{pluralize_points(total_points)}</b>"
+        )
+        # Пометка рекорда клуба (v2.141.0) — не сравнение с прошлым, а отметка, если
+        # сегодня сыграно больше матчей, чем в любой прошлый день.
+        record = _club_record_line(len(matches), await _previous_best_day(session, day_start))
+        if record:
+            played_line += f"\n{record}"
+
         lines = [
             f"📅 <b>Итоги дня — {date_str}</b>\n",
-            f"⚡ Сыграно: <b>{pluralize_matches(len(matches))}</b>, "
-            f"<b>{pluralize_sets(total_sets)}</b>, <b>{pluralize_points(total_points)}</b>\n",
+            played_line + "\n",
             "🏆 <b>Топ дня:</b>",
         ]
 
@@ -913,11 +1022,21 @@ async def send_monthly_summary(bot: Bot) -> None:
             )
 
         # ── Герои месяца ──────────────────────────────────────────────────────
+        # База сравнения — предыдущий календарный месяц (v2.141.0)
+        prev_month_start_msk = (month_start_msk - timedelta(days=1)).replace(day=1)
+        prev_matches = await _fetch_completed_between(
+            session, prev_month_start_msk - MSK_OFFSET, month_start_utc
+        )
         hero_lines = [
             "🦸 <b>Герои месяца:</b>",
             f"⚡ Сыграно за месяц: <b>{pluralize_matches(len(matches))}</b>, "
             f"<b>{pluralize_sets(total_sets)}</b>, <b>{pluralize_points(total_points)}</b>",
         ]
+        month_cmp = _comparison_line(
+            _period_totals(matches), _period_totals(prev_matches), "прошлому месяцу"
+        )
+        if month_cmp:
+            hero_lines.append(month_cmp)
         most_active_id = max(match_count, key=match_count.__getitem__)
         hero_lines.append(
             f"🏓 Главный теннисист — <b>{h(name_map.get(most_active_id, '?'))}</b>: "
@@ -995,6 +1114,12 @@ async def send_monthly_summary(bot: Bot) -> None:
                     f"📈 Рейтинг: <b>{round(player.rating, 1)}</b> pts "
                     f"({sign}{round(p_delta, 1)}){rank_suffix}\n"
                 )
+
+            personal_cmp = _personal_vs_previous_line(
+                player.id, matches, prev_matches, "прошлого месяца"
+            )
+            if personal_cmp:
+                header += f"{personal_cmp}\n"
 
             career_matches = career_by_player.get(player.id, [])
             progress = _nearest_achievement_progress(
@@ -1080,10 +1205,25 @@ async def send_quarterly_summary(bot: Bot) -> None:
         total_sets = sum(len(m.sets_data) if m.sets_data else 0 for m in matches)
         total_points = _total_points(matches)
 
+        # База сравнения — предыдущий квартал (v2.141.0): _quarter_bounds_msk от
+        # начала текущего даёт три месяца, закончившиеся в этот момент.
+        prev_q_start_msk, prev_q_end_msk = _quarter_bounds_msk(quarter_start_msk)
+        prev_matches = await _fetch_completed_between(
+            session, prev_q_start_msk - MSK_OFFSET, prev_q_end_msk - MSK_OFFSET
+        )
+        played_line = (
+            f"⚡ Сыграно: <b>{pluralize_matches(len(matches))}</b>, "
+            f"<b>{pluralize_sets(total_sets)}</b>, <b>{pluralize_points(total_points)}</b>"
+        )
+        quarter_cmp = _comparison_line(
+            _period_totals(matches), _period_totals(prev_matches), "прошлому кварталу"
+        )
+        if quarter_cmp:
+            played_line += f"\n{quarter_cmp}"
+
         lines = [
             f"🏆 <b>Итоги квартала — {quarter_label}</b>\n",
-            f"⚡ Сыграно: <b>{pluralize_matches(len(matches))}</b>, "
-            f"<b>{pluralize_sets(total_sets)}</b>, <b>{pluralize_points(total_points)}</b>\n",
+            played_line + "\n",
             "🥇 <b>Топ квартала:</b>",
         ]
 
