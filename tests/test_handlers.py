@@ -1875,12 +1875,13 @@ def test_rank_title_bands():
     assert rank_title(1000.0) == "Джун"  # стартовый рейтинг новичка
     assert rank_title(1049.9) == "Джун"
     assert rank_title(1050.0) == "Миддл"
-    assert rank_title(1149.9) == "Миддл"
-    assert rank_title(1150.0) == "Сеньор"
-    assert rank_title(1249.9) == "Сеньор"
-    assert rank_title(1250.0) == "Тим лид"
-    assert rank_title(1349.9) == "Тим лид"
-    assert rank_title(1350.0) == "Ген дир"
+    assert rank_title(1130.0) == "Миддл"   # медиана клуба — ещё не Сеньор (v2.147.0)
+    assert rank_title(1199.9) == "Миддл"
+    assert rank_title(1200.0) == "Сеньор"
+    assert rank_title(1299.9) == "Сеньор"
+    assert rank_title(1300.0) == "Тим лид"
+    assert rank_title(1399.9) == "Тим лид"
+    assert rank_title(1400.0) == "Ген дир"
     assert rank_title(2000.0) == "Ген дир"
 
 
