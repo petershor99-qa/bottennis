@@ -20,12 +20,14 @@ from bot.keyboards.inline import (
 from bot.utils import (
     MSK_OFFSET,
     _pin_champion,
+    busiest_msk_hour,
     cb_data,
     cb_msg,
     compute_alltime_streak,
     get_champion_and_challenger,
     get_mvp_of_month,
     get_player,
+    hour_range_label,
     longest_awaited_revenge,
     longest_champion_reign,
     match_drama_reason,
@@ -456,6 +458,18 @@ async def _collect_club_records(session: AsyncSession) -> dict[str, list[str]] |
                 f"🌡 Самый жаркий день клуба — <b>{hottest_day.strftime('%d.%m.%y')}</b>: "
                 f"{pluralize_matches(hottest_n)}"
             )
+
+    # Золотой час клуба (v2.142.0) — час суток по МСК, на который приходится
+    # больше всего матчей всех игроков. Порог ≥3 матчей в этот час.
+    busiest = busiest_msk_hour(all_matches)
+    if busiest and busiest[1] >= 3:
+        golden_hour, golden_n = busiest
+        dated = sum(1 for m in all_matches if m.completed_at)
+        share = round(golden_n / dated * 100)
+        volume_lines.append(
+            f"🕐 Золотой час клуба — <b>{hour_range_label(golden_hour)}</b>: "
+            f"{pluralize_matches(golden_n)} ({share}% всех)"
+        )
 
     # Дерби клуба — самая играющая пара
     pair_count: dict[tuple[int, int], int] = {}
