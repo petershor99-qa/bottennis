@@ -36,6 +36,7 @@ def main_reply_kb() -> ReplyKeyboardMarkup:
 
 def main_menu_kb(
     active_matches: list | None = None, share_match_id: int | None = None,
+    rematch_opponent_id: int | None = None,
 ) -> InlineKeyboardMarkup:
     """Главное меню. Если переданы активные матчи [(match_id, opponent_name), ...],
     сверху добавляются заметные кнопки «Внести результат» по каждому из них.
@@ -43,11 +44,19 @@ def main_menu_kb(
     share_match_id — если задан, сверху добавляется кнопка «Карточка победы».
     Нужно для уведомления победителю, когда счёт внёс проигравший — победитель
     тогда видит не интерактивный экран результата (тот у репортёра), а просто
-    это уведомление, и кнопку карточки больше некуда прицепить."""
+    это уведомление, и кнопку карточки больше некуда прицепить.
+
+    rematch_opponent_id — если задан, под карточкой добавляется «⚔️ Реванш»
+    (v2.143.0): уведомление второго участника матча (того, кто счёт не вносил),
+    у репортёра реванш уже есть на экране результата (rematch_kb)."""
     b = InlineKeyboardBuilder()
     if share_match_id is not None:
         b.row(InlineKeyboardButton(
             text="📤 Карточка победы", callback_data=f"share_card_{share_match_id}",
+        ))
+    if rematch_opponent_id is not None:
+        b.row(InlineKeyboardButton(
+            text="⚔️ Реванш", callback_data=f"rematch_{rematch_opponent_id}",
         ))
     if active_matches:
         for match_id, opponent_name in active_matches:

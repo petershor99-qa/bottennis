@@ -1248,7 +1248,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             f"🤝 Ничья с <b>{h(opponent_name)}</b>\n"
             f"Счёт партий: {notify_sets_str}\n\n"
             f"Твой рейтинг: {round(notify_old, 1)} → <b>{round(notify_player.rating, 1)}</b> ({_fmt_delta(notify_actual_delta)})",
-            reply_markup=main_menu_kb(),
+            reply_markup=main_menu_kb(rematch_opponent_id=reporter_player_id),
         )
 
         # Достижения обоих участников + пасхалки ничьей
@@ -1385,7 +1385,10 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                 f"<b>{h(winner.display_name)}</b> победил тебя\n"
                 f"Счёт партий: {sets_str}\n\n"
                 f"Твой рейтинг: {round(old_loser_rating, 1)} → <b>{round(loser.rating, 1)}</b> ({loser_delta_str})",
-                reply_markup=main_menu_kb(),
+                # Реванш (v2.143.0) — как и на экране репортёра, после боссфайта нет
+                reply_markup=main_menu_kb(
+                    rematch_opponent_id=None if match.is_boss_fight else winner.id,
+                ),
             )
         else:
             # Репортёр — проигравший (инверсия): уведомляем победителя. У него
@@ -1398,7 +1401,10 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                 f"Ты победил <b>{h(loser.display_name)}</b>\n"
                 f"Счёт партий: {sets_str}\n\n"
                 f"Твой рейтинг: {round(old_winner_rating, 1)} → <b>{round(winner.rating, 1)}</b> (+{delta})",
-                reply_markup=main_menu_kb(share_match_id=match_id),
+                reply_markup=main_menu_kb(
+                    share_match_id=match_id,
+                    rematch_opponent_id=None if match.is_boss_fight else loser.id,
+                ),
             )
 
         # Достижения победителя/проигравшего, пасхалки, серия 10x подряд
