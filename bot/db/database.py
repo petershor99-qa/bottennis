@@ -52,6 +52,8 @@ async def _migrate_db() -> None:
         # v2.84.0 — босс-файт за 1-е место
         "ALTER TABLE players ADD COLUMN is_champion BOOLEAN NOT NULL DEFAULT 0",
         "ALTER TABLE matches ADD COLUMN is_boss_fight BOOLEAN NOT NULL DEFAULT 0",
+        # v2.145.0 — тихий режим дайджестов
+        "ALTER TABLE players ADD COLUMN muted_digests TEXT NOT NULL DEFAULT ''",
         # v2.143.0 — индексы на matches (имена те же, что в модели Match)
         "CREATE INDEX IF NOT EXISTS ix_matches_challenger_id ON matches (challenger_id)",
         "CREATE INDEX IF NOT EXISTS ix_matches_challenged_id ON matches (challenged_id)",
