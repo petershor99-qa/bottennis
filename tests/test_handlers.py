@@ -750,7 +750,7 @@ def _full_stats(**overrides) -> dict:
         "total_earned": 0.0, "total_lost": 0.0,
         "best_streak": 0, "total_sets_played": 0,
         "first_set_conv": None, "fav_format": None,
-        "best_day": None, "best_day_count": 0,
+        "best_day": None, "best_day_count": 0, "fav_hour": None,
         "boss_fights_played": 0, "boss_fights_won": 0,
         "trend_30d": None, "trend_30d_matches": 0,
         "deuce_total": 0, "deuce_won": 0,
