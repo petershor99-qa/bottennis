@@ -21,6 +21,7 @@ from bot.services.achievements import (
     notify_new_achievements,
     record_achievements_earned,
 )
+from bot.services.digests import is_digest_muted
 from bot.services.stats import _compute_player_stats, _nearest_achievement_progress
 from bot.services.year_vote import (
     YEAR_VOTE_CLOSE_AT,
@@ -655,6 +656,8 @@ async def send_weekly_digest(bot: Bot) -> None:
 
         # ── Персональные сообщения: личная шапка + общий клубный блок ───────────
         for player in players:
+            if is_digest_muted(player, "week"):
+                continue
             matches = [
                 m for m in all_week_matches
                 if player.id in (m.challenger_id, m.challenged_id)
@@ -863,6 +866,8 @@ async def send_daily_summary(bot: Bot) -> None:
 
         text = "\n".join(lines)
         for p in players:
+            if is_digest_muted(p, "day"):
+                continue
             await safe_send(bot, p.telegram_id, text)
 
     logger.info("Итоги дня отправлены")
@@ -1087,6 +1092,8 @@ async def send_monthly_summary(bot: Bot) -> None:
 
         # ── Персональные сообщения: личная шапка + общий клубный блок ───────────
         for player in players:
+            if is_digest_muted(player, "month"):
+                continue
             p_matches = [
                 m for m in matches
                 if player.id in (m.challenger_id, m.challenged_id)
@@ -1284,6 +1291,8 @@ async def send_quarterly_summary(bot: Bot) -> None:
 
         text = "\n".join(lines)
         for p in players:
+            if is_digest_muted(p, "quarter"):
+                continue
             await safe_send(bot, p.telegram_id, text)
 
     logger.info("Итоги квартала за %s отправлены", quarter_label)
@@ -1436,6 +1445,8 @@ async def send_yearly_summary(bot: Bot) -> None:
 
         text = "\n".join(lines)
         for p in players:
+            if is_digest_muted(p, "year"):
+                continue
             await safe_send(bot, p.telegram_id, text)
 
     logger.info("Итоги года за %d отправлены", year_start_msk.year)
