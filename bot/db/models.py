@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Enum, ForeignKey, UniqueConstraint
+from sqlalchemy import JSON, Enum, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -43,6 +43,14 @@ class Player(Base):
 
 class Match(Base):
     __tablename__ = "matches"
+    # Индексы (v2.143.0): почти каждый экран и дайджест фильтрует матчи по
+    # участнику и/или статусу + дате завершения. Для уже существующей БД те же
+    # индексы создаёт _migrate_db() (create_all индексы старых таблиц не добавляет).
+    __table_args__ = (
+        Index("ix_matches_challenger_id", "challenger_id"),
+        Index("ix_matches_challenged_id", "challenged_id"),
+        Index("ix_matches_status_completed_at", "status", "completed_at"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     challenger_id: Mapped[int] = mapped_column(ForeignKey("players.id"))
