@@ -74,6 +74,26 @@ def msk_hour_and_weekday(dt: datetime) -> tuple[int, int]:
     return msk.hour, msk.weekday()
 
 
+def hour_range_label(hour: int) -> str:
+    """Час как диапазон «14:00–15:00» — для «Золотого часа клуба» и «Любимого
+    времени» (v2.142.0)."""
+    return f"{hour:02d}:00–{(hour + 1) % 24:02d}:00"
+
+
+def busiest_msk_hour(matches: Sequence) -> tuple[int, int] | None:
+    """(час по МСК, число матчей) самого играемого часа или None, если матчей с
+    датой завершения нет. При равенстве побеждает более ранний час (стабильно)."""
+    counts: dict[int, int] = {}
+    for m in matches:
+        if m.completed_at:
+            hour = msk_hour_and_weekday(m.completed_at)[0]
+            counts[hour] = counts.get(hour, 0) + 1
+    if not counts:
+        return None
+    hour = min(counts, key=lambda h: (-counts[h], h))
+    return hour, counts[hour]
+
+
 def rating_tenths(rating: float) -> int:
     """rating × 10, округлённое до целого.
 

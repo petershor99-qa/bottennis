@@ -14,6 +14,7 @@ from bot.services.achievements import ACHIEVEMENTS_MAP, get_achievements
 from bot.services.personal_records import get_personal_records_count
 from bot.utils import (
     activity_counts_by_day,
+    busiest_msk_hour,
     get_career_matches,
     match_rating_delta,
     pluralize_losses,
@@ -214,6 +215,12 @@ def _compute_player_stats(player, all_matches: list) -> dict:
     else:
         best_day, best_day_count = None, 0
 
+    # Любимое время (v2.142.0) — час суток (МСК), на который приходится больше всего
+    # матчей игрока. Порог ≥3 матчей в этот час — иначе при 1-2 матчах «любимым»
+    # становился бы случайный час.
+    busiest = busiest_msk_hour(all_matches)
+    fav_hour = busiest if busiest and busiest[1] >= 3 else None
+
     # ── «Умные советы» v2.108.0 — персональные инсайты из уже собранной
     # истории, без новой инфраструктуры. Каждый показывается только при
     # достаточной выборке — тот же принцип порогов, что у остальных пунктов
@@ -341,6 +348,7 @@ def _compute_player_stats(player, all_matches: list) -> dict:
         "first_set_wins": first_set_wins,
         "fav_format": fav_format,
         "best_day": best_day, "best_day_count": best_day_count,
+        "fav_hour": fav_hour,
         "beaten_opponents_count": beaten_opponents_count,
         "boss_fights_played": len(boss_fights), "boss_fights_won": boss_fight_wins,
         "trend_30d": trend_30d, "trend_30d_matches": len(recent_30),

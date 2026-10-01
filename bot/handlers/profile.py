@@ -45,6 +45,7 @@ from bot.utils import (
     get_match_counts,
     get_mvp_of_month,
     get_player,
+    hour_range_label,
     msg_user,
     pluralize_days,
     pluralize_matches,
@@ -171,6 +172,11 @@ def _stats_groups(player, s: dict) -> dict[str, list[str]]:
         misc_lines.append(f"❤️ Любимый формат: <b>{n} {word}</b>")
     if s["best_day"]:
         misc_lines.append(f"📅 Активный день: <b>{s['best_day']}</b> ({s['best_day_count']} матчей)")
+    if s["fav_hour"]:
+        hour, hour_count = s["fav_hour"]
+        misc_lines.append(
+            f"🕐 Любимое время: <b>{hour_range_label(hour)}</b> ({pluralize_matches(hour_count)})"
+        )
 
     if s["lucky_day"]:
         day, wr = s["lucky_day"]
