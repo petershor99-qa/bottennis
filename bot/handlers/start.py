@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from bot.db.models import Match, MatchStatus, Player
-from bot.keyboards.inline import back_to_menu_kb, main_menu_kb, main_reply_kb
+from bot.keyboards.inline import back_to_menu_kb, help_kb, main_menu_kb, main_reply_kb
 from bot.services.achievements import ACHIEVEMENTS_LIST
 from bot.utils import MSK_OFFSET, cb_msg, compute_ranks, env_int, format_rank, get_match_counts, get_player, msg_user
 
@@ -162,11 +162,12 @@ async def cmd_help(message: Message):
         "• 👑 текущий чемпион · 🗡 претендент на трон\n\n"
         "<b>Автосообщения:</b>\n"
         "• 📅 Итоги дня — каждый вечер в 21:30 МСК (топ дня + «матч дня»)\n"
-        "• 📊 Итоги недели — понедельник 9:00, итоги месяца — 1-го числа в 10:00\n\n"
+        "• 📊 Итоги недели — понедельник 9:00, итоги месяца — 1-го числа в 10:00\n"
+        "• 🔔 Любую из них можно отключить — кнопка «Рассылки» ниже\n\n"
         "<b>Рейтинг:</b> модифицированный ELO.\n"
         "Чем слабее соперник — тем меньше очков за победу.\n"
         "Разгром в партиях даёт больше очков, чем победа 3:2.",
-        reply_markup=back_to_menu_kb(),
+        reply_markup=help_kb(),
     )
 
 

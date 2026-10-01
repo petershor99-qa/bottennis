@@ -29,6 +29,9 @@ class Player(Base):
     backfill_version: Mapped[int | None] = mapped_column(default=0)  # версия последнего бэкфилла
     is_champion: Mapped[bool] = mapped_column(default=False)  # владелец 1-го места (босс-файт)
     last_menu_message_id: Mapped[int | None]
+    # Ключи отключённых игроком автосводок через запятую («day,month»), см.
+    # bot/services/digests.py. Пусто — получает все (v2.145.0).
+    muted_digests: Mapped[str] = mapped_column(default="", server_default="")
     created_at: Mapped[datetime | None] = mapped_column(
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )

@@ -3754,7 +3754,7 @@ async def test_help_lists_icon_legend():
 async def test_help_uses_back_to_menu_keyboard_not_full_menu():
     """/help — справочный экран, не экран навигации: полный набор кнопок
     главного меню (Вызвать на матч/Рейтинг/Статистика/Мои матчи) под ним не
-    нужен, достаточно одной кнопки «« В меню»."""
+    нужен, достаточно «« В меню» (с v2.145.0 плюс вход в «🔔 Рассылки»)."""
     from bot.handlers.start import cmd_help
 
     msg = AsyncMock()
@@ -3763,8 +3763,8 @@ async def test_help_uses_back_to_menu_keyboard_not_full_menu():
 
     kb = msg.answer.call_args.kwargs["reply_markup"]
     buttons = [b for row in kb.inline_keyboard for b in row]
-    assert len(buttons) == 1
-    assert buttons[0].text == "« В меню"
+    assert [b.callback_data for b in buttons] == ["menu_notifications", "back_to_menu"]
+    assert buttons[-1].text == "« В меню"
 
 
 # ── /feedback ────────────────────────────────────────────────────────────────────

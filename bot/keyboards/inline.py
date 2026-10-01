@@ -6,6 +6,7 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from bot.services.digests import DIGEST_KINDS
 from bot.services.year_vote import YEAR_VOTE_NOMINATIONS
 from bot.utils import favor_icon, random_challenge_button_label
 
@@ -70,6 +71,25 @@ def main_menu_kb(
         InlineKeyboardButton(text="📈 Статистика", callback_data="menu_stats"),
         InlineKeyboardButton(text="🎯 Рекомендации", callback_data="menu_matches"),
     )
+    return b.as_markup()
+
+
+def notifications_kb(muted: set[str]) -> InlineKeyboardMarkup:
+    """Экран «Рассылки» (v2.145.0): по кнопке на автосводку, по одной в ряд.
+    ✅ — получает, 🔕 — отключена; тап переключает (notif_toggle_{ключ})."""
+    b = InlineKeyboardBuilder()
+    for key, title in DIGEST_KINDS:
+        mark = "🔕" if key in muted else "✅"
+        b.row(InlineKeyboardButton(text=f"{title} {mark}", callback_data=f"notif_toggle_{key}"))
+    b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
+    return b.as_markup()
+
+
+def help_kb() -> InlineKeyboardMarkup:
+    """Под /help: вход в «Рассылки» и возврат в меню."""
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="🔔 Рассылки", callback_data="menu_notifications"))
+    b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
 
 
