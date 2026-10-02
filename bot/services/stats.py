@@ -485,20 +485,45 @@ _ARCHETYPE_RULES: list[tuple[str, float, bool, str]] = [
     ("Камбэки", 8.0, False, "Феникс"),
     ("Стабильность", 75.0, False, "Метроном"),
     ("Стабильность", 40.0, True, "🎢 Американские горки"),
-    ("Винрейт", 35.0, True, "Донор рейтинга"),
+    ("Винрейт", 40.0, True, "Донор рейтинга"),
     ("Клатч", 35.0, True, "Мандраж"),
-    ("Дожимание", 65.0, True, "Сдувается"),
+    ("Дожимание", 55.0, True, "Сдувается"),
 ]
 
+# Минимальная выборка под каждую ось (v2.155.0): архетип по оси даётся, только если
+# за ней стоит достаточно данных. Иначе игрок с одной победой получал «Дожимание 100%»
+# и «Финишера» (на проде у игрока с 18 матчами: Дожимание по 1 победе, Клатч по 3
+# дьюсам, Доминирование по 1 матчу). Радар без статистики (s=None) — без проверок.
+_AXIS_SAMPLE_GATES: dict[str, tuple[str, int]] = {
+    "Клатч": ("deuce_total", 5),            # дьюсов
+    "Дожимание": ("first_set_wins", 5),     # побед в 1-й партии
+    "Доминирование": ("dominance_matches", 5),  # выигранных матчей
+    "Камбэки": ("wins", 10),                # побед
+}
+_MATCHES_FOR_STABILITY = 10                  # матчей для «Метронома»/«Американских горок»
 
-def _style_archetype(radar: dict[str, float]) -> str:
+
+def _axis_has_sample(axis: str, s: dict | None) -> bool:
+    if s is None:
+        return True
+    if axis == "Стабильность":
+        return s["wins"] + s["draws"] + s["losses"] >= _MATCHES_FOR_STABILITY
+    gate = _AXIS_SAMPLE_GATES.get(axis)
+    return gate is None or s[gate[0]] >= gate[1]
+
+
+def _style_archetype(radar: dict[str, float], s: dict | None = None) -> str:
     """Титул по самой ярко выраженной оси радара — та, что дальше всех ушла
     за свой порог. Если ни одна ось не выделяется (все в среднем диапазоне) —
     нейтральный «Универсал» (v2.154.0; раньше None и пустая строка архетипа —
-    игрок думал, что стиль «не посчитался»)."""
+    игрок думал, что стиль «не посчитался»). s — статистика игрока
+    (_compute_player_stats): по оси без достаточной выборки архетип не даётся
+    (_AXIS_SAMPLE_GATES, v2.155.0)."""
     best_label: str | None = None
     best_margin = -1.0
     for axis, threshold, is_low, label in _ARCHETYPE_RULES:
+        if not _axis_has_sample(axis, s):
+            continue
         value = radar[axis]
         margin = (threshold - value) if is_low else (value - threshold)
         if margin >= 0 and margin > best_margin:
@@ -564,6 +589,7 @@ def _compare_styles(
 
 def _style_comparison_caption(
     name_b: str, radar_a: dict[str, float], radar_b: dict[str, float],
+    s_a: dict | None = None, s_b: dict | None = None,
 ) -> str:
     """Подпись под графиком сравнения. A — тот, кто смотрит («Ты»), B — соперник
     (name_b, уже НЕ экранированное — экранируется здесь). Укладывается в лимит
@@ -571,7 +597,7 @@ def _style_comparison_caption(
     nb = h(name_b)
     lines = [f"🕸 <b>Сравнение стилей</b>\n<b>Ты</b> 🆚 <b>{nb}</b>"]
 
-    arch_a, arch_b = _style_archetype(radar_a), _style_archetype(radar_b)
+    arch_a, arch_b = _style_archetype(radar_a, s_a), _style_archetype(radar_b, s_b)
     lines.append(f"🏷 Ты — <b>{arch_a}</b>, {nb} — <b>{arch_b}</b>")
 
     axes = []

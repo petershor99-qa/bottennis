@@ -77,6 +77,19 @@ def test_caption_shows_archetypes_when_present():
     assert "Ты — <b>Терминатор</b>, Боб — <b>Универсал</b>" in text
 
 
+def test_caption_uses_sample_gates_for_archetypes():
+    """Подпись сравнения передаёт статистику в архетипы (v2.155.0): «Дожимание 100%» по одной
+    победе не делает «Финишера»."""
+    finisher = _neutral(Дожимание=100.0)
+    s_small = {"deuce_total": 20, "first_set_wins": 1, "dominance_matches": 20,
+               "wins": 30, "draws": 0, "losses": 30}
+    s_big = dict(s_small, first_set_wins=30)
+    gated = _style_comparison_caption("Боб", finisher, _neutral(), s_small, s_small)
+    assert "Ты — <b>Универсал</b>" in gated
+    open_ = _style_comparison_caption("Боб", finisher, _neutral(), s_big, s_small)
+    assert "Ты — <b>Финишер</b>" in open_
+
+
 def test_caption_worst_case_fits_photo_caption_limit():
     """Подпись к фото в Telegram — максимум 1024 символа. Худший случай:
     длинное имя соперника, у обоих архетипы, все оси различаются."""

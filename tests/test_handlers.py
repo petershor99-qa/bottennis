@@ -1440,10 +1440,11 @@ def test_archetype_new_thresholds_boundaries():
     assert _style_archetype(_arch_radar(**{"Клатч": 55.0})) == "Нервы стальные"
     assert _style_archetype(_arch_radar(**{"Стабильность": 75.0})) == "Метроном"
     # нижние пороги включительно (<=): значение ровно на пороге — уже архетип
-    assert _style_archetype(_arch_radar(**{"Винрейт": 35.0})) == "Донор рейтинга"
-    assert _style_archetype(_arch_radar(**{"Винрейт": 36.0})) == "Универсал"
-    assert _style_archetype(_arch_radar(**{"Дожимание": 65.0})) == "Сдувается"
-    assert _style_archetype(_arch_radar(**{"Дожимание": 66.0})) == "Универсал"
+    assert _style_archetype(_arch_radar(**{"Винрейт": 40.0})) == "Донор рейтинга"
+    assert _style_archetype(_arch_radar(**{"Винрейт": 41.0})) == "Универсал"
+    assert _style_archetype(_arch_radar(**{"Дожимание": 55.0})) == "Сдувается"
+    assert _style_archetype(_arch_radar(**{"Дожимание": 56.0})) == "Универсал"
+    assert _style_archetype(_arch_radar(**{"Клатч": 35.0})) == "Мандраж"
 
 
 def test_archetypes_calibrated_on_real_club_data_give_variety():
@@ -1464,6 +1465,58 @@ def test_archetypes_calibrated_on_real_club_data_give_variety():
     got = [_style_archetype(dict(zip(axes, map(float, vals), strict=True))) for vals, _ in club]
     assert got == [exp for _, exp in club]
     assert len(set(got)) >= 4        # не больше двух одинаковых ярлыков на семерых
+
+
+def _enough_samples(**over) -> dict:
+    """Статистика с достаточной выборкой по всем осям (v2.155.0)."""
+    s = {"deuce_total": 20, "first_set_wins": 20, "dominance_matches": 20,
+         "wins": 30, "draws": 0, "losses": 30}
+    s.update(over)
+    return s
+
+
+def test_archetype_axes_need_enough_samples():
+    """По оси без достаточной выборки архетип не даётся (v2.155.0): игрок с одной победой
+    не должен стать «Финишером» из-за «Дожимания 100%» по одному матчу."""
+    from bot.services.stats import _style_archetype
+    finisher = _arch_radar(**{"Дожимание": 100.0})
+    assert _style_archetype(finisher, _enough_samples()) == "Финишер"
+    assert _style_archetype(finisher, _enough_samples(first_set_wins=4)) == "Универсал"
+    assert _style_archetype(finisher, _enough_samples(first_set_wins=5)) == "Финишер"
+
+    clutch = _arch_radar(**{"Клатч": 70.0})
+    assert _style_archetype(clutch, _enough_samples(deuce_total=4)) == "Универсал"
+    assert _style_archetype(clutch, _enough_samples(deuce_total=5)) == "Нервы стальные"
+
+    steamroller = _arch_radar(**{"Доминирование": 75.0})
+    assert _style_archetype(steamroller, _enough_samples(dominance_matches=4)) == "Универсал"
+
+    phoenix = _arch_radar(**{"Камбэки": 40.0})
+    assert _style_archetype(phoenix, _enough_samples(wins=9)) == "Универсал"
+    assert _style_archetype(phoenix, _enough_samples(wins=10)) == "Феникс"
+
+    metronome = _arch_radar(**{"Стабильность": 95.0})
+    assert _style_archetype(metronome, _enough_samples(wins=4, losses=5)) == "Универсал"   # 9 матчей
+    assert _style_archetype(metronome, _enough_samples(wins=5, losses=5)) == "Метроном"    # 10
+
+
+def test_archetype_win_rate_does_not_need_extra_sample():
+    from bot.services.stats import _style_archetype
+    tiny = _enough_samples(deuce_total=0, first_set_wins=0, dominance_matches=0, wins=1, losses=5)
+    assert _style_archetype(_arch_radar(**{"Винрейт": 10.0}), tiny) == "Донор рейтинга"
+
+
+def test_archetype_real_small_sample_player_keeps_only_meaningful_label():
+    """Игрок прода с 18 матчами и 1 победой (радар 5, 33, 100, 0, 54, 93; выборки: 3 дьюса,
+    1 победа в 1-й партии): остаётся «Донор рейтинга», а не «Финишер» по одной победе."""
+    from bot.services.stats import _style_archetype
+    radar = {"Винрейт": 5.0, "Клатч": 33.0, "Дожимание": 100.0, "Камбэки": 0.0,
+             "Доминирование": 54.0, "Стабильность": 93.0}
+    s = {"deuce_total": 3, "first_set_wins": 1, "dominance_matches": 1,
+         "wins": 1, "draws": 0, "losses": 17}
+    assert _style_archetype(radar, s) == "Донор рейтинга"
+    # а без статистики (старый вызов) на ту же картинку «Финишер» не сработал бы — Донор перевешивает
+    assert _style_archetype(radar) == "Донор рейтинга"
 
 
 def test_universal_has_description():
