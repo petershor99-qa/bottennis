@@ -27,6 +27,7 @@ from bot.phrases import (
     CLOSE_DECIDER_FRAGMENTS,
     COMEBACK_OPENERS,
     DEUCE_FRAGMENTS,
+    DRAW_PHRASES,
     EVEN_PHRASES,
     FAVORITE_PHRASES,
     H2H_DRAW_PHRASES,
@@ -971,8 +972,11 @@ def match_report(m: Match, winner_name: str) -> str:
     через свой собственный name_map.
     """
     sets = m.sets_data or []
-    if not sets or m.winner_id is None:
+    if not sets:
         return match_drama_reason(m)
+    if m.winner_id is None:
+        # Ничья (v2.151.0) — своя фраза из пула, а не сухое «Ничья в равной борьбе»
+        return DRAW_PHRASES[_stable_pool_index(m.id, "draw", len(DRAW_PHRASES))]
 
     comeback = len(sets) >= 2 and sets[0]["w"] < sets[0]["l"] and sets[1]["w"] < sets[1]["l"]
     marathon = len(sets) >= 5
