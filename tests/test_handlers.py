@@ -37,6 +37,15 @@ from bot.handlers.profile import (
     _render_stats_lines,
     _throne_distance_line,
 )
+from bot.phrases import (
+    EGG_DEUCE_DECIDER,
+    EGG_FLAWLESS,
+    EGG_FRIDAY_EVENING,
+    EGG_NIGHT,
+    EGG_QUICK_REMATCH,
+    EGG_SHUTOUT,
+    EGG_WEEKEND,
+)
 from bot.services.achievements import get_achievements
 from bot.states.states import MatchResultStates
 from bot.utils import (
@@ -4647,7 +4656,7 @@ async def test_shutout_egg_fires_when_all_sets_blank():
     winner.rating = 1013.7   # не кратно 50 — не мешает другому условию
     bot = AsyncMock()
     await _send_winner_eggs(bot, winner, loser, _egg_ctx(shutout=True))
-    assert any("Читы включил" in t for t in _texts(bot))
+    assert any(t in EGG_SHUTOUT for t in _texts(bot))
 
 
 async def test_no_shutout_egg_when_one_set_not_blank():
@@ -4657,8 +4666,8 @@ async def test_no_shutout_egg_when_one_set_not_blank():
     bot = AsyncMock()
     await _send_winner_eggs(bot, winner, loser, _egg_ctx(flawless=True, shutout=False))
     texts = _texts(bot)
-    assert any("Flawless" in t for t in texts)
-    assert not any("Читы включил" in t for t in texts)
+    assert any(t in EGG_FLAWLESS for t in texts)
+    assert not any(t in EGG_SHUTOUT for t in texts)
 
 
 async def test_deuce_decider_egg_fires():
@@ -4666,7 +4675,7 @@ async def test_deuce_decider_egg_fires():
     winner.rating = 1013.7
     bot = AsyncMock()
     await _send_winner_eggs(bot, winner, loser, _egg_ctx(deuce_decider=True))
-    assert any("Драматично" in t for t in _texts(bot))
+    assert any(t in EGG_DEUCE_DECIDER for t in _texts(bot))
 
 
 async def test_no_deuce_decider_egg_when_false():
@@ -4674,7 +4683,7 @@ async def test_no_deuce_decider_egg_when_false():
     winner.rating = 1013.7
     bot = AsyncMock()
     await _send_winner_eggs(bot, winner, loser, _egg_ctx(deuce_decider=False))
-    assert not any("Драматично" in t for t in _texts(bot))
+    assert not any(t in EGG_DEUCE_DECIDER for t in _texts(bot))
 
 
 async def test_round_rating_egg_fires_on_multiple_of_50():
@@ -4700,7 +4709,7 @@ async def test_time_based_egg_night():
     bot = AsyncMock()
     # 2026-06-03 (среда) 01:00 UTC -> 04:00 МСК — ночь
     await _send_time_based_eggs(bot, [p1, p2], datetime(2026, 6, 3, 1, 0, 0))
-    assert any("не спится" in t for t in _texts(bot))
+    assert any(t in EGG_NIGHT for t in _texts(bot))
 
 
 async def test_time_based_egg_weekend():
@@ -4708,7 +4717,7 @@ async def test_time_based_egg_weekend():
     bot = AsyncMock()
     # 2026-06-06 (суббота) 12:00 UTC -> 15:00 МСК — выходной, не ночь
     await _send_time_based_eggs(bot, [p1, p2], datetime(2026, 6, 6, 12, 0, 0))
-    assert any("ради тенниса" in t for t in _texts(bot))
+    assert any(t in EGG_WEEKEND for t in _texts(bot))
 
 
 async def test_time_based_egg_friday_evening():
@@ -4716,7 +4725,7 @@ async def test_time_based_egg_friday_evening():
     bot = AsyncMock()
     # 2026-06-05 (пятница) 16:00 UTC -> 19:00 МСК
     await _send_time_based_eggs(bot, [p1, p2], datetime(2026, 6, 5, 16, 0, 0))
-    assert any("неделю красиво" in t for t in _texts(bot))
+    assert any(t in EGG_FRIDAY_EVENING for t in _texts(bot))
 
 
 async def test_time_based_egg_silent_on_regular_afternoon():
@@ -4734,7 +4743,7 @@ async def test_time_based_egg_night_takes_priority_over_weekend():
     # 2026-06-06 (суббота) 23:00 UTC 5 июня -> 02:00 МСК 6 июня
     await _send_time_based_eggs(bot, [p1, p2], datetime(2026, 6, 5, 23, 0, 0))
     assert bot.send_message.await_count == 2   # по разу каждому, не больше
-    assert all("не спится" in t for t in _texts(bot))
+    assert all(t in EGG_NIGHT for t in _texts(bot))
 
 
 # -- юбилейная личная встреча --
@@ -4866,7 +4875,7 @@ async def test_quick_rematch_egg_fires_within_10_minutes(db):
     bot = AsyncMock()
     h2h_matches = await get_h2h_matches(db, p1.id, p2.id, exclude_match_id=current.id)
     await _send_quick_rematch_egg(bot, p1, p2, current.created_at, h2h_matches)
-    assert any("Не наигрался" in t for t in _texts(bot))
+    assert any(t in EGG_QUICK_REMATCH for t in _texts(bot))
 
 
 async def test_quick_rematch_egg_fires_even_if_rematch_itself_runs_long(db):
@@ -4892,7 +4901,7 @@ async def test_quick_rematch_egg_fires_even_if_rematch_itself_runs_long(db):
     bot = AsyncMock()
     h2h_matches = await get_h2h_matches(db, p1.id, p2.id, exclude_match_id=current.id)
     await _send_quick_rematch_egg(bot, p1, p2, current.created_at, h2h_matches)
-    assert any("Не наигрался" in t for t in _texts(bot))
+    assert any(t in EGG_QUICK_REMATCH for t in _texts(bot))
 
 
 async def test_quick_rematch_egg_silent_when_gap_too_large(db):
@@ -4947,7 +4956,7 @@ async def test_confirm_result_shutout_egg_fires_end_to_end(db):
     cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
     await confirm_result(cb, db, st, bot)
 
-    assert any("Читы включил" in t for t in _texts(bot))
+    assert any(t in EGG_SHUTOUT for t in _texts(bot))
 
 
 async def test_ten_in_a_row_notification_fires_end_to_end(db):

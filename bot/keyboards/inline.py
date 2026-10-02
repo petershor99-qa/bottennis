@@ -371,7 +371,7 @@ def leaderboard_kb(players) -> InlineKeyboardMarkup:
     )
     b.row(
         InlineKeyboardButton(text="🌡 Кто в форме", callback_data="form_index"),
-        InlineKeyboardButton(text="🏛 Зал славы", callback_data="hall_of_fame_0"),
+        InlineKeyboardButton(text="🏛 Трон", callback_data="hall_of_fame_0"),
     )
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
