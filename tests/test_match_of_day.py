@@ -409,10 +409,25 @@ def test_report_typical_top_matches_never_dry():
             assert not text.startswith("Камбэк после")
 
 
-def test_report_draw_falls_back_to_drama_reason():
+def test_report_draw_uses_draw_phrase_pool():
+    """Ничья (v2.151.0) — фраза из DRAW_PHRASES, а не сухое match_drama_reason."""
+    from bot.utils import DRAW_PHRASES
+
     sets = [{"w": 11, "l": 9}, {"w": 9, "l": 11}]
     m = make_match(sets, winner_id=None, rating_change=5.0)
-    assert match_report(m, "") == match_drama_reason(m)
+    assert match_report(m, "") in DRAW_PHRASES
+    assert match_report(m, "") != match_drama_reason(m)
+
+
+def test_report_draw_phrase_varies_by_match_id_and_is_stable():
+    sets = [{"w": 11, "l": 9}, {"w": 9, "l": 11}]
+    seen = {
+        match_report(make_match(sets, winner_id=None, rating_change=5.0, match_id=i), "")
+        for i in range(40)
+    }
+    assert len(seen) >= 5          # из 8 фраз за 40 разных матчей выпадает разнообразие
+    m = make_match(sets, winner_id=None, rating_change=5.0, match_id=3)
+    assert match_report(m, "") == match_report(m, "")
 
 
 def test_report_empty_sets_falls_back():
