@@ -80,7 +80,7 @@ def test_stats_kb_new_names_and_no_duplicate_recent():
 
 def test_leaderboard_kb_new_button_names():
     texts = _texts(leaderboard_kb([]))
-    assert {"🏆 Рекорды клуба", "⚔️ Кто кого бьёт", "🌡 Кто в форме", "🏛 Зал славы"} <= set(texts)
+    assert {"🏆 Рекорды клуба", "⚔️ Кто кого бьёт", "🌡 Кто в форме", "🏛 Трон"} <= set(texts)
 
 
 def test_profile_kb_other_player_new_names():

@@ -20,8 +20,10 @@ def test_every_pool_is_reexported_from_utils_as_the_same_object():
 def test_phrases_module_is_pure_data():
     """В bot/phrases.py только данные: ни функций, ни классов (логика — в utils)."""
     public = [n for n in vars(phrases) if not n.startswith("__")]
-    assert sorted(public) == sorted(POOL_NAMES)
-    for name in POOL_NAMES:
+    egg_names = [n for n in public if n.startswith("EGG_")]     # пасхалки (v2.153.0)
+    assert egg_names, "пулы пасхалок должны жить в bot/phrases.py"
+    assert sorted(public) == sorted(POOL_NAMES + egg_names)
+    for name in POOL_NAMES + egg_names:
         assert isinstance(getattr(phrases, name), (list, dict)), name
 
 

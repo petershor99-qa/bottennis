@@ -12,6 +12,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Match, MatchStatus, Player
 from bot.keyboards.inline import after_set_kb, back_to_menu_kb, main_menu_kb, rematch_kb
+from bot.phrases import (
+    EGG_CLEAN_SWEEP,
+    EGG_COMEBACK,
+    EGG_DEUCE_DECIDER,
+    EGG_FIRST_LOSS,
+    EGG_FLAWLESS,
+    EGG_FRIDAY_EVENING,
+    EGG_LOSS_STREAK_3,
+    EGG_NIGHT,
+    EGG_QUICK_REMATCH,
+    EGG_REVENGE,
+    EGG_SHUTOUT,
+    EGG_WEEKEND,
+)
 from bot.services.achievements import (
     _career_points_and_sets,
     check_boss_fight_challenger_defeat_achievement,
@@ -35,6 +49,7 @@ from bot.services.validation import validate_set_score
 from bot.states.states import MatchResultStates
 from bot.utils import (
     NEWCOMER_THRESHOLD,
+    _stable_pool_index,
     cb_data,
     cb_msg,
     get_career_matches,
@@ -152,6 +167,12 @@ async def _send_personal_records(bot: Bot, player: Player, messages: list[str]) 
         await safe_send(bot, player.telegram_id, text)
 
 
+def _pick_egg(pool: list[str], match_id: int, salt: str) -> str:
+    """Фраза пасхалки из пула (v2.153.0): индекс стабилен по номеру матча и разный у
+    разных пасхалок (соль), чтобы две пасхалки одного матча не выпадали «синхронно»."""
+    return pool[_stable_pool_index(match_id, salt, len(pool))]
+
+
 async def _collect_egg_context(
     session: AsyncSession,
     winner: Player,
@@ -250,6 +271,7 @@ async def _collect_egg_context(
         "marathon":          len(final_sets) >= 5,
         "old_winner_rating": old_winner_rating,
         "old_loser_rating":  old_loser_rating,
+        "match_id":          match_id,
         # победитель
         "previous_wins":     previous_wins,
         "streak":            streak,
@@ -271,14 +293,15 @@ async def _send_winner_eggs(bot: Bot, winner: Player, loser: Player, ctx: dict) 
     async def _msg(text: str, **kw) -> None:
         await safe_send(bot, winner.telegram_id, text, **kw)
 
+    mid = ctx.get("match_id", 0)
     if ctx["flawless"]:
-        await _msg("🩸 Flawless Victory")
+        await _msg(_pick_egg(EGG_FLAWLESS, mid, "egg_flawless"))
     if ctx["clean_sweep"]:
-        await _msg("💥 FINISH HIM!")
+        await _msg(_pick_egg(EGG_CLEAN_SWEEP, mid, "egg_clean_sweep"))
     if ctx["shutout"]:
-        await _msg("Читы включил? 🎮")
+        await _msg(_pick_egg(EGG_SHUTOUT, mid, "egg_shutout"))
     if ctx["deuce_decider"]:
-        await _msg("⚡ Драматично!")
+        await _msg(_pick_egg(EGG_DEUCE_DECIDER, mid, "egg_deuce"))
     if rating_tenths(winner.rating) % 500 == 0:
         await _msg(f"🎯 Ровно {round(winner.rating, 1)}. Как ты это подгадал?")
 
@@ -300,9 +323,9 @@ async def _send_winner_eggs(bot: Bot, winner: Player, loser: Player, ctx: dict) 
         await _msg(egg)
 
     if ctx["revenge"]:
-        await _msg("⚡ Мы в расчёте")
+        await _msg(_pick_egg(EGG_REVENGE, mid, "egg_revenge"))
     if ctx["comeback"]:
-        await _msg("💪 Упал — отжался — победил")
+        await _msg(_pick_egg(EGG_COMEBACK, mid, "egg_comeback"))
     if ctx["first_time_top1"]:
         await _msg("👑 Трон твой. Пока.")
     if ctx["first_blood"]:
@@ -328,10 +351,11 @@ async def _send_loser_eggs(
     async def _msg(text: str, **kw) -> None:
         await safe_send(bot, loser.telegram_id, text, **kw)
 
+    mid = ctx.get("match_id", 0)
     if ctx["prev_losses"] == 0:
-        await _msg("🕶 Добро пожаловать в реальный мир")
+        await _msg(_pick_egg(EGG_FIRST_LOSS, mid, "egg_first_loss"))
     if ctx["loss_streak"] == 3:
-        await _msg("💪 Надо собраться")
+        await _msg(_pick_egg(EGG_LOSS_STREAK_3, mid, "egg_loss_streak"))
     if loser.rating < 1000.0 and ctx["loser_total"] >= NEWCOMER_THRESHOLD and old_loser_rating >= 1000.0:
         await _msg("🕳 Добро пожаловать на дно")
 
@@ -345,7 +369,9 @@ async def _send_loser_eggs(
         await _msg(milestone)
 
 
-async def _send_time_based_eggs(bot: Bot, players: list[Player], completed_at: datetime) -> None:
+async def _send_time_based_eggs(
+    bot: Bot, players: list[Player], completed_at: datetime, match_id: int = 0,
+) -> None:
     """Пасхалки по времени завершения матча (ночь / выходной / вечер пятницы) —
     обоим участникам. Взаимоисключающие (приоритет сверху вниз), чтобы на один
     матч не сыпалось сразу несколько сообщений об одном и том же факте времени."""
@@ -353,11 +379,11 @@ async def _send_time_based_eggs(bot: Bot, players: list[Player], completed_at: d
         return
     hour, weekday = msk_hour_and_weekday(completed_at)
     if 0 <= hour < 6:
-        text = "🌙 Тебе точно не спится?"
+        text = _pick_egg(EGG_NIGHT, match_id, "egg_night")
     elif weekday >= 5:
-        text = "Вышел на работу ради тенниса? Уважаемо! 🫡"
+        text = _pick_egg(EGG_WEEKEND, match_id, "egg_weekend")
     elif weekday == 4 and hour >= 18:
-        text = "Закрываем неделю красиво 🍻"
+        text = _pick_egg(EGG_FRIDAY_EVENING, match_id, "egg_friday")
     else:
         return
     for p in players:
@@ -416,6 +442,7 @@ async def _send_h2h_milestone_egg(bot: Bot, session: AsyncSession, p1: Player, p
 
 async def _send_quick_rematch_egg(
     bot: Bot, p1: Player, p2: Player, created_at: datetime | None, h2h_matches: list[Match],
+    match_id: int = 0,
 ) -> None:
     """Пасхалка: та же пара сыграла повторно в течение 10 минут после предыдущего матча.
 
@@ -437,8 +464,9 @@ async def _send_quick_rematch_egg(
     gap = (created_at - prev.completed_at).total_seconds()
     if not (0 <= gap <= 600):
         return
+    text = _pick_egg(EGG_QUICK_REMATCH, match_id, "egg_quick_rematch")
     for p in (p1, p2):
-        await safe_send(bot, p.telegram_id, "Не наигрался? 😤")
+        await safe_send(bot, p.telegram_id, text)
 
 
 async def _send_easter_eggs(
@@ -479,11 +507,11 @@ async def _send_easter_eggs(
             await safe_send(bot, p.telegram_id, "7 матчей за сегодня! А поработать не хочешь? 😄")
 
     if completed_at is not None:
-        await _send_time_based_eggs(bot, [winner, loser], completed_at)
+        await _send_time_based_eggs(bot, [winner, loser], completed_at, match_id)
         await _send_h2h_milestone_egg(bot, session, winner, loser)
         await _send_welcome_back_egg(bot, session, [winner, loser], completed_at, match_id)
     if created_at is not None:
-        await _send_quick_rematch_egg(bot, winner, loser, created_at, h2h_matches)
+        await _send_quick_rematch_egg(bot, winner, loser, created_at, h2h_matches, match_id)
 
 
 def _restart_notice_kb() -> InlineKeyboardMarkup:
@@ -973,10 +1001,12 @@ async def _award_draw_achievements_and_eggs(
         if today_count_r.scalar() == 7:
             await safe_send(bot, p.telegram_id, "7 матчей за сегодня! А поработать не хочешь? 😄")
 
-    await _send_time_based_eggs(bot, [challenger, challenged], match.completed_at)
+    await _send_time_based_eggs(bot, [challenger, challenged], match.completed_at, match_id)
     await _send_h2h_milestone_egg(bot, session, challenger, challenged)
     h2h_matches = await get_h2h_matches(session, challenger.id, challenged.id, exclude_match_id=match_id)
-    await _send_quick_rematch_egg(bot, challenger, challenged, match.created_at, h2h_matches)
+    await _send_quick_rematch_egg(
+        bot, challenger, challenged, match.created_at, h2h_matches, match_id,
+    )
 
     for p in (challenger, challenged):
         personal_records = await check_personal_records_on_draw(session, p, match)
