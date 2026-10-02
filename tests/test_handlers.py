@@ -2907,15 +2907,20 @@ def test_stats_kb_grouped_two_per_row():
 
 
 def test_leaderboard_kb_extra_links_grouped_two_per_row():
-    """4 доп.экрана под таблицей рейтинга сгруппированы по 2 в ряд, не в
-    столбец (v2.114.0)."""
+    """Доп.экраны под таблицей рейтинга сгруппированы по 2 в ряд, не в столбец (v2.114.0);
+    с v2.156.0 их 5 («Все матчи клуба» рядом с «Рекордами клуба»), нечётный «Трон» — соло."""
     from bot.keyboards.inline import leaderboard_kb
 
     rows = leaderboard_kb([]).inline_keyboard
-    link_rows = rows[:-1]
+    link_rows = rows[:-2]
     assert all(len(row) == 2 for row in link_rows)
+    assert [b.callback_data for b in rows[0]] == ["club_records", "club_matches_0"]
+    assert len(rows[-2]) == 1 and rows[-2][0].callback_data == "hall_of_fame_0"
     all_callbacks = {btn.callback_data for row in rows for btn in row}
-    assert all_callbacks == {"club_records", "dominance_matrix", "form_index", "hall_of_fame_0", "back_to_menu"}
+    assert all_callbacks == {
+        "club_records", "club_matches_0", "dominance_matrix", "form_index",
+        "hall_of_fame_0", "back_to_menu",
+    }
 
 
 async def test_today_screen_back_button_returns_to_stats(db):
@@ -5370,7 +5375,7 @@ async def test_reply_kb_sent_on_start_for_new_player(db):
     # Первая подпись случайная из CHALLENGE_BUTTON_LABELS (v2.117.0)
     from bot.utils import CHALLENGE_BUTTON_LABELS
     assert buttons[0] in CHALLENGE_BUTTON_LABELS
-    assert buttons[1:] == ["📊 Рейтинг", "📈 Статистика"]
+    assert buttons[1:] == ["🏆 Клуб", "👤 Профиль"]
 
 
 async def test_reply_kb_sent_on_start_for_returning_player(db):
@@ -5456,11 +5461,11 @@ async def test_reply_kb_leaderboard_button_shows_same_screen_as_menu(db):
     db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
     await db.commit()
 
-    msg = _message(1, "📊 Рейтинг")
+    msg = _message(1, "🏆 Клуб")
     await show_leaderboard_from_reply_kb(msg, db)
 
     text = msg.answer.call_args.args[0]
-    assert "Рейтинг игроков" in text
+    assert "Рейтинг клуба" in text
     assert "Alice" in text and "Bob" in text
 
 
@@ -5473,18 +5478,18 @@ async def test_reply_kb_stats_button_shows_same_screen_as_menu(db):
     db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
     await db.commit()
 
-    msg = _message(1, "📈 Статистика")
+    msg = _message(1, "👤 Профиль")
     await show_my_stats_from_reply_kb(msg, db)
 
     text = msg.answer.call_args.args[0]
-    assert "Статистика — Alice" in text
+    assert "Мой профиль — Alice" in text
     assert "🎖" in text  # звание тоже на месте
 
 
 async def test_reply_kb_stats_button_without_registration(db):
     from bot.handlers.profile import show_my_stats_from_reply_kb
 
-    msg = _message(1, "📈 Статистика")
+    msg = _message(1, "👤 Профиль")
     await show_my_stats_from_reply_kb(msg, db)
 
     text = msg.answer.call_args.args[0]
