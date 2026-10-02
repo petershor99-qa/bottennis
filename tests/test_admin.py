@@ -182,7 +182,7 @@ async def test_usage_aggregates_and_sorts_by_opens(db, monkeypatch):
     await cmd_usage(msg, db)
 
     text = msg.answer.await_args.args[0]
-    assert text.index("Статистика") < text.index("Профиль игрока")
+    assert text.index("Мой профиль") < text.index("Профиль игрока")
     assert "2 открытия" in text
     assert "2 игрока" in text
     assert "Всего событий: <b>3</b>" in text

@@ -411,6 +411,9 @@ async def test_multiple_active_matches_still_offer_chooser(db):
 def test_usage_counts_reply_keyboard_taps_under_menu_names():
     mw = UsageMiddleware("command")
     ev = lambda t: SimpleNamespace(text=t)   # noqa: E731
+    assert mw._extract_raw_action(ev("🏆 Клуб")) == "menu_leaderboard"
+    assert mw._extract_raw_action(ev("👤 Профиль")) == "menu_stats"
+    # старые подписи (у игроков ещё может стоять прежняя нижняя клавиатура) тоже считаются
     assert mw._extract_raw_action(ev("📊 Рейтинг")) == "menu_leaderboard"
     assert mw._extract_raw_action(ev("📈 Статистика")) == "menu_stats"
     for label in CHALLENGE_BUTTON_LABELS:

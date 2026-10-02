@@ -3,7 +3,7 @@ from html import escape as h
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import desc, or_, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -12,6 +12,7 @@ from bot.keyboards.inline import (
     back_to_leaderboard_kb,
     back_to_menu_kb,
     back_to_stats_kb,
+    club_matches_kb,
     club_records_kb,
     hall_of_fame_kb,
     leaderboard_kb,
@@ -19,6 +20,7 @@ from bot.keyboards.inline import (
 )
 from bot.utils import (
     MSK_OFFSET,
+    REPLY_KB_LEADERBOARD_ALL,
     _pin_champion,
     busiest_msk_hour,
     cb_data,
@@ -162,7 +164,7 @@ async def _build_leaderboard_screen(session: AsyncSession, telegram_id: int):
     prev_pos = {p.id: i for i, p in enumerate(prev_order)}
 
     medals = ["🥇", "🥈", "🥉"]
-    lines = ["📊 <b>Рейтинг игроков:</b>\n"]
+    lines = ["🏆 <b>Рейтинг клуба:</b>\n"]
     for i, p in enumerate(players):
         prefix = medals[i] if i < 3 else f"{i + 1}."
         count = match_count.get(p.id, 0)
@@ -207,11 +209,57 @@ async def show_leaderboard(callback: CallbackQuery, session: AsyncSession):
     await cb_msg(callback).edit_text(text, reply_markup=kb)
 
 
-@router.message(F.text == "📊 Рейтинг")
+@router.message(F.text.in_(REPLY_KB_LEADERBOARD_ALL))
 async def show_leaderboard_from_reply_kb(message: Message, session: AsyncSession):
     """Тот же экран, что и menu_leaderboard, но с постоянной клавиатуры снизу."""
     text, kb = await _build_leaderboard_screen(session, msg_user(message).id)
     await message.answer(text, reply_markup=kb)
+
+
+# ── Все матчи клуба (v2.156.0) ────────────────────────────────────────────────
+
+CLUB_MATCHES_PAGE_SIZE = 15
+
+
+@router.callback_query(F.data.startswith("club_matches_"))
+async def show_club_matches(callback: CallbackQuery, session: AsyncSession):
+    """Общий лог всех сыгранных матчей клуба за всё время, новые сверху, постранично:
+    «дд.мм  Имя vs Имя  счёт», победитель жирным (тот же формат, что «Все матчи» дня)."""
+    try:
+        page = int(cb_data(callback).rsplit("_", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные.", show_alert=True)
+        return
+    await callback.answer()
+
+    total = (await session.execute(
+        select(func.count()).select_from(Match).where(Match.status == MatchStatus.completed)
+    )).scalar_one()
+    if total == 0:
+        await cb_msg(callback).edit_text(
+            "📋 <b>Все матчи клуба</b>\n\nМатчей ещё не было.",
+            reply_markup=club_matches_kb(0, 1),
+        )
+        return
+
+    total_pages = max(1, (total + CLUB_MATCHES_PAGE_SIZE - 1) // CLUB_MATCHES_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    rows = (await session.execute(
+        select(Match)
+        .where(Match.status == MatchStatus.completed)
+        .order_by(desc(Match.completed_at), desc(Match.id))
+        .offset(page * CLUB_MATCHES_PAGE_SIZE)
+        .limit(CLUB_MATCHES_PAGE_SIZE)
+        .options(selectinload(Match.challenger), selectinload(Match.challenged))
+    )).scalars().all()
+
+    lines = [f"📋 <b>Все матчи клуба</b> <i>(стр. {page + 1}/{total_pages}, всего {total})</i>\n"]
+    for m in rows:
+        date = (m.completed_at + MSK_OFFSET).strftime("%d.%m") if m.completed_at else ""
+        lines.append(
+            f"{date}  {match_log_line(m, m.challenger.display_name, m.challenged.display_name)}"
+        )
+    await cb_msg(callback).edit_text("\n".join(lines), reply_markup=club_matches_kb(page, total_pages))
 
 
 # ── Today stats ───────────────────────────────────────────────────────────────

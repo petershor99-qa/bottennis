@@ -7,15 +7,15 @@ from aiogram.types import TelegramObject
 from bot.db.database import async_session
 from bot.db.models import UsageEvent
 from bot.services.usage import normalize_action
-from bot.utils import CHALLENGE_BUTTON_LABELS
+from bot.utils import CHALLENGE_BUTTON_LABELS, REPLY_KB_LEADERBOARD_ALL, REPLY_KB_PROFILE_ALL
 
 # Кнопки постоянной клавиатуры (main_reply_kb) — обычные текстовые сообщения, не
 # callback'и, поэтому раньше не считались и открытия рейтинга/статистики/вызова
 # были занижены (v2.148.0). Пишем под теми же именами, что и инлайн-двойники, —
 # для /usage это один и тот же экран.
 REPLY_KEYBOARD_ACTIONS: dict[str, str] = {
-    "📊 Рейтинг": "menu_leaderboard",
-    "📈 Статистика": "menu_stats",
+    **{text: "menu_leaderboard" for text in REPLY_KB_LEADERBOARD_ALL},
+    **{text: "menu_stats" for text in REPLY_KB_PROFILE_ALL},
     **{label: "menu_play" for label in CHALLENGE_BUTTON_LABELS},
 }
 
