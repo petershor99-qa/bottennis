@@ -1,7 +1,7 @@
 """Справка «как считается рейтинг» в /help (v2.146.0)."""
 from unittest.mock import AsyncMock
 
-from bot.handlers.start import RATING_HELP_TEXT, cmd_help
+from bot.handlers.start import RATING_HELP_TEXT, _help_section_text, cmd_help
 from bot.services.rating import SHORT_MATCH_MULT
 from bot.utils import NEWCOMER_THRESHOLD
 
@@ -12,14 +12,14 @@ async def _help_text() -> str:
     return msg.answer.await_args.args[0]
 
 
-async def test_help_contains_rating_explanation():
-    text = await _help_text()
-    assert RATING_HELP_TEXT in text
+async def test_help_rating_section_is_the_explanation():
+    text = _help_section_text("rating")
+    assert text == RATING_HELP_TEXT
     assert "модифицированный ELO" in text
 
 
-async def test_help_fits_one_telegram_message():
-    assert len(await _help_text()) < 4096
+async def test_help_main_screen_is_short_and_fits_telegram():
+    assert len(await _help_text()) < 300
 
 
 def test_rating_text_matches_formula_constants():

@@ -79,10 +79,24 @@ def notifications_kb(muted: set[str]) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def help_kb() -> InlineKeyboardMarkup:
-    """Под /help: вход в «Рассылки» и возврат в меню."""
+def help_toc_kb(sections: list[tuple[str, str]]) -> InlineKeyboardMarkup:
+    """Оглавление справки (v2.152.0): по кнопке на раздел, по одной в ряд
+    (подписи длинные — в два столбца обрезались бы), «Настроить рассылки» и «В меню»."""
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="🔔 Рассылки", callback_data="menu_notifications"))
+    for key, title in sections:
+        b.row(InlineKeyboardButton(text=title, callback_data=f"help_sec_{key}"))
+    b.row(InlineKeyboardButton(text="🔔 Настроить рассылки", callback_data="menu_notifications"))
+    b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
+    return b.as_markup()
+
+
+def help_section_kb(key: str) -> InlineKeyboardMarkup:
+    """Под разделом справки: назад к оглавлению и в меню; под «Когда приходят
+    сводки» дополнительно вход в настройку рассылок."""
+    b = InlineKeyboardBuilder()
+    if key == "digests":
+        b.row(InlineKeyboardButton(text="🔔 Настроить рассылки", callback_data="menu_notifications"))
+    b.row(InlineKeyboardButton(text="« К справке", callback_data="menu_help"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
 

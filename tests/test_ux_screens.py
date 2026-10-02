@@ -227,13 +227,13 @@ async def test_help_from_menu_shows_same_text_with_notifications_button():
     assert msg.answer.await_args.args[0] == text
 
 
-async def test_help_mentions_name_command_and_new_screen_names():
-    msg = AsyncMock()
-    await cmd_help(msg)
-    text = msg.answer.await_args.args[0]
-    assert "/name — сменить имя в боте (например: /name Пётр)" in text
-    assert "С кем сыграть?" in text and "Рекомендации" not in text
-    assert "Сегодня в клубе" in text
+async def test_help_sections_mention_name_command_and_new_screen_names():
+    from bot.handlers.start import _help_section_text
+
+    assert "/name — сменить имя в боте (например: /name Пётр)" in _help_section_text("commands")
+    screens = _help_section_text("screens")
+    assert "С кем сыграть?" in screens and "Рекомендации" not in screens
+    assert "Сегодня в клубе" in screens
 
 
 def _name_msg(user_id: int):
@@ -419,3 +419,67 @@ def test_usage_counts_reply_keyboard_taps_under_menu_names():
     assert mw._extract_raw_action(ev("11:7 9:11")) is None     # ввод счёта не считается
     assert mw._extract_raw_action(ev("привет")) is None
     assert mw._extract_raw_action(ev(None)) is None
+
+
+# ── Справка в два уровня (v2.152.0) ────────────────────────────────────────────
+
+async def test_help_toc_has_section_buttons_and_notifications():
+    from bot.handlers.start import HELP_INTRO, HELP_SECTIONS
+
+    msg = AsyncMock()
+    await cmd_help(msg)
+    assert msg.answer.await_args.args[0] == HELP_INTRO
+    kb = msg.answer.await_args.kwargs["reply_markup"]
+    texts = _texts(kb)
+    for expected in (
+        "⚔️ Как играть", "🧮 Как считается рейтинг", "🗺 Карта экранов", "🔣 Значки и иконки",
+        "⏰ Когда приходят сводки", "⌨️ Команды", "🔔 Настроить рассылки", "« В меню",
+    ):
+        assert expected in texts
+    assert [k for k, _ in HELP_SECTIONS] == ["play", "rating", "screens", "icons", "digests", "commands"]
+    assert "Автосводки" not in " ".join(texts) and "Где что искать" not in " ".join(texts)
+
+
+async def test_every_help_section_opens_with_back_buttons_and_fits_limit():
+    from bot.handlers.start import HELP_SECTIONS, show_help_section
+
+    for key, title in HELP_SECTIONS:
+        cb = _callback(1, f"help_sec_{key}")
+        await show_help_section(cb)
+        text = cb.message.edit_text.await_args.args[0]
+        kb = cb.message.edit_text.await_args.kwargs["reply_markup"]
+        assert len(text) < 3500, key
+        assert _cbs(kb)[-2:] == ["menu_help", "back_to_menu"], key
+        assert "« К справке" in _texts(kb)
+
+
+async def test_help_section_contents():
+    from bot.handlers.start import _help_section_text
+
+    play = _help_section_text("play")
+    assert "11:7 9:11 11:5" in play and "Реванш" in play and "ничья" in play.lower()
+    digests = _help_section_text("digests")
+    for needle in ("21:30", "понедельник", "1-го числа", "квартала", "30 декабря", "21 по 30 декабря"):
+        assert needle in digests, needle
+    assert "Спокойной" not in digests
+
+
+async def test_digests_help_section_offers_notifications_button():
+    from bot.handlers.start import show_help_section
+
+    cb = _callback(1, "help_sec_digests")
+    await show_help_section(cb)
+    kb = cb.message.edit_text.await_args.kwargs["reply_markup"]
+    assert "menu_notifications" in _cbs(kb)
+    other = _callback(1, "help_sec_play")
+    await show_help_section(other)
+    assert "menu_notifications" not in _cbs(other.message.edit_text.await_args.kwargs["reply_markup"])
+
+
+async def test_unknown_help_section_alerts():
+    from bot.handlers.start import show_help_section
+
+    cb = _callback(1, "help_sec_nonsense")
+    await show_help_section(cb)
+    assert cb.answer.await_args.kwargs.get("show_alert") is True
+    cb.message.edit_text.assert_not_awaited()
