@@ -14,9 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from bot.db.database import DATABASE_URL, async_session
-from bot.db.models import Match, MatchStatus, Player
+from bot.db.models import AchievementEarned, Match, MatchStatus, Player
 from bot.keyboards.inline import busy_with_match_kb, year_vote_invite_kb
 from bot.services.achievements import (
+    ACHIEVEMENTS_MAP,
     check_throne_abdication_achievement,
     notify_new_achievements,
     record_achievements_earned,
@@ -280,6 +281,39 @@ def _club_record_line(today_count: int, previous_best: int) -> str | None:
         f"🔥 <b>Рекорд клуба:</b> {pluralize_matches(today_count)} за день — "
         f"столько ещё не играли (прежний рекорд — {previous_best})"
     )
+
+
+MONTH_ACHIEVEMENTS_PER_PLAYER = 3
+
+
+async def _month_achievements_line(
+    session: AsyncSession, start_utc: datetime, end_utc: datetime, name_map: dict[int, str],
+) -> str | None:
+    """«🏅 Ачивки месяца: Имя — «Название», «Название»; Имя — «Название»» (v2.149.0).
+    Только ачивки с известной датой получения внутри [start_utc, end_utc) —
+    AchievementEarned.earned_at (v2.106.0); у ачивок с earned_at=None даты нет, они не
+    попадают. На игрока не больше MONTH_ACHIEVEMENTS_PER_PLAYER в порядке получения,
+    остальные — «(+N)». Игроки: у кого больше ачивок, затем по имени. Пусто — строки нет."""
+    r = await session.execute(
+        select(AchievementEarned)
+        .where(AchievementEarned.earned_at >= start_utc, AchievementEarned.earned_at < end_utc)
+        .order_by(AchievementEarned.earned_at, AchievementEarned.id)
+    )
+    by_player: dict[int, list[str]] = {}
+    for row in r.scalars().all():
+        ach = ACHIEVEMENTS_MAP.get(row.achievement_id)
+        if ach is None or row.player_id not in name_map:
+            continue
+        by_player.setdefault(row.player_id, []).append(ach.name)
+    if not by_player:
+        return None
+    parts = []
+    for pid, names in sorted(by_player.items(), key=lambda kv: (-len(kv[1]), name_map[kv[0]])):
+        shown = ", ".join(f"«{h(n)}»" for n in names[:MONTH_ACHIEVEMENTS_PER_PLAYER])
+        extra = len(names) - MONTH_ACHIEVEMENTS_PER_PLAYER
+        suffix = f" (+{extra})" if extra > 0 else ""
+        parts.append(f"<b>{h(name_map[pid])}</b> — {shown}{suffix}")
+    return "🏅 Ачивки месяца: " + "; ".join(parts)
 
 
 def _career_matches_by_player(all_completed: Sequence) -> dict[int, list]:
@@ -1077,6 +1111,12 @@ async def send_monthly_summary(bot: Bot) -> None:
         if slacker_names:
             word = "Халявщики" if len(slacker_names) > 1 else "Халявщик"
             hero_lines.append(f"😴 {word} месяца — <b>{', '.join(slacker_names)}</b>")
+
+        achievements_line = await _month_achievements_line(
+            session, month_start_utc, month_end_utc, name_map
+        )
+        if achievements_line:
+            hero_lines.append(achievements_line)
 
         # ── Матч месяца ───────────────────────────────────────────────────────
         top = _top_match_block(matches, name_map, "Матч месяца")

@@ -50,3 +50,65 @@ def test_every_pool_has_phenibut_reference(name):
 def test_match_phrase_reaches_every_phrase_of_its_pool(chance, pool):
     reached = {match_phrase(chance, i) for i in range(len(pool))}
     assert reached == set(pool)
+
+
+# ── Пулы репортажа и «прошлых встреч» (v2.149.0) ───────────────────────────────
+
+from bot.utils import (  # noqa: E402
+    CLOSE_DECIDER_FRAGMENTS,
+    COMEBACK_OPENERS,
+    DEUCE_FRAGMENTS,
+    H2H_DRAW_PHRASES,
+    H2H_REVENGE_PHRASES,
+    H2H_STREAK_PHRASES,
+    MARATHON_FRAGMENTS,
+    MID_DEUCE_FRAGMENTS,
+    SOFT_COMEBACK_OPENERS,
+    UPSET_FRAGMENT_TEMPLATES,
+)
+
+REPORT_POOLS = {
+    "soft_comeback": SOFT_COMEBACK_OPENERS,
+    "close_decider": CLOSE_DECIDER_FRAGMENTS,
+    "mid_deuce": MID_DEUCE_FRAGMENTS,
+    "deuce": DEUCE_FRAGMENTS,
+    "comeback": COMEBACK_OPENERS,
+    "marathon": MARATHON_FRAGMENTS,
+    "upset": UPSET_FRAGMENT_TEMPLATES,
+    "h2h_revenge": H2H_REVENGE_PHRASES,
+    "h2h_streak": H2H_STREAK_PHRASES,
+    "h2h_draw": H2H_DRAW_PHRASES,
+}
+
+
+@pytest.mark.parametrize("name", REPORT_POOLS)
+def test_report_pool_has_no_duplicates_and_is_html_safe(name):
+    pool = REPORT_POOLS[name]
+    assert len(pool) == len(set(pool))
+    for phrase in pool:
+        assert "<" not in phrase and ">" not in phrase and "&" not in phrase, phrase
+
+
+@pytest.mark.parametrize("name", REPORT_POOLS)
+def test_report_pool_templates_format_without_errors(name):
+    """Шаблоны с подстановками ({name}/{n}/{ord}/{ord_nom}/{delta}) не должны падать
+    на .format() — лишняя фигурная скобка в новой фразе сломала бы репортаж."""
+    for phrase in REPORT_POOLS[name]:
+        phrase.format(name="Имя", n=5, ord="пятой", ord_nom="пятая", delta=21.5)
+
+
+def test_report_pools_got_the_new_phrases():
+    assert any("ловушки" in p for p in SOFT_COMEBACK_OPENERS)
+    assert any("аптечек" in p for p in CLOSE_DECIDER_FRAGMENTS)
+    assert any("чекпойнт" in p for p in DEUCE_FRAGMENTS)
+    assert any("перезапуск" in p for p in COMEBACK_OPENERS)
+    assert any("созвоны" in p for p in MARATHON_FRAGMENTS)
+    assert any("кофемашин" in p for p in UPSET_FRAGMENT_TEMPLATES)
+    assert any("Месть" in p for p in H2H_REVENGE_PHRASES)
+    assert any("электричек" in p for p in H2H_STREAK_PHRASES)
+    assert any("кредитом" in p for p in H2H_DRAW_PHRASES)
+
+
+def test_placeholders_kept_in_templates():
+    assert all("{name}" in p for p in COMEBACK_OPENERS[-5:])
+    assert all("{delta}" in p for p in UPSET_FRAGMENT_TEMPLATES[-5:])
