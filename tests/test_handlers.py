@@ -3742,20 +3742,18 @@ async def test_my_matches_shows_favor_icon_matching_players_list_kb(db):
 
 
 async def test_help_lists_icon_legend():
-    from bot.handlers.start import cmd_help
+    """Расшифровка значков живёт в разделе справки «Значки и иконки» (v2.152.0)."""
+    from bot.handlers.start import _help_section_text
 
-    msg = AsyncMock()
-    msg.answer = AsyncMock()
-    await cmd_help(msg)
-
-    text = msg.answer.call_args[0][0]
+    text = _help_section_text("icons")
     assert "💪" in text and "❄️" in text and "🔥" in text and "👑" in text
+    assert "🌟" in text and "▲▼" in text
 
 
 async def test_help_uses_back_to_menu_keyboard_not_full_menu():
-    """/help — справочный экран, не экран навигации: полный набор кнопок
-    главного меню (Вызвать на матч/Рейтинг/Статистика/Мои матчи) под ним не
-    нужен, достаточно «« В меню» (с v2.145.0 плюс вход в «🔔 Рассылки»)."""
+    """/help — справочный экран, не экран навигации: полного набора кнопок главного
+    меню под ним нет — только разделы справки, «🔔 Настроить рассылки» и «« В меню»
+    (v2.152.0: оглавление с разделами вместо одной простыни)."""
     from bot.handlers.start import cmd_help
 
     msg = AsyncMock()
@@ -3764,7 +3762,9 @@ async def test_help_uses_back_to_menu_keyboard_not_full_menu():
 
     kb = msg.answer.call_args.kwargs["reply_markup"]
     buttons = [b for row in kb.inline_keyboard for b in row]
-    assert [b.callback_data for b in buttons] == ["menu_notifications", "back_to_menu"]
+    cbs = [b.callback_data for b in buttons]
+    assert cbs[:6] == [f"help_sec_{k}" for k in ("play", "rating", "screens", "icons", "digests", "commands")]
+    assert cbs[-2:] == ["menu_notifications", "back_to_menu"]
     assert buttons[-1].text == "« В меню"
 
 
