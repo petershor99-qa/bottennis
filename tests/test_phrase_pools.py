@@ -3,6 +3,7 @@ import pytest
 
 from bot.utils import (
     BLOWOUT_PHRASES,
+    DRAW_PHRASES,
     EVEN_PHRASES,
     FAVORITE_PHRASES,
     PLAIN_WIN_PHRASES,
@@ -16,6 +17,7 @@ POOLS = {
     "underdog": UNDERDOG_PHRASES,
     "blowout": BLOWOUT_PHRASES,
     "plain_win": PLAIN_WIN_PHRASES,
+    "draw": DRAW_PHRASES,
 }
 
 
@@ -25,7 +27,7 @@ def test_pool_has_no_duplicates(name):
     assert len(pool) == len(set(pool))
 
 
-@pytest.mark.parametrize("name", POOLS)
+@pytest.mark.parametrize("name", [n for n in POOLS if n != "draw"])
 def test_pool_is_grown(name):
     # было 13–15 фраз в пуле, после v2.144.0 — минимум 20
     assert len(POOLS[name]) >= 20
@@ -38,9 +40,16 @@ def test_phrases_are_safe_for_html_parse_mode(name):
         assert phrase.strip() == phrase and phrase
 
 
-@pytest.mark.parametrize("name", POOLS)
+@pytest.mark.parametrize("name", [n for n in POOLS if n != "draw"])
 def test_every_pool_has_phenibut_reference(name):
     assert any("фенибут" in p.lower() for p in POOLS[name])
+
+
+def test_draw_blowout_plain_win_got_new_phrases():
+    assert len(DRAW_PHRASES) == 8
+    assert any("калькулятор рейтинга" in p for p in DRAW_PHRASES)
+    assert any("демонстрационный показ" in p for p in BLOWOUT_PHRASES)
+    assert any("рабочий вторник" in p for p in PLAIN_WIN_PHRASES)
 
 
 @pytest.mark.parametrize(
