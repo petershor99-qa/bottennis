@@ -241,6 +241,10 @@ STATS_SECTIONS: list[tuple[str, str]] = [
 # Раздел «Последние матчи» убран в v2.148.0: дублировал «📜 История матчей».
 OTHER_SECTION_TITLES: dict[str, str] = {"opp": "🆚 С кем играет"}
 
+# Старые сообщения со статистикой/профилем ещё несут кнопку удалённого раздела
+# (stat_sec_recent / pstat_{id}_recent) — отвечаем понятно, а не «раздел не найден».
+MOVED_RECENT_NOTICE = "Раздел «Последние матчи» теперь в «📜 История матчей»."
+
 
 def _section_title(key: str, title: str, personal: bool) -> str:
     return title if personal else OTHER_SECTION_TITLES.get(key, title)
@@ -465,6 +469,9 @@ async def show_my_stats_section(callback: CallbackQuery, session: AsyncSession):
         await callback.answer("Сначала напиши /start", show_alert=True)
         return
     key = cb_data(callback).removeprefix("stat_sec_")
+    if key == "recent":
+        await callback.answer(MOVED_RECENT_NOTICE, show_alert=True)
+        return
     text = await _build_stats_section(session, player, key, personal=True)
     if text is None:
         await callback.answer("Раздел не найден или пока пуст.", show_alert=True)
@@ -485,6 +492,9 @@ async def show_player_stats_section(callback: CallbackQuery, session: AsyncSessi
     target = tp_r.scalar_one_or_none()
     if not target:
         await callback.answer("Игрок не найден.", show_alert=True)
+        return
+    if key == "recent":
+        await callback.answer(MOVED_RECENT_NOTICE, show_alert=True)
         return
     text = await _build_stats_section(session, target, key, personal=False)
     if text is None:

@@ -285,6 +285,38 @@ async def test_name_html_is_escaped_in_reply(db):
     assert "&lt;b&gt;" in msg.answer.await_args.args[0]
 
 
+async def test_name_must_be_unique_case_insensitive(db):
+    db.add_all([_player(1, "Старое"), _player(2, "Пётр")])
+    await db.commit()
+    msg = _name_msg(1)
+    await cmd_name(msg, SimpleNamespace(args="пётр"), db)
+    assert "уже занято" in msg.answer.await_args.args[0]
+    fresh = (await db.execute(select(Player).where(Player.telegram_id == 1))).scalar_one()
+    assert fresh.display_name == "Старое"
+    # а свой регистр поменять можно
+    msg2 = _name_msg(2)
+    await cmd_name(msg2, SimpleNamespace(args="ПЁТР"), db)
+    fresh2 = (await db.execute(select(Player).where(Player.telegram_id == 2))).scalar_one()
+    assert fresh2.display_name == "ПЁТР"
+
+
+async def test_old_recent_buttons_get_moved_notice(db):
+    from bot.handlers.profile import (
+        MOVED_RECENT_NOTICE,
+        show_my_stats_section,
+        show_player_stats_section,
+    )
+
+    ps = await _club_with_history(db, players=3, matches=20)
+    cb = _callback(ps[0].telegram_id, "stat_sec_recent")
+    await show_my_stats_section(cb, db)
+    assert cb.answer.await_args.args[0] == MOVED_RECENT_NOTICE
+    cb2 = _callback(ps[1].telegram_id, f"pstat_{ps[0].id}_recent")
+    await show_player_stats_section(cb2, db)
+    assert cb2.answer.await_args.args[0] == MOVED_RECENT_NOTICE
+    assert "История матчей" in MOVED_RECENT_NOTICE
+
+
 async def test_name_requires_registration(db):
     msg = _name_msg(99)
     await cmd_name(msg, SimpleNamespace(args="Пётр"), db)

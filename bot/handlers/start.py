@@ -212,6 +212,13 @@ async def cmd_name(message: Message, command: CommandObject, session: AsyncSessi
     if len(new_name) > NAME_MAX_LEN:
         await message.answer(f"Имя слишком длинное — не больше {NAME_MAX_LEN} символов.")
         return
+    # Одинаковые имена (без учёта регистра) сделали бы рейтинг, матрицу и логи
+    # матчей неоднозначными — своё же имя в другом регистре менять можно.
+    # Сравнение в Python, не в SQL: lower() в SQLite не понимает кириллицу.
+    others = await session.execute(select(Player.display_name).where(Player.id != player.id))
+    if any(n.casefold() == new_name.casefold() for (n,) in others.all()):
+        await message.answer("Такое имя уже занято — выбери другое.")
+        return
     player.display_name = new_name
     await session.commit()
     await message.answer(f"✅ Имя изменено: <b>{h(new_name)}</b>")
