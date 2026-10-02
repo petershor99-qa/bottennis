@@ -33,6 +33,7 @@ from bot.services.stats import (
 )
 from bot.utils import (
     NEWCOMER_THRESHOLD,
+    REPLY_KB_PROFILE_ALL,
     _challenger_among,
     boss_fight_rematch_blocked,
     cb_data,
@@ -301,7 +302,7 @@ async def _build_stats_section(
         return None
     name = h(player.display_name)
     head = (
-        f"📈 <b>Статистика — {name}</b> · {titles[key]}" if personal
+        f"👤 <b>Мой профиль — {name}</b> · {titles[key]}" if personal
         else f"👤 <b>{name}</b> · {titles[key]}"
     )
     return "\n".join([head, "", *lines])
@@ -383,7 +384,7 @@ def _append_rank_and_throne_lines(lines: list[str], rank_gap: str | None, throne
 # ── My stats ──────────────────────────────────────────────────────────────────
 
 async def _build_stats_screen(session: AsyncSession, player: Player):
-    """Строит (текст, клавиатуру) экрана «Статистика» для уже найденного
+    """Строит (текст, клавиатуру) экрана «Мой профиль» (раньше «Статистика») для уже найденного
     игрока — общая часть для инлайн-кнопки меню (edit_text) и постоянной
     клавиатуры снизу (answer)."""
     players_all, champion, _match_counts, ranks, rank_str, challenger_player = (
@@ -394,7 +395,7 @@ async def _build_stats_screen(session: AsyncSession, player: Player):
 
     if not all_matches:
         return (
-            f"📈 <b>Статистика — {h(player.display_name)}</b>\n\n"
+            f"👤 <b>Мой профиль — {h(player.display_name)}</b>\n\n"
             f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — {rank_str}  🎖 {rank_title(player.rating)}\n\n"
             f"Ты ещё не сыграл ни одного матча.\nВызови кого-нибудь! 🏓",
             stats_kb(),
@@ -406,7 +407,7 @@ async def _build_stats_screen(session: AsyncSession, player: Player):
 
     draws_part = f"  |  🤝 Ничьих: <b>{s['draws']}</b>" if s["draws"] > 0 else ""
     lines = [
-        f"📈 <b>Статистика — {h(player.display_name)}</b>\n",
+        f"👤 <b>Мой профиль — {h(player.display_name)}</b>\n",
         f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — {rank_str}  🎖 {rank_title(player.rating)}",
         f"🏆 Побед: <b>{s['wins']}</b>{draws_part}  |  💔 Поражений: <b>{s['losses']}</b>",
         f"📊 Винрейт: матчи <b>{s['win_rate']}%</b> · партии <b>{s['sets_win_rate']}%</b>",
@@ -451,7 +452,7 @@ async def show_my_stats(callback: CallbackQuery, session: AsyncSession):
     await cb_msg(callback).edit_text(text, reply_markup=kb)
 
 
-@router.message(F.text == "📈 Статистика")
+@router.message(F.text.in_(REPLY_KB_PROFILE_ALL))
 async def show_my_stats_from_reply_kb(message: Message, session: AsyncSession):
     """Тот же экран, что и menu_stats, но с постоянной клавиатуры снизу."""
     player = await get_player(session, msg_user(message).id)

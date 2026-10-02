@@ -8,7 +8,12 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.services.digests import DIGEST_KINDS
 from bot.services.year_vote import YEAR_VOTE_NOMINATIONS
-from bot.utils import favor_icon, random_challenge_button_label
+from bot.utils import (
+    REPLY_KB_LEADERBOARD,
+    REPLY_KB_PROFILE,
+    favor_icon,
+    random_challenge_button_label,
+)
 
 
 def main_reply_kb() -> ReplyKeyboardMarkup:
@@ -28,8 +33,8 @@ def main_reply_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[
             KeyboardButton(text=random_challenge_button_label()),
-            KeyboardButton(text="📊 Рейтинг"),
-            KeyboardButton(text="📈 Статистика"),
+            KeyboardButton(text=REPLY_KB_LEADERBOARD),
+            KeyboardButton(text=REPLY_KB_PROFILE),
         ]],
         resize_keyboard=True,
     )
@@ -59,9 +64,9 @@ def main_menu_kb(
             text="⚔️ Реванш", callback_data=f"rematch_{rematch_opponent_id}",
         ))
     b.row(InlineKeyboardButton(text=random_challenge_button_label(), callback_data="menu_play"))
-    b.row(InlineKeyboardButton(text="📊 Рейтинг", callback_data="menu_leaderboard"))
+    b.row(InlineKeyboardButton(text="🏆 Рейтинг клуба", callback_data="menu_leaderboard"))
     b.row(
-        InlineKeyboardButton(text="📈 Статистика", callback_data="menu_stats"),
+        InlineKeyboardButton(text="👤 Мой профиль", callback_data="menu_stats"),
         InlineKeyboardButton(text="🎯 С кем сыграть?", callback_data="menu_matches"),
     )
     b.row(InlineKeyboardButton(text="❓ Справка", callback_data="menu_help"))
@@ -119,7 +124,7 @@ def _section_rows(b: InlineKeyboardBuilder, sections: list[tuple[str, str]], pre
 def stats_section_kb() -> InlineKeyboardMarkup:
     """Под экраном раздела личной статистики — назад к основному экрану."""
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="« К статистике", callback_data="menu_stats"))
+    b.row(InlineKeyboardButton(text="« В мой профиль", callback_data="menu_stats"))
     return b.as_markup()
 
 
@@ -172,7 +177,7 @@ def achievements_kb(category_progress: list[tuple[str, int, int]]) -> InlineKeyb
         b.row(InlineKeyboardButton(
             text=f"{category} {earned}/{total}", callback_data=f"ach_cat_{i}",
         ))
-    b.row(InlineKeyboardButton(text="« К статистике", callback_data="menu_stats"))
+    b.row(InlineKeyboardButton(text="« В мой профиль", callback_data="menu_stats"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
 
@@ -183,7 +188,7 @@ def club_records_kb(categories: list[tuple[str, str, int]]) -> InlineKeyboardMar
     b = InlineKeyboardBuilder()
     for key, title, count in categories:
         b.row(InlineKeyboardButton(text=f"{title} {count}", callback_data=f"rec_cat_{key}"))
-    b.row(InlineKeyboardButton(text="« К рейтингу", callback_data="menu_leaderboard"))
+    b.row(InlineKeyboardButton(text="« К рейтингу клуба", callback_data="menu_leaderboard"))
     return b.as_markup()
 
 
@@ -266,7 +271,7 @@ def hall_of_fame_kb(page: int, total_pages: int) -> InlineKeyboardMarkup:
         nav.append(InlineKeyboardButton(text="Вперёд →", callback_data=f"hall_of_fame_{page + 1}"))
     if nav:
         b.row(*nav)
-    b.row(InlineKeyboardButton(text="« К рейтингу", callback_data="menu_leaderboard"))
+    b.row(InlineKeyboardButton(text="« К рейтингу клуба", callback_data="menu_leaderboard"))
     return b.as_markup()
 
 
@@ -367,25 +372,40 @@ def leaderboard_kb(players) -> InlineKeyboardMarkup:
         b.row(*btns[i:i + 2])
     b.row(
         InlineKeyboardButton(text="🏆 Рекорды клуба", callback_data="club_records"),
-        InlineKeyboardButton(text="⚔️ Кто кого бьёт", callback_data="dominance_matrix"),
+        InlineKeyboardButton(text="📋 Все матчи клуба", callback_data="club_matches_0"),
     )
     b.row(
+        InlineKeyboardButton(text="⚔️ Кто кого бьёт", callback_data="dominance_matrix"),
         InlineKeyboardButton(text="🌡 Кто в форме", callback_data="form_index"),
-        InlineKeyboardButton(text="🏛 Трон", callback_data="hall_of_fame_0"),
     )
+    b.row(InlineKeyboardButton(text="🏛 Трон", callback_data="hall_of_fame_0"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
+    return b.as_markup()
+
+
+def club_matches_kb(page: int, total_pages: int) -> InlineKeyboardMarkup:
+    """Листание экрана «Все матчи клуба» (v2.156.0) + возврат к рейтингу клуба."""
+    b = InlineKeyboardBuilder()
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="← Назад", callback_data=f"club_matches_{page - 1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton(text="Вперёд →", callback_data=f"club_matches_{page + 1}"))
+    if nav:
+        b.row(*nav)
+    b.row(InlineKeyboardButton(text="« К рейтингу клуба", callback_data="menu_leaderboard"))
     return b.as_markup()
 
 
 def back_to_leaderboard_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="« К рейтингу", callback_data="menu_leaderboard"))
+    b.row(InlineKeyboardButton(text="« К рейтингу клуба", callback_data="menu_leaderboard"))
     return b.as_markup()
 
 
 def back_to_stats_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="« К статистике", callback_data="menu_stats"))
+    b.row(InlineKeyboardButton(text="« В мой профиль", callback_data="menu_stats"))
     return b.as_markup()
 
 
@@ -471,7 +491,7 @@ def player_profile_kb(
             callback_data=f"player_history_{player_id}_0",
         ),
     )
-    b.row(InlineKeyboardButton(text="« К рейтингу", callback_data="menu_leaderboard"))
+    b.row(InlineKeyboardButton(text="« К рейтингу клуба", callback_data="menu_leaderboard"))
     return b.as_markup()
 
 
