@@ -2774,14 +2774,14 @@ def test_today_button_moved_from_leaderboard_to_stats_kb():
 
 def test_stats_kb_grouped_two_per_row():
     """Экранные ссылки на «Статистике» сгруппированы по 2 в ряд (v2.114.0),
-    не растянуты в столбец — по прямой просьбе пользователя. «Стиль»
-    (v2.121.0) — 7-я ссылка, нечётная, идёт одиночной строкой перед «В меню»."""
+    не растянуты в столбец — по прямой просьбе пользователя. «Сегодня в клубе»
+    (7-я ссылка, нечётная) идёт одиночной строкой перед «В меню» (v2.148.0)."""
     from bot.keyboards.inline import stats_kb
 
     rows = stats_kb().inline_keyboard
-    link_rows = rows[:-2]  # последние 2 строки — «Стиль» соло и «« В меню»
+    link_rows = rows[:-2]  # последние 2 строки — «Сегодня в клубе» соло и «« В меню»
     assert all(len(row) == 2 for row in link_rows)
-    assert len(rows[-2]) == 1 and rows[-2][0].callback_data == "style_radar"
+    assert len(rows[-2]) == 1 and rows[-2][0].callback_data == "menu_today"
     all_callbacks = {btn.callback_data for row in rows for btn in row}
     assert all_callbacks == {
         "history_0", "rating_chart", "activity_heatmap_me", "career_recap",
@@ -3697,15 +3697,15 @@ def test_main_menu_kb_challenge_button_uses_pool_label():
     assert play_button.text in texts
 
 
-def test_main_menu_kb_matches_button_renamed_to_recommendations():
-    """«Мои матчи» → «Рекомендации» (v2.124.0) — старое название вводило в
-    заблуждение: экран не про личную историю, а про клубные активные матчи и
-    рекомендации соперника, дублируя «Вызвать на матч» с доп. контекстом."""
+def test_main_menu_kb_matches_button_renamed_to_who_to_play():
+    """«Мои матчи» → «Рекомендации» (v2.124.0) → «С кем сыграть?» (v2.148.0) —
+    старые названия вводили в заблуждение: экран не про личную историю, а про
+    клубные активные матчи и рекомендации соперника."""
     from bot.keyboards.inline import main_menu_kb
 
     kb = main_menu_kb()
     matches_button = next(b for row in kb.inline_keyboard for b in row if b.callback_data == "menu_matches")
-    assert matches_button.text == "🎯 Рекомендации"
+    assert matches_button.text == "🎯 С кем сыграть?"
 
 
 async def test_reply_kb_challenge_button_accepts_every_pool_label(db):

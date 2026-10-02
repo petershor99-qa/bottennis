@@ -40,7 +40,8 @@ async def test_every_available_section_opens_with_back_button(db):
     all_matches = await get_career_matches(db, ps[0].id, with_opponents=True)
     s = _compute_player_stats(ps[0], all_matches)
     sections = _available_sections(ps[0], s, all_matches, include_growth=True)
-    assert {k for k, _ in sections} >= {"recent", "rating"}
+    assert {k for k, _ in sections} >= {"opp", "rating", "game"}
+    assert "recent" not in {k for k, _ in sections}   # убран в v2.148.0 (дубль истории)
 
     for key, title in sections:
         cb = _callback(ps[0].telegram_id, f"stat_sec_{key}")
@@ -51,11 +52,10 @@ async def test_every_available_section_opens_with_back_button(db):
         assert kb.inline_keyboard[-1][0].callback_data == "menu_stats"
 
 
-async def test_recent_section_shows_ten_matches(db):
+async def test_recent_section_is_gone(db):
+    """«Последние матчи» убраны в v2.148.0 — их заменяет «📜 История матчей»."""
     ps = await _club_with_history(db, players=4, matches=80)
-    text = await _build_stats_section(db, ps[0], "recent", personal=True)
-    body = text.split("\n")[2:]
-    assert len(body) == 10
+    assert await _build_stats_section(db, ps[0], "recent", personal=True) is None
 
 
 async def test_unknown_section_alerts(db):
@@ -106,7 +106,7 @@ async def test_public_profile_has_section_buttons_and_no_growth(db):
 
 async def test_public_section_opens_and_goes_back_to_profile(db):
     ps = await _club_with_history(db, players=6, matches=120)
-    cb = _callback(ps[1].telegram_id, f"pstat_{ps[0].id}_recent")
+    cb = _callback(ps[1].telegram_id, f"pstat_{ps[0].id}_rating")
     await show_player_stats_section(cb, db)
 
     text = cb.message.edit_text.await_args.args[0]
@@ -132,7 +132,7 @@ def test_stats_kb_without_sections_is_unchanged():
 
 def test_stats_kb_sections_two_per_row_first():
     kb = stats_kb(STATS_SECTIONS)
-    assert [len(r) for r in kb.inline_keyboard[:2]] == [2, 2]
+    assert [len(r) for r in kb.inline_keyboard[:2]] == [2, 1]   # 3 раздела: пара + одиночный
     assert kb.inline_keyboard[0][0].callback_data == "stat_sec_opp"
 
 
