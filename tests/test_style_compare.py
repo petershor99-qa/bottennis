@@ -24,10 +24,11 @@ def _radar(**over) -> dict[str, float]:
 
 
 def _neutral(**over) -> dict[str, float]:
-    """Радар, на котором ни один архетип не срабатывает (все оси в «серой зоне»)."""
+    """Радар, на котором ни один архетип не срабатывает (все оси в «серой зоне»
+    новых порогов v2.154.0) — архетип «Универсал»."""
     base = {
-        "Винрейт": 50.0, "Клатч": 45.0, "Дожимание": 50.0,
-        "Камбэки": 5.0, "Доминирование": 58.0, "Стабильность": 60.0,
+        "Винрейт": 50.0, "Клатч": 45.0, "Дожимание": 72.0,
+        "Камбэки": 5.0, "Доминирование": 55.0, "Стабильность": 60.0,
     }
     base.update(over)
     return base
@@ -61,7 +62,7 @@ def test_caption_summary_and_bold_leader():
 def test_caption_identical_styles_say_so():
     text = _style_comparison_caption("Боб", _neutral(), _neutral())
     assert "почти одинаковые" in text
-    assert "🏷" not in text  # архетипа нет ни у кого — строку не показываем
+    assert "Ты — <b>Универсал</b>, Боб — <b>Универсал</b>" in text  # у обоих нейтральный
     assert "сильнее" not in text.replace("почти", "")
 
 
@@ -73,7 +74,7 @@ def test_caption_escapes_opponent_name():
 
 def test_caption_shows_archetypes_when_present():
     text = _style_comparison_caption("Боб", _neutral(Винрейт=80.0), _neutral())
-    assert "Ты — <b>Терминатор</b>, Боб — <b>—</b>" in text
+    assert "Ты — <b>Терминатор</b>, Боб — <b>Универсал</b>" in text
 
 
 def test_caption_worst_case_fits_photo_caption_limit():
