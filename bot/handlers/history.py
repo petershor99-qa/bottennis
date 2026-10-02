@@ -674,10 +674,6 @@ async def show_my_matches(callback: CallbackQuery, session: AsyncSession):
     for m in my_matches:
         opp = m.challenged if m.challenger_id == player.id else m.challenger
         builder.row(InlineKeyboardButton(
-            text=f"📋 Внести результат — vs {opp.display_name}",
-            callback_data=f"report_{m.id}",
-        ))
-        builder.row(InlineKeyboardButton(
             text=f"❌ Отменить — vs {opp.display_name}",
             callback_data=f"cancel_match_{m.id}",
         ))

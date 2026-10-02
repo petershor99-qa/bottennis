@@ -7,36 +7,28 @@ from aiogram.filters import Command, CommandStart
 from aiogram.filters.command import CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from bot.db.models import Match, MatchStatus, Player
+from bot.db.models import Player
 from bot.keyboards.inline import back_to_menu_kb, help_kb, main_menu_kb, main_reply_kb
 from bot.services.achievements import ACHIEVEMENTS_LIST
-from bot.utils import MSK_OFFSET, cb_msg, compute_ranks, env_int, format_rank, get_match_counts, get_player, msg_user
+from bot.utils import (
+    MSK_OFFSET,
+    cb_msg,
+    compute_ranks,
+    env_int,
+    format_rank,
+    get_active_match,
+    get_match_counts,
+    get_player,
+    msg_user,
+)
 
 router = Router()
 
 INVITE_CODE = os.getenv("INVITE_CODE", "")
 ADMIN_ID = env_int("ADMIN_ID")
-
-
-async def _active_matches_for(session: AsyncSession, player: Player) -> list:
-    """Возвращает [(match_id, opponent_name), ...] активных матчей игрока."""
-    r = await session.execute(
-        select(Match)
-        .where(
-            or_(Match.challenger_id == player.id, Match.challenged_id == player.id),
-            Match.status == MatchStatus.accepted,
-        )
-        .options(selectinload(Match.challenger), selectinload(Match.challenged))
-    )
-    result = []
-    for m in r.scalars().all():
-        opponent = m.challenged if m.challenger_id == player.id else m.challenger
-        result.append((m.id, opponent.display_name))
-    return result
 
 
 # ── /start ────────────────────────────────────────────────────────────────────
@@ -59,13 +51,16 @@ async def cmd_start(message: Message, command: CommandObject, session: AsyncSess
             players_all, await get_match_counts(session),
             champion_id=champion.id if champion else None,
         )
-        active = await _active_matches_for(session, player)
-        active_hint = "\n\n⚔️ <b>Есть активный матч!</b> Внеси результат ниже 👇" if active else ""
+        active = await get_active_match(session, player.id)
+        active_hint = (
+            "\n\n⚔️ <b>Есть активный матч!</b> Просто напиши счёт сюда: <code>11:7 9:11</code>"
+            if active else ""
+        )
         sent = await message.answer(
             f"Привет, <b>{h(player.display_name)}</b>! 🏓\n"
             f"Рейтинг: <b>{round(player.rating, 1)}</b> pts — {format_rank(ranks, player.id)}"
             f"{active_hint}",
-            reply_markup=main_menu_kb(active_matches=active),
+            reply_markup=main_menu_kb(),
         )
         player.last_menu_message_id = sent.message_id
         await session.commit()
@@ -142,14 +137,14 @@ RATING_HELP_TEXT = (
     "• Рейтинг не опускается ниже 1000 у новичков и 900 у ветеранов"
 )
 
-@router.message(Command("help"))
-async def cmd_help(message: Message):
-    await message.answer(
+def _help_text() -> str:
+    return (
         "🏓 <b>Справка bottennis</b>\n\n"
         "<b>Команды:</b>\n"
         "/start — главное меню\n"
         "/cancel — отменить текущее действие\n"
         "/help — эта справка\n"
+        "/name — сменить имя в боте (например: /name Пётр)\n"
         "/feedback — отправить идею или баг напрямую разработчику\n\n"
         "<b>Быстрый доступ:</b> кнопки под строкой ввода (🏓 Вызвать на матч / "
         "📊 Рейтинг / 📈 Статистика) — доступны всегда, не нужно открывать меню\n\n"
@@ -162,9 +157,9 @@ async def cmd_help(message: Message):
         "• ⚔️ Реванш — кнопка сразу после матча\n\n"
         "<b>Экраны:</b>\n"
         "• 📊 Рейтинг — таблица с ▲▼ за неделю, винрейтом и сериями 🔥\n"
-        "• 🏆 Рекорды клуба и ⚔️ Матрица доминирования — кнопки на экране рейтинга\n"
-        "• 📅 Сегодня — кто сколько сыграл за день\n"
-        "• 🎯 Рекомендации — активные матчи клуба и «С кем сыграть?» с рекомендациями\n"
+        "• 🏆 Рекорды клуба и ⚔️ Кто кого бьёт — кнопки на экране рейтинга\n"
+        "• 📅 Сегодня в клубе — кто сколько сыграл за день и все матчи со счётом\n"
+        "• 🎯 С кем сыграть? — активные матчи клуба и рекомендации соперников\n"
         "• 📈 Статистика — форма за 7 дней, серии, цель-ачивка, 📊 график рейтинга\n"
         "• 🆚 Личные встречи (H2H) — в профиле игрока\n"
         f"• 🏅 Достижения — {len(ACHIEVEMENTS_LIST)} ачивок с отсылками к играм и мемам\n\n"
@@ -177,9 +172,49 @@ async def cmd_help(message: Message):
         "• 📅 Итоги дня — каждый вечер в 21:30 МСК (топ дня + «матч дня»)\n"
         "• 📊 Итоги недели — понедельник 9:00, итоги месяца — 1-го числа в 10:00\n"
         "• 🔔 Любую из них можно отключить — кнопка «Рассылки» ниже\n\n"
-        + RATING_HELP_TEXT,
-        reply_markup=help_kb(),
+        + RATING_HELP_TEXT
     )
+
+
+@router.message(Command("help"))
+async def cmd_help(message: Message):
+    await message.answer(_help_text(), reply_markup=help_kb())
+
+
+@router.callback_query(F.data == "menu_help")
+async def show_help_from_menu(callback: CallbackQuery):
+    """Справка по кнопке «❓ Справка» главного меню (v2.148.0) — /help никто не
+    открывал, и справка с «🔔 Рассылки» оставалась практически спрятанной."""
+    await callback.answer()
+    await cb_msg(callback).edit_text(_help_text(), reply_markup=help_kb())
+
+
+# ── /name ─────────────────────────────────────────────────────────────────────
+
+NAME_MAX_LEN = 32
+
+
+@router.message(Command("name"))
+async def cmd_name(message: Message, command: CommandObject, session: AsyncSession):
+    """Смена имени в боте (v2.148.0). display_name берётся из Телеграма один раз при
+    регистрации и дальше не обновлялся — игрок, сменивший имя, оставался в рейтинге
+    под старым. Имя экранируется при показе (h()), поэтому HTML в нём безвреден."""
+    player = await get_player(session, msg_user(message).id)
+    if not player:
+        await message.answer("Сначала напиши /start")
+        return
+    new_name = " ".join((command.args or "").split())   # схлопываем пробелы/переводы строк
+    if not new_name:
+        await message.answer(
+            "Напиши новое имя прямо в команде:\n<code>/name Пётр</code>"
+        )
+        return
+    if len(new_name) > NAME_MAX_LEN:
+        await message.answer(f"Имя слишком длинное — не больше {NAME_MAX_LEN} символов.")
+        return
+    player.display_name = new_name
+    await session.commit()
+    await message.answer(f"✅ Имя изменено: <b>{h(new_name)}</b>")
 
 
 # ── /feedback ──────────────────────────────────────────────────────────────────

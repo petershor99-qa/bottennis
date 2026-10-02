@@ -140,6 +140,20 @@ def _match_line(m: Match, player_id: int) -> str:
     return f"{icon} {date_str} vs {h(opponent.display_name)}{sets_str}{delta_str}"
 
 
+def match_log_line(m: Match, challenger_name: str, challenged_name: str) -> str:
+    """Строка общего лога матчей клуба: «Имя vs Имя  счёт», победитель жирным,
+    при ничьей 🤝 (v2.148.0 — общая для итогов дня и экрана «Сегодня в клубе»).
+    Счёт — в перспективе challenger (match_score_challenger_first)."""
+    mch, mcd = h(challenger_name), h(challenged_name)
+    if m.winner_id == m.challenger_id:
+        pair = f"<b>{mch}</b> vs {mcd}"
+    elif m.winner_id == m.challenged_id:
+        pair = f"{mch} vs <b>{mcd}</b>"
+    else:
+        pair = f"{mch} vs {mcd} 🤝"
+    return f"{pair}  <i>{match_score_challenger_first(m)}</i>"
+
+
 def _ru_plural(n: int, one: str, few: str, many: str) -> str:
     """Русское склонение по числу: 1 → one, 2-4 → few, 5+/11-14 → many."""
     if 11 <= n % 100 <= 14:

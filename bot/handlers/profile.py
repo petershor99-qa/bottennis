@@ -34,7 +34,6 @@ from bot.services.stats import (
 from bot.utils import (
     NEWCOMER_THRESHOLD,
     _challenger_among,
-    _match_line,
     boss_fight_rematch_blocked,
     cb_data,
     cb_msg,
@@ -233,13 +232,18 @@ def _render_stats_lines(player, s: dict) -> list[str]:
 # callback_data — стабильная строка, не индекс.
 
 STATS_SECTIONS: list[tuple[str, str]] = [
-    ("opp", "🆚 Соперники"),
-    ("rating", "📈 Рейтинг"),
-    ("game", "🎮 Игра и советы"),
-    ("recent", "🕘 Последние матчи"),
+    ("opp", "🆚 С кем играю"),
+    ("rating", "📈 Рейтинг в цифрах"),
+    ("game", "🎮 Привычки и советы"),
 ]
 
-RECENT_MATCHES_ON_SECTION = 10
+# На чужом профиле «С кем играю» звучит неверно — от третьего лица (v2.148.0).
+# Раздел «Последние матчи» убран в v2.148.0: дублировал «📜 История матчей».
+OTHER_SECTION_TITLES: dict[str, str] = {"opp": "🆚 С кем играет"}
+
+
+def _section_title(key: str, title: str, personal: bool) -> str:
+    return title if personal else OTHER_SECTION_TITLES.get(key, title)
 
 
 def _section_lines(
@@ -265,8 +269,6 @@ def _section_lines(
                 lines.append("")
             lines.append(growth)
         return lines
-    if key == "recent":
-        return [_match_line(m, player.id) for m in all_matches[:RECENT_MATCHES_ON_SECTION]]
     return []
 
 
@@ -274,7 +276,7 @@ def _available_sections(
     player, s: dict, all_matches: list, include_growth: bool,
 ) -> list[tuple[str, str]]:
     return [
-        (key, title) for key, title in STATS_SECTIONS
+        (key, _section_title(key, title, include_growth)) for key, title in STATS_SECTIONS
         if _section_lines(key, player, s, all_matches, include_growth)
     ]
 
@@ -283,7 +285,7 @@ async def _build_stats_section(
     session: AsyncSession, player: Player, key: str, *, personal: bool,
 ) -> str | None:
     """Текст раздела статистики; None — раздела с таким ключом нет или он пуст."""
-    titles = dict(STATS_SECTIONS)
+    titles = {k: _section_title(k, t, personal) for k, t in STATS_SECTIONS}
     if key not in titles:
         return None
     all_matches = await get_career_matches(session, player.id, with_opponents=True)
@@ -403,7 +405,7 @@ async def _build_stats_screen(session: AsyncSession, player: Player):
         f"📈 <b>Статистика — {h(player.display_name)}</b>\n",
         f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — {rank_str}  🎖 {rank_title(player.rating)}",
         f"🏆 Побед: <b>{s['wins']}</b>{draws_part}  |  💔 Поражений: <b>{s['losses']}</b>",
-        f"📊 Матчи: <b>{s['win_rate']}%</b>  |  🎯 Партии: <b>{s['sets_win_rate']}%</b>",
+        f"📊 Винрейт: матчи <b>{s['win_rate']}%</b> · партии <b>{s['sets_win_rate']}%</b>",
     ]
     if mvp_id == player.id:
         lines.append("🌟 Ты MVP месяца!")
@@ -415,7 +417,10 @@ async def _build_stats_screen(session: AsyncSession, player: Player):
 
     legend_index, legend_rank, legend_total = await _legend_index_with_rank(session, player, players_all)
     lines.append("")
-    lines.append(f"🏵 Индекс легенды: <b>{legend_index}</b>  <i>(#{legend_rank} из {legend_total})</i>")
+    lines.append(
+        f"🏵 Индекс легенды: <b>{legend_index}</b>  <i>(#{legend_rank} из {legend_total})</i>"
+        f" — ачивки, рекорды, боссфайты"
+    )
 
     rank_gap = _rank_gap_line(player, players_all, ranks)
     throne_line = _throne_distance_line(
@@ -610,7 +615,7 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
         f"👤 <b>{h(player.display_name)}</b>\n",
         f"⭐ Рейтинг: <b>{round(player.rating, 1)}</b> pts — {rank_str}  🎖 {rank_title(player.rating)}",
         f"🏆 Побед: <b>{s['wins']}</b>{draws_part}  |  💔 Поражений: <b>{s['losses']}</b>",
-        f"📊 Винрейт: <b>{s['win_rate']}%</b>",
+        f"📊 Винрейт: матчи <b>{s['win_rate']}%</b> · партии <b>{s['sets_win_rate']}%</b>",
     ]
 
     form = _stats_groups(player, s)["form"]
@@ -620,7 +625,10 @@ async def show_player_profile(callback: CallbackQuery, session: AsyncSession):
 
     legend_index, legend_rank, legend_total = await _legend_index_with_rank(session, player, players_all)
     lines.append("")
-    lines.append(f"🏵 Индекс легенды: <b>{legend_index}</b>  <i>(#{legend_rank} из {legend_total})</i>")
+    lines.append(
+        f"🏵 Индекс легенды: <b>{legend_index}</b>  <i>(#{legend_rank} из {legend_total})</i>"
+        f" — ачивки, рекорды, боссфайты"
+    )
 
     rank_gap = _rank_gap_line(player, players_all, ranks)
     throne_line = _throne_distance_line(

@@ -7,6 +7,17 @@ from aiogram.types import TelegramObject
 from bot.db.database import async_session
 from bot.db.models import UsageEvent
 from bot.services.usage import normalize_action
+from bot.utils import CHALLENGE_BUTTON_LABELS
+
+# Кнопки постоянной клавиатуры (main_reply_kb) — обычные текстовые сообщения, не
+# callback'и, поэтому раньше не считались и открытия рейтинга/статистики/вызова
+# были занижены (v2.148.0). Пишем под теми же именами, что и инлайн-двойники, —
+# для /usage это один и тот же экран.
+REPLY_KEYBOARD_ACTIONS: dict[str, str] = {
+    "📊 Рейтинг": "menu_leaderboard",
+    "📈 Статистика": "menu_stats",
+    **{label: "menu_play" for label in CHALLENGE_BUTTON_LABELS},
+}
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +89,11 @@ class UsageMiddleware(BaseMiddleware):
     def _extract_raw_action(self, event: TelegramObject) -> str | None:
         if self.kind == "callback":
             return event.data
-        # kind == "command" — только реальные команды, прямой ввод счёта
-        # (например "11:7 9:11") молчаливо не считается.
+        # kind == "command" — реальные команды и кнопки постоянной клавиатуры;
+        # прямой ввод счёта (например "11:7 9:11") молчаливо не считается.
         text = event.text
-        return text if text and text.startswith("/") else None
+        if not text:
+            return None
+        if text.startswith("/"):
+            return text
+        return REPLY_KEYBOARD_ACTIONS.get(text)
