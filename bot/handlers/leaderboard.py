@@ -32,6 +32,7 @@ from bot.utils import (
     longest_champion_reign,
     match_drama_reason,
     match_drama_score,
+    match_log_line,
     match_rating_delta,
     match_report,
     match_score_challenger_first,
@@ -57,6 +58,13 @@ HALL_OF_FAME_PAGE_SIZE = 8
 
 
 # ── Leaderboard ───────────────────────────────────────────────────────────────
+
+# Расшифровка значков под таблицей (v2.148.0) — раньше нигде не объяснялась на экране
+LEADERBOARD_LEGEND = (
+    "👑 чемпион · 🗡 претендент · 🌟 MVP месяца · 🔥 серия 3+ побед · "
+    "❄️ не играл 7+ дней · ▲▼ место за неделю"
+)
+
 
 async def _build_leaderboard_screen(session: AsyncSession, telegram_id: int):
     """Строит (текст, клавиатуру) экрана «Рейтинг» — общая часть для
@@ -188,6 +196,7 @@ async def _build_leaderboard_screen(session: AsyncSession, telegram_id: int):
             f"  <i>({pluralize_matches(count)}, {wr}%)</i>{pos_str}"
         )
 
+    lines.append(f"\n<i>{LEADERBOARD_LEGEND}</i>")
     return "\n".join(lines), leaderboard_kb(players)
 
 
@@ -206,6 +215,10 @@ async def show_leaderboard_from_reply_kb(message: Message, session: AsyncSession
 
 
 # ── Today stats ───────────────────────────────────────────────────────────────
+
+TODAY_LOG_MAX = 30          # сколько последних матчей максимум в «Все матчи» на «Сегодня в клубе»
+TODAY_TEXT_BUDGET = 3500    # символов на весь экран — запас до лимита Telegram (4096)
+
 
 @router.callback_query(F.data == "menu_today")
 async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
@@ -226,7 +239,7 @@ async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
 
     if not matches:
         await cb_msg(callback).edit_text(
-            "📅 <b>Сегодня</b>\n\nМатчей пока не было. Первым сделай ход! 🏓",
+            "📅 <b>Сегодня в клубе</b>\n\nМатчей пока не было. Первым сделай ход! 🏓",
             reply_markup=back_to_stats_kb(),
         )
         return
@@ -260,7 +273,7 @@ async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
     inactive = [p for p in all_players if p.id not in stats]
 
     medals = ["🥇", "🥈", "🥉"]
-    lines = ["📅 <b>Сегодня</b>\n", f"⚡ Сыграно матчей: <b>{len(matches)}</b>"]
+    lines = ["📅 <b>Сегодня в клубе</b>\n", f"⚡ Сыграно матчей: <b>{len(matches)}</b>"]
 
     # Личный мини-итог зрителя — сразу под общим счётчиком
     viewer = await get_player(session, callback.from_user.id)
@@ -294,6 +307,25 @@ async def show_today_stats(callback: CallbackQuery, session: AsyncSession):
     if inactive:
         inactive_names = ", ".join(h(p.display_name) for p in inactive)
         lines.append(f"\n😴 Не играли: {inactive_names}")
+
+    # «Все матчи» (v2.148.0) — тот же лог со счётами, что в вечерних итогах дня,
+    # но доступный днём. По порядку игры (matches пришли desc). Показываем не больше
+    # TODAY_LOG_MAX последних и дополнительно режем самые старые, пока экран не
+    # уложится в TODAY_TEXT_BUDGET (длинные имена × много матчей) — лимит Telegram 4096.
+    chronological = list(reversed(matches))
+    shown = chronological[-TODAY_LOG_MAX:]
+    log_lines = [
+        match_log_line(m, m.challenger.display_name, m.challenged.display_name) for m in shown
+    ]
+    head_len = len("\n".join(lines)) + 120    # +120 — заголовок блока и запас
+    while log_lines and head_len + len("\n".join(log_lines)) > TODAY_TEXT_BUDGET:
+        log_lines.pop(0)
+    log_title = (
+        "📋 <b>Все матчи:</b>" if len(log_lines) == len(chronological)
+        else f"📋 <b>Все матчи</b> <i>(последние {len(log_lines)} из {len(chronological)})</i><b>:</b>"
+    )
+    lines.append(f"\n{log_title}")
+    lines.extend(log_lines)
 
     await cb_msg(callback).edit_text(
         "\n".join(lines),

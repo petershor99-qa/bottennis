@@ -488,7 +488,7 @@ async def _send_easter_eggs(
 
 def _restart_notice_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="🎯 Рекомендации", callback_data="menu_matches"))
+    b.row(InlineKeyboardButton(text="🎯 С кем сыграть?", callback_data="menu_matches"))
     return b.as_markup()
 
 
@@ -526,7 +526,7 @@ async def fsm_reset_notice(callback: CallbackQuery):
     await callback.answer()
     await cb_msg(callback).edit_text(
         "⚠️ Бот перезапускался, ввод результата сбросился.\n\n"
-        "Начни заново через «Внести результат» в 🎯 <b>Рекомендации</b>.",
+        "Начни заново: просто напиши счёт сюда, например <code>11:7 9:11</code>.",
         reply_markup=_restart_notice_kb(),
     )
 
@@ -715,11 +715,16 @@ async def handle_direct_score(message: Message, session: AsyncSession, state: FS
     if not active:
         return  # нет активного матча — молча игнорируем
     if len(active) > 1:
-        # Неоднозначно — у игрока несколько активных матчей
+        # Неоднозначно — у игрока несколько активных матчей (при правиле «один активный
+        # матч» не бывает; страховка для старых данных) — даём выбрать матч кнопкой
+        chooser = InlineKeyboardBuilder()
+        for m in active:
+            chooser.row(InlineKeyboardButton(
+                text=f"📋 Внести результат — матч №{m.id}", callback_data=f"report_{m.id}",
+            ))
         await message.answer(
-            "У тебя несколько активных матчей. "
-            "Выбери нужный через 🎯 <b>Рекомендации</b> → «📋 Внести результат».",
-            reply_markup=main_menu_kb(),
+            "У тебя несколько активных матчей. Выбери, для какого вносишь счёт:",
+            reply_markup=chooser.as_markup(),
         )
         return
     match = active[0]

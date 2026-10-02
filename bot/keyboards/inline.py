@@ -36,11 +36,10 @@ def main_reply_kb() -> ReplyKeyboardMarkup:
 
 
 def main_menu_kb(
-    active_matches: list | None = None, share_match_id: int | None = None,
-    rematch_opponent_id: int | None = None,
+    share_match_id: int | None = None, rematch_opponent_id: int | None = None,
 ) -> InlineKeyboardMarkup:
-    """Главное меню. Если переданы активные матчи [(match_id, opponent_name), ...],
-    сверху добавляются заметные кнопки «Внести результат» по каждому из них.
+    """Главное меню. Кнопки «Внести результат» убраны в v2.148.0: счёт пишут
+    прямо в чат (подсказка стоит на экране начала матча и в приветствии).
 
     share_match_id — если задан, сверху добавляется кнопка «Карточка победы».
     Нужно для уведомления победителю, когда счёт внёс проигравший — победитель
@@ -59,18 +58,13 @@ def main_menu_kb(
         b.row(InlineKeyboardButton(
             text="⚔️ Реванш", callback_data=f"rematch_{rematch_opponent_id}",
         ))
-    if active_matches:
-        for match_id, opponent_name in active_matches:
-            b.row(InlineKeyboardButton(
-                text=f"📋 Внести результат — vs {opponent_name}",
-                callback_data=f"report_{match_id}",
-            ))
     b.row(InlineKeyboardButton(text=random_challenge_button_label(), callback_data="menu_play"))
     b.row(InlineKeyboardButton(text="📊 Рейтинг", callback_data="menu_leaderboard"))
     b.row(
         InlineKeyboardButton(text="📈 Статистика", callback_data="menu_stats"),
-        InlineKeyboardButton(text="🎯 Рекомендации", callback_data="menu_matches"),
+        InlineKeyboardButton(text="🎯 С кем сыграть?", callback_data="menu_matches"),
     )
+    b.row(InlineKeyboardButton(text="❓ Справка", callback_data="menu_help"))
     return b.as_markup()
 
 
@@ -137,18 +131,18 @@ def stats_kb(sections: list[tuple[str, str]] | None = None) -> InlineKeyboardMar
     if sections:
         _section_rows(b, sections, "stat_sec_")
     b.row(
-        InlineKeyboardButton(text="📜 История", callback_data="history_0"),
-        InlineKeyboardButton(text="📊 График", callback_data="rating_chart"),
+        InlineKeyboardButton(text="📊 График рейтинга", callback_data="rating_chart"),
+        InlineKeyboardButton(text="🔥 Карта активности", callback_data="activity_heatmap_me"),
     )
     b.row(
-        InlineKeyboardButton(text="🔥 Активность", callback_data="activity_heatmap_me"),
-        InlineKeyboardButton(text="🎬 Обо мне", callback_data="career_recap"),
+        InlineKeyboardButton(text="🕸 Радар стиля", callback_data="style_radar"),
+        InlineKeyboardButton(text="🎬 Моя карьера", callback_data="career_recap"),
     )
     b.row(
         InlineKeyboardButton(text="🏅 Достижения", callback_data="my_achievements"),
-        InlineKeyboardButton(text="📅 Сегодня", callback_data="menu_today"),
+        InlineKeyboardButton(text="📜 История матчей", callback_data="history_0"),
     )
-    b.row(InlineKeyboardButton(text="🕸 Стиль", callback_data="style_radar"))
+    b.row(InlineKeyboardButton(text="📅 Сегодня в клубе", callback_data="menu_today"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
 
@@ -307,9 +301,8 @@ def players_list_kb(
                 text=f"{rank_str}{icon}{p.display_name}{badge}  ({round(p.rating)} pts)",
                 callback_data=f"challenge_{p.id}",
             ))
-    b.row(InlineKeyboardButton(text="« Назад", callback_data="back_to_menu"))
+    b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
-
 
 
 def active_match_kb(match_id: int) -> InlineKeyboardMarkup:
@@ -328,7 +321,6 @@ def busy_with_match_kb(match_id: int) -> InlineKeyboardMarkup:
     соперника), поэтому подсказка «просто напиши счёт» тут неуместна, нужен
     явный путь вперёд."""
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="📋 Внести результат сразу", callback_data=f"report_{match_id}"))
     b.row(InlineKeyboardButton(text="❌ Отменить матч", callback_data=f"cancel_match_{match_id}"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
@@ -360,12 +352,12 @@ def leaderboard_kb(players) -> InlineKeyboardMarkup:
     for i in range(0, len(btns), 2):
         b.row(*btns[i:i + 2])
     b.row(
-        InlineKeyboardButton(text="🏆 Рекорды", callback_data="club_records"),
-        InlineKeyboardButton(text="⚔️ Матрица", callback_data="dominance_matrix"),
+        InlineKeyboardButton(text="🏆 Рекорды клуба", callback_data="club_records"),
+        InlineKeyboardButton(text="⚔️ Кто кого бьёт", callback_data="dominance_matrix"),
     )
     b.row(
-        InlineKeyboardButton(text="🌡 Индекс", callback_data="form_index"),
-        InlineKeyboardButton(text="🏛 Трон", callback_data="hall_of_fame_0"),
+        InlineKeyboardButton(text="🌡 Кто в форме", callback_data="form_index"),
+        InlineKeyboardButton(text="🏛 Зал славы", callback_data="hall_of_fame_0"),
     )
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()
@@ -431,34 +423,40 @@ def player_profile_kb(
         if can_challenge:
             b.row(
                 InlineKeyboardButton(text="⚔️ Вызвать", callback_data=f"challenge_{player_id}"),
-                InlineKeyboardButton(text="🎲 Что если?", callback_data=f"what_if_{player_id}"),
+                InlineKeyboardButton(
+                    text="🎲 Сколько очков за матч", callback_data=f"what_if_{player_id}",
+                ),
             )
         else:
-            b.row(InlineKeyboardButton(text="🎲 Что если?", callback_data=f"what_if_{player_id}"))
+            b.row(InlineKeyboardButton(
+                text="🎲 Сколько очков за матч", callback_data=f"what_if_{player_id}",
+            ))
         b.row(
             InlineKeyboardButton(text="🆚 Личные встречи", callback_data=f"h2h_{player_id}_0"),
-            InlineKeyboardButton(text="🕸 Сравнить стили", callback_data=f"style_cmp_{player_id}"),
+            InlineKeyboardButton(text="🆚 Сравнить стили", callback_data=f"style_cmp_{player_id}"),
         )
     if sections:
         _section_rows(b, sections, f"pstat_{player_id}_")
-    b.row(InlineKeyboardButton(
-        text="📜 Вся история матчей",
-        callback_data=f"player_history_{player_id}_0",
-    ))
     b.row(
         InlineKeyboardButton(
             text="📊 График рейтинга",
             callback_data=f"player_chart_{player_id}",
         ),
         InlineKeyboardButton(
-            text="🕸 Стиль",
+            text="🕸 Радар стиля",
             callback_data=f"player_style_radar_{player_id}",
         ),
     )
-    b.row(InlineKeyboardButton(
-        text="🏅 Достижения",
-        callback_data=f"player_achievements_{player_id}",
-    ))
+    b.row(
+        InlineKeyboardButton(
+            text="🏅 Достижения",
+            callback_data=f"player_achievements_{player_id}",
+        ),
+        InlineKeyboardButton(
+            text="📜 История матчей",
+            callback_data=f"player_history_{player_id}_0",
+        ),
+    )
     b.row(InlineKeyboardButton(text="« К рейтингу", callback_data="menu_leaderboard"))
     return b.as_markup()
 
@@ -481,7 +479,7 @@ def h2h_kb(
         b.row(*nav)
     if can_challenge:
         b.row(InlineKeyboardButton(text="⚔️ Вызвать", callback_data=f"challenge_{player_id}"))
-    b.row(InlineKeyboardButton(text="🕸 Сравнить стили", callback_data=f"style_cmp_{player_id}"))
+    b.row(InlineKeyboardButton(text="🆚 Сравнить стили", callback_data=f"style_cmp_{player_id}"))
     b.row(InlineKeyboardButton(text="« К профилю", callback_data=f"player_profile_{player_id}"))
     return b.as_markup()
 

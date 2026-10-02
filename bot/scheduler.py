@@ -41,6 +41,7 @@ from bot.utils import (
     get_active_match,
     get_champion,
     get_match_counts,
+    match_log_line,
     match_rating_delta,
     match_report,
     match_score_challenger_first,
@@ -317,7 +318,7 @@ def _compute_player_form(matches: Sequence) -> dict[int, list[str]]:
 # участников от новых вызовов, а не просто «висит незамеченным», как раньше.
 # Это больше не вовлекающий пуш ради вовлечения (что запрещено принципом «без
 # вовлекающих уловок») — это уведомление о реальном затыке, у которого есть
-# конкретное действие («Внести результат сразу» / «Отменить»).
+# конкретное действие (с v2.148.0 только «Отменить»; счёт пишут текстом).
 
 async def send_match_reminders(bot: Bot) -> None:
     """Раз в час ищет принятые матчи старше 24 часов и напоминает игрокам."""
@@ -351,7 +352,7 @@ async def send_match_reminders(bot: Bot) -> None:
                     f"У тебя с <b>{h(opponent.display_name)}</b> есть незавершённый матч "
                     f"уже больше 24 часов.\n"
                     f"Пока он не завершён, вы оба не можете вызвать никого другого — "
-                    f"сыграйте и внесите результат! 🏓",
+                    f"сыграйте и напишите счёт сюда: <code>11:7 9:11 11:5</code> 🏓",
                     reply_markup=busy_with_match_kb(match.id),
                 )
 
@@ -852,16 +853,9 @@ async def send_daily_summary(bot: Bot) -> None:
         # счёт в перспективе challenger, победитель жирным.
         log_lines = ["\n📋 <b>Все матчи:</b>"]
         for m in matches:
-            mch = h(name_map.get(m.challenger_id, "?"))
-            mcd = h(name_map.get(m.challenged_id, "?"))
-            score = match_score_challenger_first(m)
-            if m.winner_id == m.challenger_id:
-                pair = f"<b>{mch}</b> vs {mcd}"
-            elif m.winner_id == m.challenged_id:
-                pair = f"{mch} vs <b>{mcd}</b>"
-            else:
-                pair = f"{mch} vs {mcd} 🤝"
-            log_lines.append(f"{pair}  <i>{score}</i>")
+            log_lines.append(match_log_line(
+                m, name_map.get(m.challenger_id, "?"), name_map.get(m.challenged_id, "?"),
+            ))
         lines.append("\n".join(log_lines))
 
         text = "\n".join(lines)

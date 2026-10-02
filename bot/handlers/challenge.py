@@ -70,7 +70,8 @@ async def _build_challenge_screen(session: AsyncSession, telegram_id: int):
             opp = opp_r.scalar_one()
             return (
                 f"⚔️ У тебя уже есть активный матч с <b>{h(opp.display_name)}</b>.\n"
-                f"Заверши его, чтобы вызвать нового соперника.",
+                f"Заверши его, чтобы вызвать нового соперника.\n"
+                f"📋 Напиши счёт сюда: <code>11:7 9:11 11:5</code>",
                 busy_with_match_kb(my_active.id),
             )
 
@@ -259,7 +260,8 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
             await callback.answer()
             await cb_msg(callback).edit_text(
                 f"⚔️ У тебя уже есть активный матч с <b>{h(busy_opp.display_name)}</b>.\n"
-                f"Заверши его, чтобы вызвать нового соперника.",
+                f"Заверши его, чтобы вызвать нового соперника.\n"
+                f"📋 Напиши счёт сюда: <code>11:7 9:11 11:5</code>",
                 reply_markup=busy_with_match_kb(my_active.id),
             )
             return
