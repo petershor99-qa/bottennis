@@ -1357,85 +1357,140 @@ def _radar(**overrides) -> dict:
 
 # ── _style_archetype ──────────────────────────────────────────────────────────
 
-def test_archetype_none_when_nothing_stands_out():
-    from bot.services.stats import _style_archetype
-    assert _style_archetype(_radar()) is None
+def _arch_radar(**overrides) -> dict:
+    """Нейтральный радар для архетипов (v2.154.0): все оси в «серой зоне» новых порогов."""
+    base = {
+        "Винрейт": 50.0, "Клатч": 45.0, "Дожимание": 72.0,
+        "Камбэки": 3.0, "Доминирование": 55.0, "Стабильность": 60.0,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_archetype_neutral_universal_when_nothing_stands_out():
+    """Нет сработавшей оси — «Универсал» (v2.154.0), а не пустота."""
+    from bot.services.stats import NEUTRAL_ARCHETYPE, _style_archetype
+    assert NEUTRAL_ARCHETYPE == "Универсал"
+    assert _style_archetype(_arch_radar()) == "Универсал"
 
 
 def test_archetype_terminator_high_win_rate():
     from bot.services.stats import _style_archetype
-    assert _style_archetype(_radar(**{"Винрейт": 75.0})) == "Терминатор"
+    assert _style_archetype(_arch_radar(**{"Винрейт": 75.0})) == "Терминатор"
 
 
 def test_archetype_steel_nerves_high_clutch():
     from bot.services.stats import _style_archetype
-    assert _style_archetype(_radar(**{"Клатч": 70.0})) == "Нервы стальные"
+    assert _style_archetype(_arch_radar(**{"Клатч": 70.0})) == "Нервы стальные"
 
 
 def test_archetype_finisher_high_conversion():
     from bot.services.stats import _style_archetype
-    assert _style_archetype(_radar(**{"Дожимание": 90.0})) == "Финишер"
+    assert _style_archetype(_arch_radar(**{"Дожимание": 90.0})) == "Финишер"
 
 
-def test_archetype_finisher_not_triggered_below_raised_threshold():
-    """Порог поднят с 70 до 85 в v2.130.0 — 80% конверсии больше не архетип,
-    это близко к структурной базе для любого игрока в формате до 2 побед."""
+def test_archetype_finisher_threshold_is_80():
+    """Порог «Финишера»: 70 (было) -> 85 (v2.130.0) -> 80 (v2.154.0, по реальным данным клуба:
+    у лучших 81-100%, у остальных 62-72%)."""
     from bot.services.stats import _style_archetype
-    assert _style_archetype(_radar(**{"Дожимание": 80.0})) is None
+    assert _style_archetype(_arch_radar(**{"Дожимание": 80.0})) == "Финишер"
+    assert _style_archetype(_arch_radar(**{"Дожимание": 79.0})) == "Универсал"
 
 
 def test_archetype_steamroller_high_dominance():
     from bot.services.stats import _style_archetype
-    assert _style_archetype(_radar(**{"Доминирование": 75.0})) == "Каток"
+    assert _style_archetype(_arch_radar(**{"Доминирование": 75.0})) == "Каток"
 
 
 # ── Архетипы-«лузеры» (v2.130.0) ────────────────────────────────────────────────
 
 def test_archetype_rating_donor_low_win_rate():
     from bot.services.stats import _style_archetype
-    assert _style_archetype(_radar(**{"Винрейт": 25.0})) == "Донор рейтинга"
+    assert _style_archetype(_arch_radar(**{"Винрейт": 25.0})) == "Донор рейтинга"
 
 
 def test_archetype_jitters_low_clutch():
     from bot.services.stats import _style_archetype
-    assert _style_archetype(_radar(**{"Клатч": 10.0})) == "Мандраж"
+    assert _style_archetype(_arch_radar(**{"Клатч": 10.0})) == "Мандраж"
 
 
 def test_archetype_fizzles_out_low_conversion():
     from bot.services.stats import _style_archetype
-    assert _style_archetype(_radar(**{"Дожимание": 10.0})) == "Сдувается"
+    assert _style_archetype(_arch_radar(**{"Дожимание": 10.0})) == "Сдувается"
 
 
-def test_archetype_point_of_no_return_zero_comebacks():
+def test_archetype_point_of_no_return_removed_zero_comebacks_are_neutral():
+    """«Точка невозврата» убрана в v2.154.0: в формате до 2 побед камбэков с 0:2 почти не
+    бывает, и ярлык доставался любому, кто просто не попадал в 0:2."""
+    from bot.services.stats import _ARCHETYPE_DESCRIPTIONS, _style_archetype
+    assert _style_archetype(_arch_radar(**{"Камбэки": 0.0})) == "Универсал"
+    assert "Точка невозврата" not in _ARCHETYPE_DESCRIPTIONS
+
+
+def test_archetype_phoenix_threshold_is_8():
     from bot.services.stats import _style_archetype
-    assert _style_archetype(_radar(**{"Камбэки": 0.0})) == "Точка невозврата"
+    assert _style_archetype(_arch_radar(**{"Камбэки": 8.0})) == "Феникс"
+    assert _style_archetype(_arch_radar(**{"Камбэки": 7.0})) == "Универсал"
 
 
-def test_archetype_point_of_no_return_not_triggered_above_zero():
+def test_archetype_new_thresholds_boundaries():
     from bot.services.stats import _style_archetype
-    assert _style_archetype(_radar(**{"Камбэки": 5.0})) is None
+    assert _style_archetype(_arch_radar(**{"Доминирование": 60.0})) == "Каток"
+    assert _style_archetype(_arch_radar(**{"Доминирование": 59.0})) == "Универсал"
+    assert _style_archetype(_arch_radar(**{"Клатч": 55.0})) == "Нервы стальные"
+    assert _style_archetype(_arch_radar(**{"Стабильность": 75.0})) == "Метроном"
+    # нижние пороги включительно (<=): значение ровно на пороге — уже архетип
+    assert _style_archetype(_arch_radar(**{"Винрейт": 35.0})) == "Донор рейтинга"
+    assert _style_archetype(_arch_radar(**{"Винрейт": 36.0})) == "Универсал"
+    assert _style_archetype(_arch_radar(**{"Дожимание": 65.0})) == "Сдувается"
+    assert _style_archetype(_arch_radar(**{"Дожимание": 66.0})) == "Универсал"
+
+
+def test_archetypes_calibrated_on_real_club_data_give_variety():
+    """Регрессия калибровки (2026-10-02): радары 7 реальных игроков клуба (обезличены) дают
+    разные ярлыки, а не «все Доноры/Терминаторы/пусто» (Винрейт, Клатч, Дожимание, Камбэки,
+    Доминирование, Стабильность)."""
+    from bot.services.stats import _style_archetype
+    club = [
+        ((46, 49, 71, 0, 57, 57), "Универсал"),
+        ((19, 36, 62, 0, 56, 78), "Донор рейтинга"),
+        ((41, 46, 83, 6, 58, 55), "Финишер"),
+        ((40, 41, 72, 1, 60, 63), "Каток"),
+        ((68, 61, 81, 1, 58, 62), "Терминатор"),
+        ((82, 57, 95, 3, 61, 79), "Терминатор"),
+        ((5, 33, 100, 0, 54, 93), "Донор рейтинга"),
+    ]
+    axes = ["Винрейт", "Клатч", "Дожимание", "Камбэки", "Доминирование", "Стабильность"]
+    got = [_style_archetype(dict(zip(axes, map(float, vals), strict=True))) for vals, _ in club]
+    assert got == [exp for _, exp in club]
+    assert len(set(got)) >= 4        # не больше двух одинаковых ярлыков на семерых
+
+
+def test_universal_has_description():
+    from bot.services.stats import _archetype_description
+    assert _archetype_description("Универсал") == "ровный игрок: без явных перекосов по всех осям".replace("по всех", "по всем")
 
 
 def test_archetype_phoenix_high_comeback():
     from bot.services.stats import _style_archetype
-    assert _style_archetype(_radar(**{"Камбэки": 30.0})) == "Феникс"
+    assert _style_archetype(_arch_radar(**{"Камбэки": 30.0})) == "Феникс"
 
 
 def test_archetype_metronome_high_stability():
     from bot.services.stats import _style_archetype
-    assert _style_archetype(_radar(**{"Стабильность": 95.0})) == "Метроном"
+    assert _style_archetype(_arch_radar(**{"Стабильность": 95.0})) == "Метроном"
 
 
 def test_archetype_rollercoaster_low_stability():
     from bot.services.stats import _style_archetype
-    assert _style_archetype(_radar(**{"Стабильность": 10.0})) == "🎢 Американские горки"
+    assert _style_archetype(_arch_radar(**{"Стабильность": 10.0})) == "🎢 Американские горки"
 
 
 def test_archetype_picks_most_extreme_axis():
     """Если сработало несколько осей — побеждает та, что дальше всех за
     порогом, а не первая по порядку правил."""
     from bot.services.stats import _style_archetype
-    radar = _radar(**{"Винрейт": 65.0, "Камбэки": 50.0})  # +5 vs +30 за порогом
+    radar = _arch_radar(**{"Винрейт": 65.0, "Камбэки": 50.0})  # +5 vs +30 за порогом
     assert _style_archetype(radar) == "Феникс"
 
 
