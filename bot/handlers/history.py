@@ -255,7 +255,7 @@ async def _send_style_radar(
         except Exception:
             pass
 
-    archetype = _style_archetype(radar)
+    archetype = _style_archetype(radar, s)
     narrative = _build_style_narrative(radar, s)
     # Расшифровка каждой оси прямо под цифрами (v2.130.0, жалоба пользователя —
     # «Клатч 56%» ничего не объясняет без контекста) — построчно, в том же
@@ -333,6 +333,7 @@ async def show_style_comparison(callback: CallbackQuery, session: AsyncSession, 
         return
 
     radars = []
+    stats_pair = []
     for player, who in ((viewer, "У тебя"), (target, f"У {target.display_name}")):
         matches = await get_career_matches(session, player.id, with_opponents=True)
         if len(matches) < MIN_MATCHES_FOR_RADAR:
@@ -342,11 +343,13 @@ async def show_style_comparison(callback: CallbackQuery, session: AsyncSession, 
                 show_alert=True,
             )
             return
-        radar = _build_style_radar(_compute_player_stats(player, matches))
+        stats = _compute_player_stats(player, matches)
+        radar = _build_style_radar(stats)
         if radar is None:
             await callback.answer("Пока не сыграно ни одной партии.", show_alert=True)
             return
         radars.append(radar)
+        stats_pair.append(stats)
     radar_a, radar_b = radars
 
     chat_id = cb_msg(callback).chat.id
@@ -361,7 +364,9 @@ async def show_style_comparison(callback: CallbackQuery, session: AsyncSession, 
         sent = await bot.send_photo(
             chat_id,
             style_compare_url(viewer.display_name, radar_a, target.display_name, radar_b),
-            caption=_style_comparison_caption(target.display_name, radar_a, radar_b),
+            caption=_style_comparison_caption(
+                target.display_name, radar_a, radar_b, stats_pair[0], stats_pair[1],
+            ),
         )
         _last_radar_msg[chat_id] = sent.message_id
         await callback.answer()
