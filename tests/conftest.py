@@ -15,6 +15,7 @@
   добавила бы каждому тесту обязательный параметр в сигнатуре ради нуля
   выгоды.
 """
+import os
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -23,10 +24,18 @@ import pytest_asyncio
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
+from hypothesis import settings
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from bot.db.models import Base, Match, MatchStatus, Player
+
+# Property-тесты (tests/test_properties.py). В CI примеры фиксированы
+# (derandomize), чтобы прогон был воспроизводимым и не «мигал»; локально
+# hypothesis подбирает случайные и запоминает найденное в .hypothesis/.
+settings.register_profile("ci", derandomize=True, deadline=None, max_examples=200)
+settings.register_profile("dev", deadline=None, max_examples=100)
+settings.load_profile("ci" if os.getenv("CI") else "dev")
 
 
 @pytest_asyncio.fixture

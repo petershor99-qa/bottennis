@@ -135,6 +135,22 @@ class UsageEvent(Base):
     )
 
 
+class ClubRecordPing(Base):
+    """Журнал отправленных пингов «Рекорд клуба» (v2.157.0) — нужен только для
+    антиспама: один и тот же игрок по одному и тому же рекорду не чаще раза в
+    `PING_COOLDOWN_DAYS` дней (серия 12, 13, 14 подряд не должна слать сообщение
+    после каждой победы). Таблица создаётся `create_all`, миграция не нужна."""
+    __tablename__ = "club_record_pings"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(index=True)  # peak | streak | defense | duration
+    player_id: Mapped[int] = mapped_column(index=True)
+    value: Mapped[float]
+    pinged_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+
+
 class YearVote(Base):
     """Голос в номинации ежегодного голосования «Итоги года: неформальные
     звания» (v2.134.0, этап 3 дорожной карты). Одна строка на

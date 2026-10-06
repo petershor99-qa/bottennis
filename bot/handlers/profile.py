@@ -49,6 +49,7 @@ from bot.utils import (
     msg_user,
     pluralize_days,
     pluralize_matches,
+    rank_progress,
     rank_title,
 )
 
@@ -370,12 +371,24 @@ def _throne_distance_line(
     return None
 
 
-def _append_rank_and_throne_lines(lines: list[str], rank_gap: str | None, throne_line: str | None) -> None:
-    """Добавляет «до соседа»/«до трона» как отдельную группу — с пустой строкой
-    перед ней, как и остальные группы _render_stats_lines() (v2.99.0). Раньше
+def _rank_title_progress_line(rating: float) -> str | None:
+    """«До звания «Сеньор»: +23.4 рейтинга» (v2.157.0) — только личный экран.
+    У высшего звания строки нет: выше расти некуда."""
+    progress = rank_progress(rating)
+    if progress is None:
+        return None
+    title, left = progress
+    return f"🎖 До звания «{title}»: +{left:.1f} рейтинга"
+
+
+def _append_rank_and_throne_lines(
+    lines: list[str], rank_gap: str | None, throne_line: str | None, title_line: str | None = None,
+) -> None:
+    """Добавляет «до соседа»/«до трона»/«до звания» как отдельную группу — с пустой
+    строкой перед ней, как и остальные группы _render_stats_lines() (v2.99.0). Раньше
     строки добавлялись напрямую через lines.append() без разделителя и
     физически слипались с последней группой статистики."""
-    extra = [x for x in (rank_gap, throne_line) if x]
+    extra = [x for x in (rank_gap, throne_line, title_line) if x]
     if extra:
         lines.append("")
         lines.extend(extra)
@@ -431,7 +444,7 @@ async def _build_stats_screen(session: AsyncSession, player: Player):
     throne_line = _throne_distance_line(
         player, champion, challenger_player, s["wins"] + s["draws"] + s["losses"]
     )
-    _append_rank_and_throne_lines(lines, rank_gap, throne_line)
+    _append_rank_and_throne_lines(lines, rank_gap, throne_line, _rank_title_progress_line(player.rating))
 
     progress = _nearest_achievement_progress(player, s, len(players_all))
     if progress:

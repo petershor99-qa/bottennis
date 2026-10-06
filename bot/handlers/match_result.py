@@ -39,6 +39,7 @@ from bot.services.achievements import (
     notify_new_achievements,
     record_achievements_earned,
 )
+from bot.services.club_records import Snapshot, send_record_pings, snapshot_club_records
 from bot.services.personal_records import (
     check_personal_records_on_draw,
     check_personal_records_on_loss,
@@ -1127,6 +1128,25 @@ async def _notify_challenger_status_change(
         )
 
 
+async def _snapshot_records_safe(session: AsyncSession, match_id: int) -> Snapshot | None:
+    """Снимок рекордов клуба до матча. Сбой не должен мешать внесению результата:
+    пинг — украшение, а не часть учёта матча."""
+    try:
+        return await snapshot_club_records(session, exclude_match_id=match_id)
+    except Exception:
+        logger.exception("Не удалось снять снимок рекордов клуба")
+        return None
+
+
+async def _ping_records_safe(session: AsyncSession, bot: Bot, before: Snapshot | None) -> None:
+    if before is None:
+        return
+    try:
+        await send_record_pings(session, bot, before)
+    except Exception:
+        logger.exception("Не удалось отправить пинги рекордов клуба")
+
+
 @router.callback_query(F.data.startswith("confirm_"), MatchResultStates.confirming)
 async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: FSMContext, bot: Bot):
     try:
@@ -1181,6 +1201,9 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
 
     old_challenger_rating = challenger.rating
     old_challenged_rating = challenged.rating
+
+    # ── Снапшот рекордов клуба ДО матча — для пинга «Рекорд клуба» после коммита ─
+    records_before = await _snapshot_records_safe(session, match_id)
 
     # ── Снапшот претендента ДО матча — для анти-спам-сравнения после коммита ───
     champion_snapshot = await get_champion(session)
@@ -1455,7 +1478,12 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
     # Смена претендента — «обошёл чемпиона» / «Просран шанс» / «ПОТРАЧЕНО»
     await _notify_challenger_status_change(session, bot, match, challenger_before, challenger_before_id)
 
+    # Подтверждаем нажатие ДО рассылки пингов: рассылка идёт по игрокам по очереди
+    # и не должна держать кнопку «крутящейся».
     await callback.answer()
+
+    # Побит редкий рекорд клуба — пинг игрокам (см. services/club_records.py)
+    await _ping_records_safe(session, bot, records_before)
 
 
 # ── Карточка «поделиться победой» ────────────────────────────────────────────
