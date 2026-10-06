@@ -1478,10 +1478,12 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
     # Смена претендента — «обошёл чемпиона» / «Просран шанс» / «ПОТРАЧЕНО»
     await _notify_challenger_status_change(session, bot, match, challenger_before, challenger_before_id)
 
-    # Побит редкий рекорд клуба — пинг всем игрокам (см. services/club_records.py)
-    await _ping_records_safe(session, bot, records_before)
-
+    # Подтверждаем нажатие ДО рассылки пингов: рассылка идёт по игрокам по очереди
+    # и не должна держать кнопку «крутящейся».
     await callback.answer()
+
+    # Побит редкий рекорд клуба — пинг игрокам (см. services/club_records.py)
+    await _ping_records_safe(session, bot, records_before)
 
 
 # ── Карточка «поделиться победой» ────────────────────────────────────────────

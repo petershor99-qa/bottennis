@@ -2,17 +2,13 @@
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
 
-import pytest
 from sqlalchemy import select
 
 from bot.db.models import ClubRecordPing, Match, MatchStatus
 from bot.handlers.match_result import confirm_result
 from bot.services.club_records import (
     DEFENSE_MIN,
-    DURATION_MAX_MINUTES,
-    DURATION_MIN_MINUTES,
     KIND_DEFENSE,
-    KIND_DURATION,
     KIND_PEAK,
     KIND_STREAK,
     PEAK_STEP,
@@ -21,8 +17,6 @@ from bot.services.club_records import (
     RecordValue,
     best_win_streak,
     detect_record_breaks,
-    longest_match,
-    match_minutes,
     ping_text,
     send_record_pings,
     snapshot_club_records,
@@ -31,12 +25,12 @@ from bot.states.states import MatchResultStates
 from tests.conftest import _callback, _completed, _player, _state
 
 
-def _snap(peak=None, streak=None, defense=None, duration=None):
-    return {KIND_PEAK: peak, KIND_STREAK: streak, KIND_DEFENSE: defense, KIND_DURATION: duration}
+def _snap(peak=None, streak=None, defense=None):
+    return {KIND_PEAK: peak, KIND_STREAK: streak, KIND_DEFENSE: defense}
 
 
-def _rv(holder, value, extra=None):
-    return RecordValue(holder, float(value), extra)
+def _rv(holder, value):
+    return RecordValue(holder, float(value))
 
 
 # ── Пороги ────────────────────────────────────────────────────────────────────
@@ -67,55 +61,55 @@ def test_defense_floor():
     assert detect_record_breaks(_snap(defense=_rv(1, 2)), _snap(defense=_rv(2, DEFENSE_MIN)))
 
 
-def test_duration_floor_and_margin():
-    old = _snap(duration=_rv(1, 20, 2))
-    assert detect_record_breaks(old, _snap(duration=_rv(3, 25, 4))) == []              # ниже порога
-    old = _snap(duration=_rv(1, 40, 2))
-    assert detect_record_breaks(old, _snap(duration=_rv(3, 40.5, 4))) == []            # меньше минуты разницы
-    assert detect_record_breaks(old, _snap(duration=_rv(3, 45, 4)))[0].kind == KIND_DURATION
-
-
 def test_first_measurement_is_silent():
-    for kind_snap in (
-        _snap(peak=None), _snap(streak=None), _snap(defense=None), _snap(duration=None),
-    ):
+    for kind_snap in (_snap(peak=None), _snap(streak=None), _snap(defense=None)):
         assert detect_record_breaks(kind_snap, _snap(
-            peak=_rv(1, 1600), streak=_rv(1, 9), defense=_rv(1, 5), duration=_rv(1, 60, 2))) == []
+            peak=_rv(1, 1600), streak=_rv(1, 9), defense=_rv(1, 5))) == []
 
 
 def test_untouched_records_produce_nothing():
-    snap = _snap(peak=_rv(1, 1463), streak=_rv(2, 11), defense=_rv(3, 1), duration=_rv(4, 75, 5))
+    snap = _snap(peak=_rv(1, 1463), streak=_rv(2, 11), defense=_rv(3, 1))
     assert detect_record_breaks(snap, snap) == []
 
 
 # ── Подсчёт рекордов ──────────────────────────────────────────────────────────
 
-def test_match_minutes_ignores_forgotten_results():
-    m = Match(challenger_id=1, challenged_id=2, status=MatchStatus.completed)
-    m.accepted_at = datetime(2026, 6, 1, 12, 0)
-    m.completed_at = m.accepted_at + timedelta(minutes=20)
-    assert match_minutes(m) == 20
-    m.completed_at = m.accepted_at + timedelta(minutes=DURATION_MAX_MINUTES + 1)
-    assert match_minutes(m) is None
-    m.accepted_at = None
-    assert match_minutes(m) is None
-
-
-def test_longest_match_and_best_streak_helpers():
+def test_best_win_streak_helper():
     base = datetime(2026, 6, 1, 12, 0)
     a, b = _player(1, "A"), _player(2, "B")
     a.id, b.id = 1, 2
-    ms = []
-    for i in range(3):
-        m = _completed(a, b, a.id, 5.0, base + timedelta(days=i))
-        m.accepted_at = m.completed_at - timedelta(minutes=10 + i * 5)
-        ms.append(m)
+    ms = [_completed(a, b, a.id, 5.0, base + timedelta(days=i)) for i in range(3)]
     ms.append(_completed(a, b, b.id, 5.0, base + timedelta(days=5)))
-    longest = longest_match(ms)
-    assert longest is not None and longest.value == 20
     best = best_win_streak(ms)
     assert best is not None and best.holder_id == 1 and best.value == 3
-    assert best_win_streak([]) is None and longest_match([]) is None
+    assert best_win_streak([]) is None
+
+
+def test_best_win_streak_tie_goes_to_whoever_got_there_first():
+    base = datetime(2026, 6, 1, 12, 0)
+    a, b, c = _player(1, "A"), _player(2, "B"), _player(3, "C")
+    a.id, b.id, c.id = 1, 2, 3
+    ms = [
+        _completed(a, c, a.id, 5.0, base + timedelta(hours=1)),
+        _completed(a, c, a.id, 5.0, base + timedelta(hours=2)),
+        _completed(b, c, b.id, 5.0, base + timedelta(hours=3)),
+        _completed(b, c, b.id, 5.0, base + timedelta(hours=4)),
+    ]
+    best = best_win_streak(ms)
+    assert best is not None and best.holder_id == 1 and best.value == 2
+
+
+def test_draw_breaks_a_streak():
+    base = datetime(2026, 6, 1, 12, 0)
+    a, b = _player(1, "A"), _player(2, "B")
+    a.id, b.id = 1, 2
+    ms = [
+        _completed(a, b, a.id, 5.0, base),
+        _completed(a, b, None, 5.0, base + timedelta(hours=1)),
+        _completed(a, b, a.id, 5.0, base + timedelta(hours=2)),
+    ]
+    best = best_win_streak(ms)
+    assert best is not None and best.value == 1
 
 
 # ── Тексты ────────────────────────────────────────────────────────────────────
@@ -124,7 +118,7 @@ NAMES = {1: "Алиса", 2: "Боб <b>", 3: "Вика"}
 
 
 def test_peak_text():
-    text = ping_text(RecordBreak(KIND_PEAK, 1, 1500.4, None, 2, 1463.0), NAMES)
+    text = ping_text(RecordBreak(KIND_PEAK, 1, 1500.4, 2, 1463.0), NAMES)
     assert text == (
         "🏔 Рекорд клуба: <b>Алиса</b> дошёл до 1500.4. Выше в истории клуба никто не поднимался. "
         "Прошлый рекорд: Боб &lt;b&gt;, 1463.0."
@@ -132,7 +126,7 @@ def test_peak_text():
 
 
 def test_streak_text():
-    text = ping_text(RecordBreak(KIND_STREAK, 1, 12.0, None, 2, 11.0), NAMES)
+    text = ping_text(RecordBreak(KIND_STREAK, 1, 12.0, 2, 11.0), NAMES)
     assert text == (
         "🔥 Рекорд клуба: <b>Алиса</b> выиграл 12 матчей подряд. Длиннее серии в истории клуба не было. "
         "Прошлый рекорд: Боб &lt;b&gt;, 11."
@@ -140,18 +134,10 @@ def test_streak_text():
 
 
 def test_defense_text():
-    text = ping_text(RecordBreak(KIND_DEFENSE, 1, 3.0, None, 2, 2.0), NAMES)
+    text = ping_text(RecordBreak(KIND_DEFENSE, 1, 3.0, 2, 2.0), NAMES)
     assert text == (
         "🛡 Рекорд клуба: <b>Алиса</b> защитил трон 3 раза подряд. Дольше никто не держал. "
         "Прошлый рекорд: Боб &lt;b&gt;, 2."
-    )
-
-
-def test_duration_text_uses_correct_plural():
-    text = ping_text(RecordBreak(KIND_DURATION, 1, 75.4, 3, 2, 74.0), NAMES)
-    assert text == (
-        "⏱ Рекорд клуба: <b>Алиса</b> vs <b>Вика</b>, 75 минут. Дольше матча в клубе не было. "
-        "Прошлый рекорд: 74 минуты."
     )
 
 
@@ -177,7 +163,7 @@ async def test_snapshot_reflects_streak_and_ignores_excluded_match(db):
     last = (await db.execute(select(Match).order_by(Match.id.desc()))).scalars().first()
     snap2 = await snapshot_club_records(db, exclude_match_id=last.id)
     assert snap2[KIND_STREAK].value == 4          # у Боба всё ещё 4
-    assert snap[KIND_DEFENSE] is None and snap[KIND_DURATION] is None
+    assert snap[KIND_DEFENSE] is None
 
 
 async def test_send_record_pings_sends_to_everyone_once_then_cools_down(db):
@@ -261,10 +247,17 @@ async def test_confirm_result_survives_a_failing_snapshot(db, monkeypatch):
 
 def test_constants_are_the_agreed_ones():
     assert PEAK_STEP == 100 and STREAK_MIN == 5 and DEFENSE_MIN == 3
-    assert DURATION_MIN_MINUTES == 30 and DURATION_MAX_MINUTES == 120
 
 
-@pytest.mark.parametrize("n,word", [(31, "минута"), (32, "минуты"), (45, "минут"), (111, "минут")])
-def test_minutes_plural(n, word):
-    text = ping_text(RecordBreak(KIND_DURATION, 1, float(n), 3, 2, 30.0), NAMES)
-    assert f"{n} {word}." in text
+async def test_pings_go_only_to_players_with_matches(db):
+    alice, bob, carol = await _club_with_streak_record(db)
+    idle = _player(9, "Idle")
+    db.add(idle)
+    await db.commit()
+    before = await snapshot_club_records(db)
+    db.add(_completed(alice, carol, alice.id, 5.0, datetime(2026, 6, 3, 12, 0, 0)))
+    await db.commit()
+    bot = AsyncMock()
+    assert await send_record_pings(db, bot, before) == 1
+    recipients = {c.args[0] for c in bot.send_message.await_args_list}
+    assert idle.telegram_id not in recipients and len(recipients) == 3
