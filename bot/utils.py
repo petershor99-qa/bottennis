@@ -267,6 +267,21 @@ def rank_title(rating: float) -> str:
     return RANK_TITLE_TOP
 
 
+def rank_progress(rating: float) -> tuple[str, float] | None:
+    """(следующее звание, сколько рейтинга осталось до него) или None у высшего.
+
+    Остаток считается в десятых долях через `rating_tenths` — прямое вычитание
+    float давало бы «23.400000000000091» и неверное округление вверх. Остаток
+    не меньше 0.1: у игрока с рейтингом чуть ниже границы (до округления до
+    одного знака) звание ещё прежнее, и «+0.0» выглядело бы как ошибка."""
+    for i, (threshold, _title) in enumerate(RANK_TITLE_BANDS):
+        if rating < threshold:
+            next_title = RANK_TITLE_BANDS[i + 1][1] if i + 1 < len(RANK_TITLE_BANDS) else RANK_TITLE_TOP
+            left_tenths = max(1, threshold * 10 - rating_tenths(rating))
+            return next_title, left_tenths / 10
+    return None
+
+
 def pluralize_points(n: int) -> str:
     """1 очко / 2 очка / 5 очков"""
     return _ru_plural(n, "очко", "очка", "очков")
