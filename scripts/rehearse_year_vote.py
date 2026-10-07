@@ -11,7 +11,8 @@ import os
 import re
 import sys
 import tempfile
-from datetime import datetime as RealDT, timedelta, timezone
+from datetime import datetime as RealDT
+from datetime import timedelta, timezone
 from types import SimpleNamespace
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -257,7 +258,6 @@ async def main():
             ("ЗАПИСЬ: голос (yv_pick_gentleman_X)", f"yv_pick_gentleman_{P['bob']}"),
             ("ЗАПИСЬ: смена голоса", f"yv_pick_gentleman_{P['carol']}"),
         ]:
-            action = "yv_open" if data == "yv_open" else ("yv_nom_" if data.startswith("yv_nom") else "yv_pick_")
             from bot.services.usage import normalize_action
             norm = normalize_action(data)
             before = await usage_count(norm)
