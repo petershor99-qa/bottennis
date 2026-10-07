@@ -2,9 +2,9 @@
 name: release
 description: >
   Drives the full ship-a-feature workflow for the bottennis Telegram bot repo
-  (F:\projects\bottenis): run tests+lint, open/merge the feature PR into develop,
+  (repo root = wherever `git rev-parse --show-toplevel` points; works on any computer): run tests+lint, open/merge the feature PR into develop,
   sync RELEASE_NOTES.md/README.md/TESTING.md/CLAUDE.md, open/merge the develop->main
-  release PR, verify the deploy actually landed on the VPS over SSH, and record that
+  release PR, verify the deploy via the GitHub Actions `deploy` job (and optionally on the VPS over SSH), and record that
   in CLAUDE.md. Use this whenever work in this repo is ready to ship: the user says
   "запушь", "смёржи", "открой PR", "задеплой", "готово, давай в прод", "проверь что
   задеплоилось", or you yourself have just finished implementing a feature and the
@@ -44,6 +44,17 @@ place yourself:
 - Docs already synced, ready for prod → skip to step 5.
 - User just said "задеплоил"/"проверь" after a main merge → jump straight to step 9.
 
+## Autonomy (read first)
+
+The user decided on 2026-10-07 that releases to prod need **no approval** from
+them. Run every step yourself and do not stop to ask. The only conditions:
+green CI (lint + pytest), a verified `deploy: success`, the **deploy freeze
+15-31 December** (voting and year summary; do not merge to `main` in that
+window unless the user explicitly says so in chat), no secrets in the repo or
+the output. If something fails, fix the cause; never bypass it (`--no-verify`,
+`--force`, disabling checks).
+
+
 ## Step 1 — Tests and lint gate everything
 
 ```bash
@@ -67,7 +78,7 @@ Then:
 git add -A
 git commit -m "feat: <what, in Russian, matching the project's existing commit style>
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 git push -u origin feature/<name>
 ```
 Match the terse, factual commit-message tone already in `git log` — no marketing
@@ -157,7 +168,7 @@ goes straight to develop):
 ```bash
 git add -A && git commit -m "docs: <version> release notes и синхронизация доков
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 git push origin develop
 ```
 
@@ -226,6 +237,16 @@ git fetch origin
 git log origin/main -1 --oneline
 ```
 
+Primary check (needs no credentials): the deploy job of the run triggered by
+the merge:
+```bash
+gh run list --branch main --limit 1 --json databaseId,status,conclusion
+gh run view <id> --json status,conclusion,jobs --jq '{s:.status,c:.conclusion,jobs:[.jobs[]|{n:.name,c:.conclusion}]}'
+```
+Wait for `status: completed` and `deploy: success` (about 2 minutes after the
+merge). That is enough to call the release deployed; the SSH check below is
+optional extra confidence.
+
 ## Step 9 — Verify on the VPS over SSH
 
 Pull the VPS host/user/password from your memory for this project (never from a
@@ -263,7 +284,7 @@ version with today's date, commit and push directly to `develop`:
 ```bash
 git add -A && git commit -m "docs: подтверждён деплой vX.Y.Z в прод
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 git push origin develop
 ```
 
