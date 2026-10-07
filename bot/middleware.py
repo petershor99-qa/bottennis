@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any, Awaitable, Callable
 
@@ -20,6 +21,9 @@ REPLY_KEYBOARD_ACTIONS: dict[str, str] = {
 }
 
 logger = logging.getLogger(__name__)
+
+_WRITE_ATTEMPTS = 4
+_WRITE_RETRY_DELAY = 0.15  # секунд между попытками записи события
 
 
 class DatabaseMiddleware(BaseMiddleware):
@@ -46,9 +50,17 @@ class UsageMiddleware(BaseMiddleware):
 
     Пишет в СВОЮ отдельную сессию (`async_session()` напрямую, не
     `data["session"]` хендлера) — откат транзакции хендлера не должен терять
-    событие, а сбой записи события не должен ронять хендлер. Запись — после
-    вызова хендлера, в `finally`, любая ошибка глотается (только
-    `logger.warning`): счётчик никогда не должен ломать бота.
+    событие, а сбой записи события не должен ронять хендлер. Любая ошибка
+    глотается (только `logger.warning`): счётчик никогда не должен ломать бота.
+
+    Запись идёт ФОНОВОЙ задачей, а не `await` внутри `finally` (v2.157.2).
+    UsageMiddleware — внутренний, а DatabaseMiddleware коммитит транзакцию
+    хендлера только после него. SQLite допускает одного писателя, поэтому
+    синхронная запись события во второй сессии ждала блокировку, которую
+    держит сама же обрабатываемая транзакция, и упиралась в busy-timeout
+    (~5 с): кнопки с записью (голос, вызов, результат) отвечали с задержкой,
+    событие терялось. Фоновая задача стартует независимо и успевает после
+    коммита; при занятой БД пробует ещё несколько раз с короткой паузой.
 
     Регистрируется ДВАЖДЫ в main.py с разным `kind` — на `dp.callback_query`
     (kind="callback") и на `dp.message` (kind="command") — вместо одной
@@ -60,6 +72,14 @@ class UsageMiddleware(BaseMiddleware):
         if kind not in ("callback", "command"):
             raise ValueError(f"Неизвестный kind для UsageMiddleware: {kind!r}")
         self.kind = kind
+        # Ссылки на фоновые записи: без них event loop может собрать задачу
+        # до завершения (asyncio хранит на задачи только слабые ссылки).
+        self._pending: set[asyncio.Task] = set()
+
+    async def drain(self) -> None:
+        """Дождаться всех фоновых записей — для тестов и корректной остановки."""
+        while self._pending:
+            await asyncio.gather(*list(self._pending), return_exceptions=True)
 
     async def __call__(
         self,
@@ -70,21 +90,32 @@ class UsageMiddleware(BaseMiddleware):
         try:
             return await handler(event, data)
         finally:
-            await self._record(event)
+            self._schedule_record(event)
 
-    async def _record(self, event: TelegramObject) -> None:
+    def _schedule_record(self, event: TelegramObject) -> None:
         raw_action = self._extract_raw_action(event)
         if raw_action is None:
             return
         user = getattr(event, "from_user", None)
         if user is None:
             return
-        try:
-            async with async_session() as session:
-                session.add(UsageEvent(user_id=user.id, action=normalize_action(raw_action)))
-                await session.commit()
-        except Exception:
-            logger.warning("Не удалось записать событие использования", exc_info=True)
+        task = asyncio.create_task(self._write(user.id, normalize_action(raw_action)))
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
+
+    @staticmethod
+    async def _write(user_id: int, action: str) -> None:
+        for attempt in range(_WRITE_ATTEMPTS):
+            try:
+                async with async_session() as session:
+                    session.add(UsageEvent(user_id=user_id, action=action))
+                    await session.commit()
+                return
+            except Exception:
+                if attempt == _WRITE_ATTEMPTS - 1:
+                    logger.warning("Не удалось записать событие использования", exc_info=True)
+                    return
+                await asyncio.sleep(_WRITE_RETRY_DELAY)
 
     def _extract_raw_action(self, event: TelegramObject) -> str | None:
         if self.kind == "callback":
