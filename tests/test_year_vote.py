@@ -104,6 +104,40 @@ async def test_set_vote_overwrites_instead_of_duplicating(db):
     assert all(v is None for k, v in choices.items() if k != "gentleman")
 
 
+
+async def test_set_vote_survives_simultaneous_duplicate_insert(db):
+    """Двойной тап: оба запроса не увидели строки и оба вставляют. Второй не
+    должен падать на уникальном индексе — побеждает последний голос, строка одна."""
+    voter, cand1, cand2 = _player(1, "Voter"), _player(2, "Cand1"), _player(3, "Cand2")
+    db.add_all([voter, cand1, cand2])
+    await db.flush()
+    await set_vote(db, 2026, "gentleman", voter.id, cand1.id)
+
+    real_execute = db.execute
+    calls = {"n": 0}
+
+    class _NoRow:
+        def scalar_one_or_none(self):
+            return None
+
+    async def blind_first_lookup(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _NoRow()  # соседний тап ещё не закоммитил — строки «нет»
+        return await real_execute(*args, **kwargs)
+
+    db.execute = blind_first_lookup
+    try:
+        await set_vote(db, 2026, "gentleman", voter.id, cand2.id)
+    finally:
+        db.execute = real_execute
+    await db.commit()
+
+    count_r = await db.execute(select(func.count()).select_from(YearVote))
+    assert count_r.scalar() == 1
+    choices = await get_voter_choices(db, 2026, voter.id)
+    assert choices["gentleman"] == cand2.id
+
 async def test_has_all_nominations_filled(db):
     voter, cand = _player(1, "Voter"), _player(2, "Cand")
     db.add_all([voter, cand])
