@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from html import escape as h
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Match, MatchStatus, Player, YearVote
@@ -179,11 +180,29 @@ async def set_vote(
     if existing:
         existing.nominee_id = nominee_id
         existing.updated_at = now
-    else:
-        session.add(YearVote(
-            year=year, nomination=nomination, voter_id=voter_id,
-            nominee_id=nominee_id, updated_at=now,
-        ))
+        await session.flush()
+        return
+    # Два одновременных тапа одного игрока оба не увидят строки и оба вставят:
+    # второй упал бы на уникальном индексе. INSERT — в savepoint, чтобы при
+    # конфликте откатился только он (не вся транзакция хендлера), и тогда
+    # обновляем уже созданную соседним тапом строку: победит последний голос.
+    try:
+        async with session.begin_nested():
+            session.add(YearVote(
+                year=year, nomination=nomination, voter_id=voter_id,
+                nominee_id=nominee_id, updated_at=now,
+            ))
+    except IntegrityError:
+        r = await session.execute(
+            select(YearVote).where(
+                YearVote.year == year,
+                YearVote.nomination == nomination,
+                YearVote.voter_id == voter_id,
+            )
+        )
+        winner_row = r.scalar_one()
+        winner_row.nominee_id = nominee_id
+        winner_row.updated_at = now
     await session.flush()
 
 

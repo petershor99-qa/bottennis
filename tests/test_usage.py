@@ -60,6 +60,7 @@ async def test_middleware_records_callback(db_factory, monkeypatch):
         return "ok"
 
     result = await mw(handler, cb, {})
+    await mw.drain()
     assert result == "ok"
 
     async with db_factory() as s:
@@ -78,6 +79,7 @@ async def test_middleware_records_command(db_factory, monkeypatch):
         return None
 
     await mw(handler, msg, {})
+    await mw.drain()
 
     async with db_factory() as s:
         events = (await s.execute(select(UsageEvent))).scalars().all()
@@ -95,6 +97,7 @@ async def test_middleware_command_kind_ignores_plain_text(db_factory, monkeypatc
         return None
 
     await mw(handler, msg, {})
+    await mw.drain()
 
     async with db_factory() as s:
         events = (await s.execute(select(UsageEvent))).scalars().all()
@@ -110,6 +113,7 @@ async def test_middleware_skips_event_without_from_user(db_factory, monkeypatch)
         return "ok"
 
     result = await mw(handler, cb, {})
+    await mw.drain()
     assert result == "ok"
 
     async with db_factory() as s:
@@ -130,8 +134,10 @@ async def test_middleware_write_failure_does_not_break_handler(monkeypatch, capl
     async def handler(event, data):
         return "handled"
 
+    monkeypatch.setattr(middleware_module, "_WRITE_RETRY_DELAY", 0)
     with caplog.at_level(logging.WARNING):
         result = await mw(handler, cb, {})
+        await mw.drain()
 
     assert result == "handled"
     assert any("использования" in r.message for r in caplog.records)
@@ -149,7 +155,84 @@ async def test_middleware_propagates_handler_exception(db_factory, monkeypatch):
 
     with pytest.raises(RuntimeError, match="хендлер упал"):
         await mw(handler, cb, {})
+    await mw.drain()
 
     async with db_factory() as s:
         events = (await s.execute(select(UsageEvent))).scalars().all()
     assert len(events) == 1  # событие всё равно записалось
+
+
+async def test_middleware_retries_transient_write_failure(db_factory, monkeypatch):
+    """Событие не теряется, если база занята при первой попытке записи."""
+    calls = {"n": 0}
+
+    def flaky_factory():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("database is locked")
+        return db_factory()
+
+    monkeypatch.setattr(middleware_module, "async_session", flaky_factory)
+    monkeypatch.setattr(middleware_module, "_WRITE_RETRY_DELAY", 0)
+    mw = UsageMiddleware("callback")
+    cb = SimpleNamespace(data="menu_stats", from_user=SimpleNamespace(id=1))
+
+    async def handler(event, data):
+        return None
+
+    await mw(handler, cb, {})
+    await mw.drain()
+
+    async with db_factory() as s:
+        events = (await s.execute(select(UsageEvent))).scalars().all()
+    assert len(events) == 1
+    assert calls["n"] == 2
+
+
+async def test_middleware_does_not_stall_handler_that_writes_in_same_db(tmp_path, monkeypatch):
+    """РЕГРЕССИЯ v2.157.2: цепочка DatabaseMiddleware -> UsageMiddleware ->
+    хендлер, пишущий в БД, на файловой SQLite. Раньше запись события в
+    `finally` ждала блокировку писателя, которую держала транзакция самого
+    хендлера (коммит — только в DatabaseMiddleware, снаружи), и упиралась в
+    busy-timeout ~5 с: кнопка отвечала с задержкой, событие терялось."""
+    import time
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from bot.db.models import Base, Player
+    from bot.middleware import DatabaseMiddleware
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'usage.db'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(middleware_module, "async_session", factory)
+
+    db_mw = DatabaseMiddleware(factory)
+    usage_mw = UsageMiddleware("callback")
+    cb = SimpleNamespace(data="yv_pick_gentleman_5", from_user=SimpleNamespace(id=1))
+
+    async def handler(event, data):
+        data["session"].add(Player(
+            telegram_id=1, display_name="A", rating=1000.0,
+            achievements="[]", backfill_version=0,
+        ))
+        await data["session"].flush()  # транзакция хендлера держит блокировку записи
+        return "ok"
+
+    async def inner(event, data):
+        return await usage_mw(handler, event, data)
+
+    started = time.monotonic()
+    result = await db_mw(inner, cb, {})
+    elapsed = time.monotonic() - started
+    await usage_mw.drain()
+
+    assert result == "ok"
+    assert elapsed < 2.0
+    async with factory() as s:
+        events = (await s.execute(select(UsageEvent))).scalars().all()
+        players = (await s.execute(select(Player))).scalars().all()
+    assert len(events) == 1
+    assert len(players) == 1
+    await engine.dispose()
