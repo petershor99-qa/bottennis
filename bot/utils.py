@@ -810,13 +810,18 @@ async def boss_fight_rematch_blocked(session: AsyncSession, id_a: int, id_b: int
 # ранг считается ОДНОЙ функцией среди игравших — игроки с 0 матчей вне рейтинга.
 
 
-async def get_match_counts(session: AsyncSession) -> dict[int, int]:
-    """Число завершённых матчей у каждого игрока: {player_id: count}."""
-    r = await session.execute(
-        select(Match.challenger_id, Match.challenged_id).where(
-            Match.status == MatchStatus.completed
-        )
+async def get_match_counts(
+    session: AsyncSession, exclude_match_id: int | None = None,
+) -> dict[int, int]:
+    """Число завершённых матчей у каждого игрока: {player_id: count}.
+    exclude_match_id — не учитывать этот матч (снимок «до»: CAS уже перевёл его
+    в completed, а игрок, впервые сыгравший в нём, ещё не должен быть в рейтинге)."""
+    query = select(Match.challenger_id, Match.challenged_id).where(
+        Match.status == MatchStatus.completed
     )
+    if exclude_match_id is not None:
+        query = query.where(Match.id != exclude_match_id)
+    r = await session.execute(query)
     counts: dict[int, int] = {}
     for a, b in r.all():
         counts[a] = counts.get(a, 0) + 1
@@ -864,6 +869,26 @@ def _pin_champion(ranked: list[Player], champion_id: int | None) -> list[Player]
         rest = [p for p in ranked if p.id != champion_id]
         return [champ_p, *rest]
     return ranked
+
+
+async def snapshot_ranks(session: AsyncSession, exclude_match_id: int | None = None) -> dict[int, int]:
+    """Места игроков в рейтинге клуба прямо сейчас ({player_id: rank}) — те же,
+    что видит таблица (чемпион закреплён на #1, игроки с 0 матчей не входят).
+    Берётся до и после матча, чтобы показать «было → стало» (place_change_line)."""
+    players = (await session.execute(select(Player))).scalars().all()
+    counts = await get_match_counts(session, exclude_match_id)
+    champion = next((p for p in players if p.is_champion), None)
+    return compute_ranks(players, counts, champion_id=champion.id if champion else None)
+
+
+def place_change_line(before: dict[int, int], after: dict[int, int], player_id: int) -> str:
+    """«🏆 Место в клубе: #2 (было #3)» — только если у игрока было место ДО и оно
+    изменилось. Дебютант (в «до» его нет) и неизменное место дают пустую строку:
+    сообщение о матче не должно расти без причины."""
+    old, new = before.get(player_id), after.get(player_id)
+    if old is None or new is None or old == new:
+        return ""
+    return f"🏆 Место в клубе: <b>#{new}</b> (было #{old})"
 
 
 def format_rank(ranks: dict[int, int], player_id: int) -> str:

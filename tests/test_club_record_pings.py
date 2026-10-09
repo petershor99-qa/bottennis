@@ -261,3 +261,69 @@ async def test_pings_go_only_to_players_with_matches(db):
     assert await send_record_pings(db, bot, before) == 1
     recipients = {c.args[0] for c in bot.send_message.await_args_list}
     assert idle.telegram_id not in recipients and len(recipients) == 3
+
+
+# ── Крупнейший апсет (v2.158.0) ───────────────────────────────────────────────
+
+def test_upset_needs_a_prior_record_of_at_least_the_floor_and_a_margin():
+    from bot.services.club_records import KIND_UPSET, UPSET_MARGIN, UPSET_MIN
+
+    assert UPSET_MIN == 15.0 and UPSET_MARGIN == 1.0
+    assert detect_record_breaks(_snap_u(10.0), _snap_u(30.0)) == []             # прежний рекорд ниже порога
+    assert detect_record_breaks(_snap_u(36.4), _snap_u(36.9)) == []             # меньше +1.0
+    breaks = detect_record_breaks(_snap_u(36.4), _snap_u(41.2, extra=7))
+    assert [b.kind for b in breaks] == [KIND_UPSET]
+    assert breaks[0].extra == 7 and breaks[0].prev_value == 36.4
+
+
+def _snap_u(value, holder=1, extra=None):
+    from bot.services.club_records import KIND_UPSET
+
+    snap = _snap()
+    snap[KIND_UPSET] = RecordValue(holder, float(value), extra)
+    return snap
+
+
+def test_biggest_upset_ignores_boss_fights_draws_and_missing_deltas():
+    from bot.services.club_records import biggest_upset
+
+    base = datetime(2026, 6, 1, 12, 0)
+    a, b = _player(1, "A"), _player(2, "B")
+    a.id, b.id = 1, 2
+    normal = _completed(a, b, a.id, 20.0, base)
+    boss = _completed(a, b, a.id, 60.0, base + timedelta(hours=1))
+    boss.is_boss_fight = True
+    draw = _completed(a, b, None, 30.0, base + timedelta(hours=2))
+    unknown = _completed(a, b, b.id, 5.0, base + timedelta(hours=3))
+    unknown.rating_change = None
+    best = biggest_upset([normal, boss, draw, unknown])
+    assert best is not None and best.value == 20.0 and best.holder_id == 1 and best.extra == 2
+    assert biggest_upset([]) is None
+
+
+def test_upset_text():
+    names = {1: "Алиса", 2: "Боб", 3: "Вика"}
+    text = ping_text(RecordBreak("upset", 1, 41.2, 3, 36.4, extra=2), names)
+    assert text == (
+        "💥 Рекорд клуба: <b>Алиса</b> победил Боб и получил +41.2 рейтинга. "
+        "Крупнее апсета в клубе не было. Прошлый рекорд: Вика, +36.4."
+    )
+
+
+async def test_upset_record_ping_is_sent_once(db):
+    alice, bob, carol = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Carol")
+    db.add_all([alice, bob, carol])
+    await db.flush()
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    db.add(_completed(bob, carol, bob.id, 20.0, base))                   # прежний рекорд +20
+    await db.commit()
+    before = await snapshot_club_records(db)
+
+    db.add(_completed(alice, carol, alice.id, 31.5, base + timedelta(days=1)))
+    await db.commit()
+    bot = AsyncMock()
+    assert await send_record_pings(db, bot, before) == 1
+    texts = [str(c.args[1]) for c in bot.send_message.await_args_list]
+    assert texts and all("💥 Рекорд клуба" in t and "+31.5 рейтинга" in t for t in texts)
+    assert all("Прошлый рекорд: Bob, +20.0" in t for t in texts)
+    assert await send_record_pings(db, AsyncMock(), before) == 0         # кулдаун 7 дней
