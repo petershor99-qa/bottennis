@@ -1,6 +1,6 @@
 """
 Пинги «Рекорд клуба» (v2.157.0) — короткое сообщение игрокам, когда побит
-один из трёх РЕДКИХ рекордов клуба. Остальные рекорды остаются только на
+один из четырёх РЕДКИХ рекордов клуба. Остальные рекорды остаются только на
 экране «Рекорды клуба»: пинг по каждому рекорду превратился бы в спам.
 
 Как это работает: `snapshot_club_records()` снимает значения рекордов ДО матча и
@@ -39,19 +39,24 @@ logger = logging.getLogger(__name__)
 KIND_PEAK = "peak"
 KIND_STREAK = "streak"
 KIND_DEFENSE = "defense"
-KINDS = (KIND_PEAK, KIND_STREAK, KIND_DEFENSE)
+KIND_UPSET = "upset"
+KINDS = (KIND_PEAK, KIND_STREAK, KIND_DEFENSE, KIND_UPSET)
 
 PEAK_STEP = 100               # пинг, когда рекорд пика пересёк отметку 1500, 1600, …
 STREAK_MIN = 5                # серия короче — не событие
 DEFENSE_MIN = 3               # защит трона подряд
+UPSET_MIN = 15.0              # как на экране «Рекорды клуба»: меньшая прибавка апсетом не считается
+UPSET_MARGIN = 1.0            # новый рекорд — минимум на столько выше прежнего (36.4 -> 36.5 не событие)
 PING_COOLDOWN_DAYS = 7
 
 
 @dataclass(frozen=True)
 class RecordValue:
-    """Текущий рекорд: кто держит и значение."""
+    """Текущий рекорд: кто держит и значение. extra — второй участник
+    (для апсета: проигравший)."""
     holder_id: int
     value: float
+    extra: int | None = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +66,7 @@ class RecordBreak:
     value: float
     prev_holder_id: int
     prev_value: float
+    extra: int | None = None
 
 
 Snapshot = dict[str, RecordValue | None]
@@ -84,6 +90,20 @@ def best_win_streak(matches_asc: Sequence[Match]) -> RecordValue | None:
     return best
 
 
+def biggest_upset(matches: Sequence[Match]) -> RecordValue | None:
+    """Крупнейший апсет — наибольшая прибавка рейтинга победителя (как рекорд
+    «Крупнейший апсет» на экране). Боссфайты исключены: их дельта безусловно ×2 и
+    исказила бы рекорд. При равенстве рекорд остаётся у более раннего матча."""
+    best: RecordValue | None = None
+    for m in matches:
+        if m.is_boss_fight or m.winner_id is None or m.rating_change is None:
+            continue
+        if best is None or m.rating_change > best.value:
+            loser = m.challenged_id if m.winner_id == m.challenger_id else m.challenger_id
+            best = RecordValue(m.winner_id, float(m.rating_change), loser)
+    return best
+
+
 async def snapshot_club_records(session: AsyncSession, exclude_match_id: int | None = None) -> Snapshot:
     """Значения рекордов клуба прямо сейчас. `exclude_match_id` — матч, который
     нужно не учитывать (для снимка «до»: CAS уже перевёл его в completed)."""
@@ -104,6 +124,7 @@ async def snapshot_club_records(session: AsyncSession, exclude_match_id: int | N
         KIND_PEAK: peak,
         KIND_STREAK: best_win_streak(matches),
         KIND_DEFENSE: RecordValue(defenses[0], float(defenses[1])) if defenses and defenses[1] > 0 else None,
+        KIND_UPSET: biggest_upset(matches),
     }
 
 
@@ -121,7 +142,9 @@ def detect_record_breaks(before: Snapshot, after: Snapshot) -> list[RecordBreak]
             continue
         if kind == KIND_DEFENSE and new.value < DEFENSE_MIN:
             continue
-        breaks.append(RecordBreak(kind, new.holder_id, new.value, old.holder_id, old.value))
+        if kind == KIND_UPSET and (old.value < UPSET_MIN or new.value - old.value < UPSET_MARGIN):
+            continue
+        breaks.append(RecordBreak(kind, new.holder_id, new.value, old.holder_id, old.value, new.extra))
     return breaks
 
 
@@ -139,6 +162,13 @@ def ping_text(brk: RecordBreak, names: dict[int, str]) -> str:
             f"🔥 Рекорд клуба: <b>{holder}</b> выиграл {pluralize_matches(int(brk.value))} подряд. "
             f"Длиннее серии в истории клуба не было. "
             f"Прошлый рекорд: {prev_holder}, {int(brk.prev_value)}."
+        )
+    if brk.kind == KIND_UPSET:
+        loser = h(names.get(brk.extra, "?")) if brk.extra is not None else "?"
+        return (
+            f"💥 Рекорд клуба: <b>{holder}</b> победил {loser} и получил +{round(brk.value, 1)} рейтинга. "
+            f"Крупнее апсета в клубе не было. "
+            f"Прошлый рекорд: {prev_holder}, +{round(brk.prev_value, 1)}."
         )
     return (
         f"🛡 Рекорд клуба: <b>{holder}</b> защитил трон {pluralize_times(int(brk.value))} подряд. "

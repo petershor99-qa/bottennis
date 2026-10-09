@@ -63,10 +63,12 @@ from bot.utils import (
     msk_day_start,
     msk_hour_and_weekday,
     notify_all_players,
+    place_change_line,
     pluralize_days,
     previous_h2h_line,
     rating_tenths,
     safe_send,
+    snapshot_ranks,
     try_transfer_champion,
 )
 
@@ -1138,6 +1140,24 @@ async def _snapshot_records_safe(session: AsyncSession, match_id: int) -> Snapsh
         return None
 
 
+async def _snapshot_ranks_safe(session: AsyncSession, exclude_match_id: int | None = None) -> dict[int, int] | None:
+    """Места в рейтинге для строки «Место в клубе». Сбой не должен мешать
+    внесению результата — строка просто не покажется."""
+    try:
+        return await snapshot_ranks(session, exclude_match_id)
+    except Exception:
+        logger.exception("Не удалось посчитать места в рейтинге")
+        return None
+
+
+def _place_suffix(before: dict[int, int] | None, after: dict[int, int] | None, player_id: int) -> str:
+    """Хвост сообщения со сменой места (с пустой строкой перед ним) или ''."""
+    if before is None or after is None:
+        return ""
+    line = place_change_line(before, after, player_id)
+    return "\n\n" + line if line else ""
+
+
 async def _ping_records_safe(session: AsyncSession, bot: Bot, before: Snapshot | None) -> None:
     if before is None:
         return
@@ -1204,6 +1224,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
 
     # ── Снапшот рекордов клуба ДО матча — для пинга «Рекорд клуба» после коммита ─
     records_before = await _snapshot_records_safe(session, match_id)
+    ranks_before = await _snapshot_ranks_safe(session, match_id)
 
     # ── Снапшот претендента ДО матча — для анти-спам-сравнения после коммита ───
     champion_snapshot = await get_champion(session)
@@ -1267,6 +1288,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
 
         await session.commit()
         await state.clear()
+        ranks_after = await _snapshot_ranks_safe(session)
 
         # Счёт для репортёра — его очки первыми
         if reporter_player_id == match.challenger_id:
@@ -1283,6 +1305,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             f"<b>{round(challenger.rating, 1)}</b> ({_fmt_delta(actual_challenger_delta)})\n"
             f"  {h(challenged.display_name)}: {round(old_challenged_rating, 1)} → "
             f"<b>{round(challenged.rating, 1)}</b> ({_fmt_delta(actual_challenged_delta)})"
+            f"{_place_suffix(ranks_before, ranks_after, reporter_player_id)}"
         )
         draw_opponent_id = challenged.id if reporter_player_id == match.challenger_id else challenger.id
         await cb_msg(callback).edit_text(result_text, reply_markup=rematch_kb(draw_opponent_id))
@@ -1305,7 +1328,8 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             f"📋 <b>Результат матча внесён</b>\n\n"
             f"🤝 Ничья с <b>{h(opponent_name)}</b>\n"
             f"Счёт партий: {notify_sets_str}\n\n"
-            f"Твой рейтинг: {round(notify_old, 1)} → <b>{round(notify_player.rating, 1)}</b> ({_fmt_delta(notify_actual_delta)})",
+            f"Твой рейтинг: {round(notify_old, 1)} → <b>{round(notify_player.rating, 1)}</b> ({_fmt_delta(notify_actual_delta)})"
+            f"{_place_suffix(ranks_before, ranks_after, notify_player.id)}",
             reply_markup=main_menu_kb(rematch_opponent_id=reporter_player_id),
         )
 
@@ -1411,6 +1435,8 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
         # ── Босс-файт: перенос трона + клубное уведомление об исходе + ачивки ──
         if match.is_boss_fight:
             await _handle_boss_fight_outcome(session, bot, match, challenger, challenged, winner, loser)
+        # Места «после» — уже с учётом перехода трона в боссфайте
+        ranks_after = await _snapshot_ranks_safe(session)
 
         actual_loser_delta = round(old_loser_rating - loser.rating, 1)
         loser_delta_str = f"-{actual_loser_delta}" if actual_loser_delta > 0 else "0.0"
@@ -1421,6 +1447,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             f"📊 Изменение рейтинга:\n"
             f"  {h(winner.display_name)}: {round(old_winner_rating, 1)} → <b>{round(winner.rating, 1)}</b> (+{delta})\n"
             f"  {h(loser.display_name)}: {round(old_loser_rating, 1)} → <b>{round(loser.rating, 1)}</b> ({loser_delta_str})"
+            f"{_place_suffix(ranks_before, ranks_after, reporter_player_id)}"
         )
         reporter_opponent_id = loser_db_id if reporter_player_id == winner_db_id else winner_db_id
         reporter_is_winner = reporter_player_id == winner_db_id
@@ -1442,7 +1469,8 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                 f"📋 <b>Результат матча внесён</b>\n\n"
                 f"<b>{h(winner.display_name)}</b> победил тебя\n"
                 f"Счёт партий: {sets_str}\n\n"
-                f"Твой рейтинг: {round(old_loser_rating, 1)} → <b>{round(loser.rating, 1)}</b> ({loser_delta_str})",
+                f"Твой рейтинг: {round(old_loser_rating, 1)} → <b>{round(loser.rating, 1)}</b> ({loser_delta_str})"
+                f"{_place_suffix(ranks_before, ranks_after, loser.id)}",
                 # Реванш (v2.143.0) — как и на экране репортёра, после боссфайта нет
                 reply_markup=main_menu_kb(
                     rematch_opponent_id=None if match.is_boss_fight else winner.id,
@@ -1458,7 +1486,8 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                 f"📋 <b>Результат матча внесён</b>\n\n"
                 f"Ты победил <b>{h(loser.display_name)}</b>\n"
                 f"Счёт партий: {sets_str}\n\n"
-                f"Твой рейтинг: {round(old_winner_rating, 1)} → <b>{round(winner.rating, 1)}</b> (+{delta})",
+                f"Твой рейтинг: {round(old_winner_rating, 1)} → <b>{round(winner.rating, 1)}</b> (+{delta})"
+                f"{_place_suffix(ranks_before, ranks_after, winner.id)}",
                 reply_markup=main_menu_kb(
                     share_match_id=match_id,
                     rematch_opponent_id=None if match.is_boss_fight else loser.id,
