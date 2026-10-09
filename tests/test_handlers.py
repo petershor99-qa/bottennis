@@ -2902,7 +2902,7 @@ def test_stats_kb_grouped_two_per_row():
     all_callbacks = {btn.callback_data for row in rows for btn in row}
     assert all_callbacks == {
         "history_0", "rating_chart", "activity_heatmap_me", "career_recap",
-        "my_achievements", "menu_today", "style_radar", "back_to_menu",
+        "my_achievements", "menu_today", "style_radar", "back_to_menu", "menu_leaderboard",
     }
 
 
@@ -2919,7 +2919,7 @@ def test_leaderboard_kb_extra_links_grouped_two_per_row():
     all_callbacks = {btn.callback_data for row in rows for btn in row}
     assert all_callbacks == {
         "club_records", "club_matches_0", "dominance_matrix", "form_index",
-        "hall_of_fame_0", "back_to_menu",
+        "hall_of_fame_0", "back_to_menu", "menu_stats",
     }
 
 

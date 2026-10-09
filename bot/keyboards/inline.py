@@ -162,7 +162,10 @@ def stats_kb(sections: list[tuple[str, str]] | None = None) -> InlineKeyboardMar
         InlineKeyboardButton(text="📜 История матчей", callback_data="history_0"),
     )
     b.row(InlineKeyboardButton(text="📅 Сегодня в клубе", callback_data="menu_today"))
-    b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
+    b.row(
+        InlineKeyboardButton(text="🏆 Рейтинг клуба", callback_data="menu_leaderboard"),
+        InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"),
+    )
     return b.as_markup()
 
 
@@ -239,7 +242,10 @@ def rematch_kb(
         ))
     if can_rematch:
         b.row(InlineKeyboardButton(text="⚔️ Реванш", callback_data=f"rematch_{opponent_id}"))
-    b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
+    b.row(
+        InlineKeyboardButton(text="🏆 Рейтинг клуба", callback_data="menu_leaderboard"),
+        InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"),
+    )
     return b.as_markup()
 
 
@@ -253,7 +259,10 @@ def history_kb(page: int, total_pages: int) -> InlineKeyboardMarkup:
         nav.append(InlineKeyboardButton(text="Вперёд →", callback_data=f"history_{page + 1}"))
     if nav:
         b.row(*nav)
-    b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
+    b.row(
+        InlineKeyboardButton(text="🏆 Рейтинг клуба", callback_data="menu_leaderboard"),
+        InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"),
+    )
     return b.as_markup()
 
 
@@ -379,7 +388,10 @@ def leaderboard_kb(players) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🌡 Кто в форме", callback_data="form_index"),
     )
     b.row(InlineKeyboardButton(text="🏛 Трон", callback_data="hall_of_fame_0"))
-    b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
+    b.row(
+        InlineKeyboardButton(text="👤 Мой профиль", callback_data="menu_stats"),
+        InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"),
+    )
     return b.as_markup()
 
 
