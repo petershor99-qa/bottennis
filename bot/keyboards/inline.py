@@ -40,6 +40,17 @@ def main_reply_kb() -> ReplyKeyboardMarkup:
     )
 
 
+def _peer_and_menu_row(b: InlineKeyboardBuilder, peer_text: str, peer_callback: str) -> None:
+    """Последняя строка экрана верхнего уровня (v2.158.0): кнопка соседнего экрана
+    рядом с «В меню». По данным /usage после «В меню» в 125 из 144 случаев сразу
+    уходили на другой верхний экран, поэтому сосед теперь в одном тапе, а меню
+    остаётся запасным выходом. Подписи пары — в одном месте."""
+    b.row(
+        InlineKeyboardButton(text=peer_text, callback_data=peer_callback),
+        InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"),
+    )
+
+
 def main_menu_kb(
     share_match_id: int | None = None, rematch_opponent_id: int | None = None,
 ) -> InlineKeyboardMarkup:
@@ -162,10 +173,7 @@ def stats_kb(sections: list[tuple[str, str]] | None = None) -> InlineKeyboardMar
         InlineKeyboardButton(text="📜 История матчей", callback_data="history_0"),
     )
     b.row(InlineKeyboardButton(text="📅 Сегодня в клубе", callback_data="menu_today"))
-    b.row(
-        InlineKeyboardButton(text="🏆 Рейтинг клуба", callback_data="menu_leaderboard"),
-        InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"),
-    )
+    _peer_and_menu_row(b, "🏆 Рейтинг клуба", "menu_leaderboard")
     return b.as_markup()
 
 
@@ -242,10 +250,7 @@ def rematch_kb(
         ))
     if can_rematch:
         b.row(InlineKeyboardButton(text="⚔️ Реванш", callback_data=f"rematch_{opponent_id}"))
-    b.row(
-        InlineKeyboardButton(text="🏆 Рейтинг клуба", callback_data="menu_leaderboard"),
-        InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"),
-    )
+    _peer_and_menu_row(b, "🏆 Рейтинг клуба", "menu_leaderboard")
     return b.as_markup()
 
 
@@ -259,10 +264,7 @@ def history_kb(page: int, total_pages: int) -> InlineKeyboardMarkup:
         nav.append(InlineKeyboardButton(text="Вперёд →", callback_data=f"history_{page + 1}"))
     if nav:
         b.row(*nav)
-    b.row(
-        InlineKeyboardButton(text="🏆 Рейтинг клуба", callback_data="menu_leaderboard"),
-        InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"),
-    )
+    _peer_and_menu_row(b, "🏆 Рейтинг клуба", "menu_leaderboard")
     return b.as_markup()
 
 
@@ -388,10 +390,7 @@ def leaderboard_kb(players) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🌡 Кто в форме", callback_data="form_index"),
     )
     b.row(InlineKeyboardButton(text="🏛 Трон", callback_data="hall_of_fame_0"))
-    b.row(
-        InlineKeyboardButton(text="👤 Мой профиль", callback_data="menu_stats"),
-        InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"),
-    )
+    _peer_and_menu_row(b, "👤 Мой профиль", "menu_stats")
     return b.as_markup()
 
 
