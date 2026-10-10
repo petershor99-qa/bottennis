@@ -1,5 +1,5 @@
 /* Mini App клуба — дизайн согласован 10.10.2026.
-   Светлая тема: нативная, как настройки Telegram (серый фон, белая секция),
+   Светлая тема: нативная, как настройки Telegram (серый фон, белые секции),
    цвета из themeParams Telegram там, где они совпадают.
    Тёмная тема: плоский список на тёмно-синем фоне без карточек, в духе
    SingularityApp, своя палитра. Шрифт Raleway (файлы в static/fonts, OFL),
@@ -26,9 +26,13 @@
   --text: var(--tg-theme-text-color, #000000);
   --hint: var(--tg-theme-hint-color, #6D6D72);
   --accent: var(--tg-theme-accent-text-color, var(--tg-theme-link-color, #2481CC));
+  --button: var(--tg-theme-button-color, #2481CC);
+  --button-text: var(--tg-theme-button-text-color, #FFFFFF);
   --selected: #E8F1FB;
   --divider: rgba(60, 60, 67, 0.18);
   --avatar-bg: #D6E4F2;
+  --heat-0: #E4E4EA;
+  --row-pad-x: 16px;
 }
 
 /* Тёмная тема — своя синяя палитра, themeParams не используются */
@@ -38,8 +42,12 @@
   --text: #F2F4FA;
   --hint: #8A93AD;
   --accent: #5B9BFF;
+  --button: #5B9BFF;
+  --button-text: #0A0F1F;
   --selected: #18204A;
   --divider: #161D3A;
+  --heat-0: #161D3A;
+  --row-pad-x: 12px;
 }
 
 * { box-sizing: border-box; }
@@ -56,18 +64,29 @@ html, body {
 .screen {
   max-width: 560px;
   margin: 0 auto;
-  padding: 20px 16px calc(24px + env(safe-area-inset-bottom));
+  padding: 20px 16px calc(28px + env(safe-area-inset-bottom));
 }
 
 .screen-head { margin: 4px 4px 16px; }
 .screen-title { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.01em; }
 .screen-sub { margin: 4px 0 0; color: var(--hint); font-size: 14px; }
-.screen-sub:empty { display: none; }
 
 .state { color: var(--hint); font-size: 15px; margin: 24px 4px; }
-.state:empty { display: none; }
+.footnote { color: var(--hint); font-size: 14px; margin: 10px 16px 0; line-height: 1.4; }
 
-.board {
+/* ── Группы и строки ───────────────────────────────────────────────────── */
+.group { margin-top: 22px; }
+.screen-head + .group, .hero + .group { margin-top: 0; }
+.group-title {
+  margin: 0 16px 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--hint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -79,18 +98,36 @@ html, body {
 .row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 11px var(--row-pad-x);
   position: relative;
+  min-height: 44px;
 }
 .row + .row::before {
   content: "";
   position: absolute;
-  top: 0; right: 0; left: 64px;
+  top: 0; right: 0; left: var(--row-pad-x);
   border-top: 0.5px solid var(--divider);
 }
+.row-nav { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.row-nav:active { background: var(--selected); }
 .row.is-viewer { background: var(--selected); }
 .row.is-viewer .name { color: var(--accent); }
+
+.body { flex: 1 1 0; min-width: 0; }
+.name { font-weight: 600; font-size: 16px; line-height: 1.3; }
+.text { font-size: 15px; line-height: 1.4; }
+.sub { color: var(--hint); font-size: 13px; margin-top: 2px; line-height: 1.35; white-space: pre-line; }
+.sub-wide { flex-basis: 100%; margin-top: 0; }
+.board .name, .board .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.row-pair .label { flex: 1 1 auto; font-size: 15px; }
+.row-pair .value { flex: 0 1 auto; font-size: 15px; font-weight: 600; text-align: right; }
+.meta { flex: 0 0 auto; color: var(--hint); font-size: 15px; }
+.meta.up, .place .up { color: var(--accent); }
+
+.chev { flex: 0 0 8px; width: 8px; height: 14px; stroke: var(--hint); opacity: 0.7; }
 
 .lead {
   flex: 0 0 36px;
@@ -103,25 +140,81 @@ html, body {
   background: var(--avatar-bg);
   color: var(--accent);
 }
-
-.body { flex: 1 1 auto; min-width: 0; }
-.name { font-weight: 600; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sub { color: var(--hint); font-size: 13px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lead-lg { flex-basis: 52px; height: 52px; font-size: 22px; }
 
 .value { flex: 0 0 auto; text-align: right; }
 .rating { font-size: 16px; font-weight: 600; }
+.rating-lg { font-size: 24px; font-weight: 700; }
 .place { color: var(--hint); font-size: 13px; margin-top: 2px; }
-.place .up { color: var(--accent); }
 
-.footnote { color: var(--hint); font-size: 14px; margin: 10px 16px 0; }
+/* Профиль — тёмная «шапка» без карточки */
+.hero { margin: -6px 4px 22px; }
+.hero-label { color: var(--hint); font-size: 13px; }
+.hero-value { font-size: 40px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
+
+/* Форма: точки вместо цветных кружков-эмодзи */
+.form { display: inline-flex; gap: 4px; align-items: center; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; }
+.dot-w { background: var(--accent); }
+.dot-l { background: var(--hint); opacity: 0.55; }
+.dot-d { border: 1.5px solid var(--hint); }
+
+.progress { height: 4px; border-radius: 2px; background: var(--divider); margin-top: 8px; overflow: hidden; }
+.progress i { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
+
+/* Достижения */
+.ico { flex: 0 0 24px; width: 24px; height: 24px; }
+.ico-done { stroke: var(--accent); }
+.ico-lock { stroke: var(--hint); opacity: 0.8; }
+.is-locked .name { color: var(--hint); font-weight: 500; }
+
+/* Матчи клуба */
+.name-pair { font-weight: 500; }
+.name-pair .win { font-weight: 700; }
+
+/* ── Графики ───────────────────────────────────────────────────────────── */
+.row-chart { justify-content: center; padding-top: 14px; padding-bottom: 12px; }
+.chart, .heat, .radar { width: 100%; height: auto; display: block; }
+.radar { max-width: 320px; margin: 0 auto; overflow: visible; }
+.chart-line { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+.chart-dot { fill: var(--accent); }
+.chart-ref { stroke: var(--hint); stroke-width: 1; stroke-dasharray: 3 4; opacity: 0.6; }
+.chart-label, .radar-label { fill: var(--hint); font-size: 10px; font-family: var(--font); }
+.radar-label { font-size: 11px; }
+.radar-grid { fill: none; stroke: var(--divider); stroke-width: 1; }
+.radar-shape { fill: var(--accent); fill-opacity: 0.18; stroke: var(--accent); stroke-width: 1.8; stroke-linejoin: round; }
+
+.heat-out { fill: transparent; }
+.heat-0 { fill: var(--heat-0); background: var(--heat-0); }
+.heat-1 { fill: var(--accent); fill-opacity: 0.3; background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.heat-2 { fill: var(--accent); fill-opacity: 0.6; background: color-mix(in srgb, var(--accent) 60%, transparent); }
+.heat-3 { fill: var(--accent); background: var(--accent); }
+.legend { display: flex; gap: 14px; margin: 10px 16px 0; color: var(--hint); font-size: 13px; }
+.legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+
+/* Единственная акцентная кнопка экрана */
+.button {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  padding: 13px 16px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--button);
+  color: var(--button-text);
+  font: 600 15px var(--font);
+  cursor: pointer;
+}
+.button:disabled { opacity: 0.6; }
 
 /* ── Тёмная: плоский список, номер места вместо аватара ─────────────────── */
-:root[data-theme="dark"] .board { border-radius: 0; }
-:root[data-theme="dark"] .row { padding: 12px 12px; border-radius: 10px; }
+:root[data-theme="dark"] .list { border-radius: 0; overflow: visible; }
+:root[data-theme="dark"] .row { border-radius: 10px; }
 :root[data-theme="dark"] .row + .row::before { left: 12px; right: 12px; }
 :root[data-theme="dark"] .row.is-viewer::before,
 :root[data-theme="dark"] .row.is-viewer + .row::before { border-top-color: transparent; }
-:root[data-theme="dark"] .lead {
+:root[data-theme="dark"] .board .lead {
   background: none;
   color: var(--hint);
   flex-basis: 20px;
@@ -129,3 +222,4 @@ html, body {
 }
 :root[data-theme="dark"] .rating { font-weight: 700; }
 :root[data-theme="dark"] .footnote { margin: 14px 12px 0; }
+:root[data-theme="dark"] .group-title { margin-left: 12px; }

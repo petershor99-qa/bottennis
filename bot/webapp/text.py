@@ -26,12 +26,14 @@ _EMOJI_RE = re.compile(
     "]+"
 )
 _TAG_RE = re.compile(r"<[^>]+>")
+_GAP_RE = re.compile(r"(?<=\S) {2,}(?=[^\s(|])")
 _SPACES_RE = re.compile(r"[ \t ]{2,}")
 
 # Кружки формы (🟢 победа, 🔴 поражение, 🟡 ничья) — в приложении это точки
 _FORM_MARKS = {"🟢": "w", "🔴": "l", "🟡": "d"}
 # Эмодзи внутри фразы, которые несут смысл, — заменяются словом, а не удаляются
 _INLINE_WORDS = {"🤝": "ничьи "}
+_BAR_CHARS = {"█", "░"}
 
 
 def plain(line: str) -> str:
@@ -42,7 +44,10 @@ def plain(line: str) -> str:
         if not stripped.startswith(emoji):
             line = line.replace(emoji, word)
     text = html.unescape(_TAG_RE.sub("", line))
-    text = _EMOJI_RE.sub("", text)
+    text = _EMOJI_RE.sub("", text).strip()
+    # Двойной пробел в боте — визуальный разделитель («+36.4 pts  11:5»);
+    # перед скобкой он просто отступ («Форма  (12 матчей)»).
+    text = _GAP_RE.sub(" · ", text)
     text = _SPACES_RE.sub(" ", text)
     return text.strip(" \t·—-").strip()
 
@@ -54,20 +59,20 @@ def _form(value_raw: str) -> list[str] | None:
 
 def item(line: str) -> dict | None:
     """Одна строка бота -> {label, value} | {label, form} | {text}; None — пусто."""
-    raw_value = line.split(":", 1)[1] if ":" in line else ""
+    raw_label, _, raw_value = line.partition(":")
     form = _form(raw_value)
+    if form:
+        out: dict = {"label": plain(raw_label), "form": form}
+        rest = plain(_TAG_RE.sub("", raw_value).translate({ord(c): None for c in _FORM_MARKS}))
+        if rest:
+            out["note"] = rest.strip("() ")
+        return out
     text = plain(line)
     if not text:
         return None
     if ": " in text:
         label, value = text.split(": ", 1)
         if 0 < len(label) <= 40:
-            if form:
-                rest = plain(_TAG_RE.sub("", raw_value).translate({ord(c): None for c in _FORM_MARKS}))
-                out: dict = {"label": label, "form": form}
-                if rest:
-                    out["note"] = rest.strip("() ")
-                return out
             return {"label": label, "value": value}
     return {"text": text}
 
@@ -88,9 +93,15 @@ def groups(lines: list[str]) -> list[list[dict]]:
         head = item(parts[0])
         if head is None:
             continue
-        if len(parts) > 1:
-            notes = [plain(p) for p in parts[1:]]
-            head["note"] = " ".join(n for n in notes if n)
+        for extra in parts[1:]:
+            bar = extra.strip()
+            if bar and set(bar) <= _BAR_CHARS:
+                # Полоска прогресса «███░░» из строки цели — в приложении шкала
+                head["progress"] = round(bar.count("█") / len(bar), 2)
+                continue
+            note = plain(extra)
+            if note:
+                head["note"] = f"{head['note']}\n{note}" if "note" in head else note
         current.append(head)
     if current:
         result.append(current)
