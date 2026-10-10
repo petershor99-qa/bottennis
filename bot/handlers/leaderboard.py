@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from html import escape as h
 
 from aiogram import F, Router
@@ -18,16 +18,14 @@ from bot.keyboards.inline import (
     leaderboard_kb,
     records_category_kb,
 )
+from bot.services.leaderboard import compute_leaderboard
 from bot.utils import (
     MSK_OFFSET,
     REPLY_KB_LEADERBOARD_ALL,
-    _pin_champion,
     busiest_msk_hour,
     cb_data,
     cb_msg,
     compute_alltime_streak,
-    get_champion_and_challenger,
-    get_mvp_of_month,
     get_player,
     hour_range_label,
     longest_awaited_revenge,
@@ -50,6 +48,7 @@ from bot.utils import (
     shortest_champion_reign,
     steadiest_career,
 )
+from bot.webapp.config import webapp_url_for
 
 router = Router()
 
@@ -70,136 +69,51 @@ LEADERBOARD_LEGEND = (
 
 async def _build_leaderboard_screen(session: AsyncSession, telegram_id: int):
     """Строит (текст, клавиатуру) экрана «Рейтинг» — общая часть для
-    инлайн-кнопки меню (edit_text) и постоянной клавиатуры снизу (answer)."""
+    инлайн-кнопки меню (edit_text) и постоянной клавиатуры снизу (answer).
+    Расчёт мест/значков/▲▼ — `compute_leaderboard` (общий с Mini App)."""
     viewer = await get_player(session, telegram_id)
     viewer_id = viewer.id if viewer else None
 
-    r = await session.execute(select(Player).order_by(desc(Player.rating)))
-    players = r.scalars().all()
-
-    if not players:
+    has_players = (await session.execute(select(Player.id).limit(1))).first() is not None
+    if not has_players:
         return "Пока нет игроков.", back_to_menu_kb()
 
-    matches_r = await session.execute(
-        select(Match)
-        .where(Match.status == MatchStatus.completed)
-        .order_by(desc(Match.completed_at))
-    )
-    all_matches = matches_r.scalars().all()
-
-    match_count: dict[int, int] = {}
-    win_count: dict[int, int] = {}
-    player_matches: dict[int, list] = {}
-    for m in all_matches:
-        for pid in (m.challenger_id, m.challenged_id):
-            match_count[pid] = match_count.get(pid, 0) + 1
-            if pid not in player_matches:
-                player_matches[pid] = []
-            player_matches[pid].append(m)
-        if m.winner_id:
-            win_count[m.winner_id] = win_count.get(m.winner_id, 0) + 1
-
-    streak_map: dict[int, int] = {}
-    for pid, ms in player_matches.items():
-        s = 0
-        for m in ms:
-            if m.winner_id == pid:
-                s += 1
-            else:
-                break
-        streak_map[pid] = s
-
-    # Игроки без сыгранных матчей в рейтинге не показываются
-    played = [p for p in players if match_count.get(p.id, 0) > 0]
-
-    if not played:
+    rows = await compute_leaderboard(session)
+    if not rows:
         return "Пока нет сыгранных матчей. 🏓", back_to_menu_kb()
-
-    # Место #1 занимается только через босс-файт, не по очкам — leaderboard не
-    # использует compute_ranks (своя сортировка), поэтому пиннинг чемпиона
-    # дублируется здесь же. Если чемпион не назначен (фича выключена) — обычная
-    # сортировка по рейтингу, как раньше.
-    champion, challenger_player = await get_champion_and_challenger(session)
-    champion_id = champion.id if champion else None
-    challenger_id = challenger_player.id if challenger_player else None
-    mvp_id = await get_mvp_of_month(session)
-
-    players = _pin_champion(sorted(played, key=lambda p: -p.rating), champion_id)
-
-    week_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
-    active_7day: set[int] = {
-        pid
-        for m in all_matches
-        if m.completed_at and m.completed_at >= week_ago
-        for pid in (m.challenger_id, m.challenged_id)
-    }
-
-    # ── Изменение позиции за неделю (▲▼) ────────────────────────────────────────
-    # Восстанавливаем рейтинги «неделю назад», откатывая дельты матчей за 7 дней.
-    # Пол рейтинга при откате игнорируется — это приблизительный индикатор.
-    snap = {p.id: p.rating for p in players}
-    for m in all_matches:
-        if not (m.completed_at and m.completed_at >= week_ago) or m.rating_change is None:
-            continue
-        d = m.rating_change
-        if m.winner_id is None:
-            snap[m.challenger_id] = round(snap.get(m.challenger_id, 1000.0) - d, 1)
-            snap[m.challenged_id] = round(snap.get(m.challenged_id, 1000.0) + d, 1)
-        else:
-            wid = m.winner_id
-            lid = m.challenged_id if wid == m.challenger_id else m.challenger_id
-            snap[wid] = round(snap.get(wid, 1000.0) - d, 1)
-            snap[lid] = round(snap.get(lid, 1000.0) + d, 1)
-
-    old_count: dict[int, int] = {}
-    for m in all_matches:
-        if m.completed_at and m.completed_at < week_ago:
-            for pid in (m.challenger_id, m.challenged_id):
-                old_count[pid] = old_count.get(pid, 0) + 1
-
-    prev_order = _pin_champion(
-        sorted(players, key=lambda p: (old_count.get(p.id, 0) == 0, -snap.get(p.id, p.rating))),
-        champion_id,
-    )
-    prev_pos = {p.id: i for i, p in enumerate(prev_order)}
 
     medals = ["🥇", "🥈", "🥉"]
     lines = ["🏆 <b>Рейтинг клуба:</b>\n"]
-    for i, p in enumerate(players):
+    for i, row in enumerate(rows):
         prefix = medals[i] if i < 3 else f"{i + 1}."
-        count = match_count.get(p.id, 0)
-        wins = win_count.get(p.id, 0)
-        wr = int(wins / count * 100) if count else 0
         # 👑/🗡 приоритетнее 🌟 (босс-файт важнее звания месяца), 🌟 приоритетнее
         # ❄️/🔥 (MVP месяца заметнее формы недели), ❄️ приоритетнее 🔥
-        if champion_id is not None and p.id == champion_id:
+        if row.is_champion:
             badge = " 👑"
-        elif challenger_id is not None and p.id == challenger_id:
+        elif row.is_challenger:
             badge = " 🗡"
-        elif mvp_id is not None and p.id == mvp_id:
+        elif row.is_mvp:
             badge = " 🌟"
-        elif p.id not in active_7day:
+        elif row.inactive:
             badge = " ❄️"
-        elif streak_map.get(p.id, 0) >= 3:
+        elif row.streak >= 3:
             badge = " 🔥"
         else:
             badge = ""
-        # Стрелка изменения позиции (только для игравших игроков)
-        change = prev_pos.get(p.id, i) - i
-        if count > 0 and change > 0:
-            pos_str = f"  ▲{change}"
-        elif count > 0 and change < 0:
-            pos_str = f"  ▼{-change}"
+        if row.week_change > 0:
+            pos_str = f"  ▲{row.week_change}"
+        elif row.week_change < 0:
+            pos_str = f"  ▼{-row.week_change}"
         else:
             pos_str = ""
-        name = f"<b>{h(p.display_name)}</b>" if p.id == viewer_id else h(p.display_name)
+        name = f"<b>{h(row.name)}</b>" if row.player_id == viewer_id else h(row.name)
         lines.append(
-            f"{prefix} {name}{badge} — <b>{round(p.rating, 1)}</b> pts"
-            f"  <i>({pluralize_matches(count)}, {wr}%)</i>{pos_str}"
+            f"{prefix} {name}{badge} — <b>{row.rating}</b> pts"
+            f"  <i>({pluralize_matches(row.matches)}, {row.win_rate}%)</i>{pos_str}"
         )
 
     lines.append(f"\n<i>{LEADERBOARD_LEGEND}</i>")
-    return "\n".join(lines), leaderboard_kb(players)
+    return "\n".join(lines), leaderboard_kb(rows, web_app_url=webapp_url_for(telegram_id))
 
 
 @router.callback_query(F.data == "menu_leaderboard")

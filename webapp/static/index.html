@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Рейтинг клуба</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="static/app.css">
+</head>
+<body>
+  <main class="screen">
+    <header class="screen-head">
+      <h1 class="screen-title">Рейтинг клуба</h1>
+      <p class="screen-sub" id="players-label"></p>
+    </header>
+
+    <p class="state" id="state">Загрузка…</p>
+
+    <ol class="board" id="board" hidden></ol>
+    <p class="footnote" id="gap" hidden></p>
+  </main>
+  <script src="static/app.js"></script>
+</body>
+</html>
