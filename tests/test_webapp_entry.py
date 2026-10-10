@@ -44,7 +44,7 @@ def test_menu_for_admin_has_app_row_right_under_challenge(env):
     assert "Рейтинг клуба" in rows[2][0]
     [button] = _app_buttons(kb)
     assert button.web_app.url == "https://club.example/"
-    assert WEBAPP_BUTTON_TEXT == "Открыть приложение"
+    assert WEBAPP_BUTTON_TEXT == "📱 Открыть приложение"
 
 
 def test_menu_for_regular_player_hidden_while_admin_only(env):
