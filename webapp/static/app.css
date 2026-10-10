@@ -1,0 +1,125 @@
+/* Mini App клуба — дизайн согласован 10.10.2026.
+   Светлая тема: нативная, как настройки Telegram (серый фон, белая секция),
+   цвета из themeParams Telegram там, где они совпадают.
+   Тёмная тема: плоский список на тёмно-синем фоне без карточек, в духе
+   SingularityApp, своя палитра. Шрифт Raleway (файлы в static/fonts, OFL),
+   цифры «в строку» и табличные. Никаких эмодзи; иконки только линейные. */
+
+@font-face {
+  font-family: "Raleway";
+  src: url("fonts/Raleway-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  --font: "Raleway", -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --bg: var(--tg-theme-secondary-bg-color, #EFEFF4);
+  --section: var(--tg-theme-section-bg-color, var(--tg-theme-bg-color, #FFFFFF));
+  --text: var(--tg-theme-text-color, #000000);
+  --hint: var(--tg-theme-hint-color, #6D6D72);
+  --accent: var(--tg-theme-accent-text-color, var(--tg-theme-link-color, #2481CC));
+  --selected: #E8F1FB;
+  --divider: rgba(60, 60, 67, 0.18);
+  --avatar-bg: #D6E4F2;
+}
+
+/* Тёмная тема — своя синяя палитра, themeParams не используются */
+:root[data-theme="dark"] {
+  --bg: #0A0F1F;
+  --section: transparent;
+  --text: #F2F4FA;
+  --hint: #8A93AD;
+  --accent: #5B9BFF;
+  --selected: #18204A;
+  --divider: #161D3A;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-variant-numeric: lining-nums tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+.screen {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 20px 16px calc(24px + env(safe-area-inset-bottom));
+}
+
+.screen-head { margin: 4px 4px 16px; }
+.screen-title { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.01em; }
+.screen-sub { margin: 4px 0 0; color: var(--hint); font-size: 14px; }
+.screen-sub:empty { display: none; }
+
+.state { color: var(--hint); font-size: 15px; margin: 24px 4px; }
+.state:empty { display: none; }
+
+.board {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--section);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  position: relative;
+}
+.row + .row::before {
+  content: "";
+  position: absolute;
+  top: 0; right: 0; left: 64px;
+  border-top: 0.5px solid var(--divider);
+}
+.row.is-viewer { background: var(--selected); }
+.row.is-viewer .name { color: var(--accent); }
+
+.lead {
+  flex: 0 0 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  font-size: 16px;
+  background: var(--avatar-bg);
+  color: var(--accent);
+}
+
+.body { flex: 1 1 auto; min-width: 0; }
+.name { font-weight: 600; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sub { color: var(--hint); font-size: 13px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.value { flex: 0 0 auto; text-align: right; }
+.rating { font-size: 16px; font-weight: 600; }
+.place { color: var(--hint); font-size: 13px; margin-top: 2px; }
+.place .up { color: var(--accent); }
+
+.footnote { color: var(--hint); font-size: 14px; margin: 10px 16px 0; }
+
+/* ── Тёмная: плоский список, номер места вместо аватара ─────────────────── */
+:root[data-theme="dark"] .board { border-radius: 0; }
+:root[data-theme="dark"] .row { padding: 12px 12px; border-radius: 10px; }
+:root[data-theme="dark"] .row + .row::before { left: 12px; right: 12px; }
+:root[data-theme="dark"] .row.is-viewer::before,
+:root[data-theme="dark"] .row.is-viewer + .row::before { border-top-color: transparent; }
+:root[data-theme="dark"] .lead {
+  background: none;
+  color: var(--hint);
+  flex-basis: 20px;
+  font-size: 15px;
+}
+:root[data-theme="dark"] .rating { font-weight: 700; }
+:root[data-theme="dark"] .footnote { margin: 14px 12px 0; }
