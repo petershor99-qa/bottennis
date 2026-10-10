@@ -6,7 +6,9 @@
 Маршруты:
   GET /                                     — приложение (одна страница, переходы внутри)
   GET /static/...                           — стили, скрипт, шрифт
+  GET /api/home                             — главная «Клуб сегодня»
   GET /api/leaderboard                      — рейтинг клуба
+  GET /api/photo/{id}                       — фото игрока из Telegram (или 404)
   GET /api/player/{id}                      — профиль (свой или чужой)
   GET /api/player/{id}/stats/{key}          — раздел статистики (как в боте)
   GET /api/player/{id}/achievements[/{n}]   — достижения: категории / одна категория
@@ -36,6 +38,7 @@ from bot.utils import get_player
 from bot.webapp import api
 from bot.webapp.auth import WebAppAuthError, init_data_from_header, telegram_id_from_init_data
 from bot.webapp.config import is_webapp_allowed, webapp_listen
+from bot.webapp.photos import PhotoCache
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,8 @@ STATIC_DIR = Path(__file__).resolve().parent.parent.parent / "webapp" / "static"
 
 BOT_TOKEN_KEY: web.AppKey[str] = web.AppKey("bot_token", str)
 SESSION_FACTORY_KEY: web.AppKey = web.AppKey("session_factory")
+BOT_KEY: web.AppKey = web.AppKey("bot")
+PHOTOS_KEY: web.AppKey[PhotoCache] = web.AppKey("photos", PhotoCache)
 
 _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -50,7 +55,7 @@ _SECURITY_HEADERS = {
     "Cache-Control": "no-store",
 }
 
-Handler = Callable[[web.Request, AsyncSession, Player], Awaitable[dict | None]]
+Handler = Callable[[web.Request, AsyncSession, Player], Awaitable[dict | web.StreamResponse | None]]
 
 
 def _json_error(status: int, message: str) -> web.Response:
@@ -79,6 +84,8 @@ def endpoint(handler: Handler) -> Callable[[web.Request], Awaitable[web.Response
             payload = await handler(request, session, viewer)
         if payload is None:
             return _json_error(404, "Не найдено.")
+        if isinstance(payload, web.StreamResponse):
+            return payload
         return web.json_response(payload, headers=_SECURITY_HEADERS)
     return wrapped
 
@@ -89,6 +96,23 @@ async def _target(request: web.Request, session: AsyncSession) -> Player | None:
     except (KeyError, ValueError):
         return None
     return (await session.execute(select(Player).where(Player.id == player_id))).scalar_one_or_none()
+
+
+async def home(request, session, viewer):
+    return await api.home_payload(session, viewer)
+
+
+async def photo(request, session, viewer):
+    target = await _target(request, session)
+    bot = request.app.get(BOT_KEY)
+    if target is None or bot is None:
+        return None
+    data = await request.app[PHOTOS_KEY].get(bot, target.telegram_id)
+    if data is None:
+        return None
+    return web.Response(body=data, content_type="image/jpeg", headers={
+        "X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=3600",
+    })
 
 
 async def leaderboard(request, session, viewer):
@@ -163,13 +187,18 @@ async def throne(request, session, viewer):
     return await api.hall_of_fame_payload(session)
 
 
-def create_app(bot_token: str, session_factory) -> web.Application:
+def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
+    """bot — экземпляр aiogram.Bot для фото игроков; без него /api/photo отвечает 404."""
     app = web.Application()
     app[BOT_TOKEN_KEY] = bot_token
     app[SESSION_FACTORY_KEY] = session_factory
+    app[BOT_KEY] = bot
+    app[PHOTOS_KEY] = PhotoCache()
     app.router.add_get("/", index)
     routes = [
+        ("/api/home", home),
         ("/api/leaderboard", leaderboard),
+        ("/api/photo/{player_id}", photo),
         ("/api/player/{player_id}", player),
         ("/api/player/{player_id}/stats/{key}", player_stats),
         ("/api/player/{player_id}/achievements", achievements),
@@ -189,10 +218,10 @@ def create_app(bot_token: str, session_factory) -> web.Application:
     return app
 
 
-async def start_webapp(bot_token: str, session_factory) -> web.AppRunner:
+async def start_webapp(bot_token: str, session_factory, bot=None) -> web.AppRunner:
     """Запускает сервер рядом с поллингом бота; вернуть runner, чтобы закрыть."""
     host, port = webapp_listen()
-    runner = web.AppRunner(create_app(bot_token, session_factory), access_log=None)
+    runner = web.AppRunner(create_app(bot_token, session_factory, bot), access_log=None)
     await runner.setup()
     await web.TCPSite(runner, host, port).start()
     logger.info("Mini App: веб-сервер слушает %s:%s", host, port)
