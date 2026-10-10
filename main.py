@@ -126,7 +126,7 @@ async def main() -> None:
     webapp_runner = None
     if webapp_base_url():
         try:
-            webapp_runner = await start_webapp(token, async_session)
+            webapp_runner = await start_webapp(token, async_session, bot)
         except Exception:
             logging.exception("Mini App не запустился, бот работает без него.")
 

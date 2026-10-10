@@ -109,20 +109,29 @@ async def test_profile_payload_personal(db):
     data = await api.player_payload(db, a, a)
     assert data["head"]["personal"] is True
     assert data["head"]["rating"] == "1080.0"
-    assert data["metrics"][0]["label"] == "Победы"
+    assert [t["label"] for t in data["tiles"]][0] == "Побед"
+    assert len(data["tiles"]) == 4
     assert data["chart"]["values"][-1] == 1080.0
-    titles = [s["title"] for s in data["sections"]]
-    assert titles[:4] == ["Достижения", "Радар стиля", "Активность", "История матчей"]
-    assert "Личные встречи" not in titles  # с самим собой встреч нет
+    assert data["versus"] is None  # с самим собой встреч нет
+    assert 1 <= len(data["last10"]) <= 10
+    assert set(data["last10"]) <= {"w", "l", "d"}
+    assert any(g["label"].startswith("До звания") and 0 <= g["progress"] <= 1 for g in data["goals"])
+    assert data["counts"]["matches"] == 8
 
 
-async def test_profile_payload_other_player_has_h2h_and_no_title_goal(db):
+async def test_profile_last10_is_oldest_to_newest(db):
+    a, _, _ = await _seed(db)
+    data = await api.player_payload(db, a, a)
+    # последний матч сида (i=7): Алиса против Боба, 7 % 3 != 0 -> победа Алисы
+    assert data["last10"][-1] == "w"
+
+
+async def test_profile_payload_other_player_has_versus_and_no_goals(db):
     a, b, _ = await _seed(db)
     data = await api.player_payload(db, b, a)
     assert data["head"]["personal"] is False
-    assert any(s["title"] == "Личные встречи" for s in data["sections"])
-    labels = [it.get("label", "") for g in data["groups"] for it in g]
-    assert not any(label.startswith("До звания") for label in labels)  # цель звания — только себе
+    assert data["versus"] == "Ты против Боб"
+    assert data["goals"] == []  # цели звания и ачивки — только себе
 
 
 async def test_profile_without_matches(db):
@@ -131,15 +140,37 @@ async def test_profile_without_matches(db):
     await db.commit()
     data = await api.player_payload(db, lonely, lonely)
     assert data["empty"]
-    assert data["sections"] == []
+    assert data["tiles"] == [] and data["blocks"] == []
+
+
+@pytest.mark.parametrize("rating,expected", [(900.0, 0.0), (975.0, 0.5), (1050.0, 0.0), (1125.0, 0.5), (1500.0, 1.0)])
+def test_title_progress_inside_band(rating, expected):
+    assert api._title_progress(rating) == expected
+
+
+@pytest.mark.parametrize("ach_id,tier", [
+    ("hat_trick", "bronze"), ("im_on_fire", "silver"), ("god_mode", "gold"),
+    ("fk_tyumen", "bronze"), ("valley_of_tears", "silver"),
+    ("fifty", "bronze"), ("veteran", "bronze"), ("legend", "silver"), ("monument", "gold"), ("superstar", "gold"),
+    ("press_start", ""), ("highlander", ""),
+])
+def test_achievement_tiers(ach_id, tier):
+    assert api.achievement_tier(ach_id) == tier
+
+
+def test_ladders_reference_real_achievements():
+    known = {a.id for a in api.ACHIEVEMENTS_LIST}
+    for ladder in api.ACHIEVEMENT_LADDERS:
+        assert set(ladder) <= known
 
 
 async def test_achievements_payload_counts(db):
     a, _, _ = await _seed(db)
     data = api.achievements_payload(a)
     assert data["count"].startswith("2 из ")
-    first = api.achievement_category_payload(a, 0)
+    first = data["categories"][0]
     assert first["items"][0]["earned"] is True
+    assert sum(len(c["items"]) for c in data["categories"]) == len(api.ACHIEVEMENTS_LIST)
     assert api.achievement_category_payload(a, 99) is None
 
 
@@ -185,8 +216,35 @@ async def test_history_rows_are_in_player_perspective(db):
 async def test_h2h_payload(db):
     a, b, _ = await _seed(db)
     data = await api.h2h_payload(db, a, b)
+    assert data["title"] == "Ты против Боб"
     assert data["metrics"][0]["label"] == "Счёт встреч"
     assert len(data["matches"]) == 4
+    assert data["score"]["me"] + data["score"]["them"] + data["score"]["draws"] == 4
+    assert 0 <= data["forecast"]["chance"] <= 100
+    assert data["forecast"]["win"].startswith("+") and data["forecast"]["lose"].startswith("−")
+
+
+async def test_h2h_axes_when_both_have_enough_matches(db):
+    a, b, c = await _seed(db)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    for i in range(3):
+        db.add(Match(challenger_id=b.id, challenged_id=c.id, status=MatchStatus.completed, winner_id=b.id,
+                     sets_data=[{"w": 11, "l": 5}], rating_change=5.0, completed_at=now - timedelta(hours=i + 1)))
+    await db.commit()
+    data = await api.h2h_payload(db, a, b)
+    assert data["axes"]
+    assert all(0 <= ax["me"] <= 100 and 0 <= ax["them"] <= 100 for ax in data["axes"])
+
+
+async def test_h2h_without_meetings_still_has_forecast(db):
+    a, _, _ = await _seed(db)
+    stranger = _player(77, "Новенький")
+    db.add(stranger)
+    await db.commit()
+    data = await api.h2h_payload(db, a, stranger)
+    assert data["empty"] and data["score"] is None
+    assert data["forecast"]["chance"] > 50  # у Алисы рейтинг выше
+    assert data["axes"] == []  # у соперника меньше 5 матчей — сравнения стилей нет
 
 
 async def test_club_matches_paging(db, monkeypatch):
@@ -218,12 +276,47 @@ async def test_hall_of_fame(db):
     assert len(data["reigns"]) == 1 and data["reigns"][0]["name"] == "Вика"
 
 
-async def test_leaderboard_links(db):
+async def test_home_payload(db):
+    a, _, _ = await _seed(db)
+    data = await api.home_payload(db, a)
+    assert [p["rank"] for p in data["podium"]] == [1, 2, 3]
+    assert data["podium"][0]["champion"] is True and data["podium"][0]["name"] == "Боб"
+    assert data["me"]["place"].startswith("#")
+    assert data["featured"] is not None  # сегодня матчей нет — показан последний
+    assert data["featured"]["title"] == "Последний матч"
+    assert [link["route"] for link in data["links"]] == ["records", "matches", "activity/club", "throne"]
+
+
+async def test_home_shows_recent_record_pings(db):
+    from bot.db.models import ClubRecordPing
+
+    a, b, _ = await _seed(db)
+    db.add(ClubRecordPing(kind="streak", player_id=b.id, value=7))
+    db.add(ClubRecordPing(kind="peak", player_id=b.id, value=1500.0,
+                          pinged_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=30)))
+    await db.commit()
+    data = await api.home_payload(db, a)
+    assert len(data["records"]) == 1  # пинг месячной давности не показывается
+    assert data["records"][0]["value"] == "7 побед подряд"
+
+
+async def test_home_match_of_day_from_today(db):
+    a, b, _ = await _seed(db)
+    db.add(Match(challenger_id=a.id, challenged_id=b.id, status=MatchStatus.completed, winner_id=a.id,
+                 sets_data=[{"w": 11, "l": 13}, {"w": 14, "l": 12}, {"w": 12, "l": 10}, {"w": 13, "l": 11}],
+                 rating_change=20.0, completed_at=datetime.now(timezone.utc).replace(tzinfo=None)))
+    await db.commit()
+    data = await api.home_payload(db, a)
+    assert data["today"]["count"] == 1
+    assert data["featured"]["title"] == "Матч дня"
+    assert data["featured"]["winner"] == "a"
+    assert data["featured"]["reason"]
+
+
+async def test_leaderboard_rows_have_player_ids(db):
     a, _, _ = await _seed(db)
     data = await api.leaderboard_payload(db, a.id)
-    routes = [link["route"] for link in data["links"]]
-    assert routes == [f"player/{a.id}", "records", "matches", "activity/club", "throne"]
-    assert data["rows"][0]["player_id"]
+    assert all(r["player_id"] for r in data["rows"])
 
 
 # ── HTTP ──────────────────────────────────────────────────────────────────────
@@ -240,7 +333,7 @@ async def client(db_factory, monkeypatch):
 
 
 ROUTES_200 = [
-    "/api/player/1", "/api/player/2", "/api/player/1/stats/opp", "/api/player/1/achievements",
+    "/api/home", "/api/me", "/api/player/1", "/api/player/2", "/api/player/1/stats/opp", "/api/player/1/achievements",
     "/api/player/1/achievements/0", "/api/player/1/radar", "/api/player/1/activity",
     "/api/player/1/history", "/api/h2h/2", "/api/activity/club", "/api/records",
     "/api/matches", "/api/matches?offset=5", "/api/throne",
@@ -283,3 +376,58 @@ async def test_screens_do_not_write_to_db(client, db_factory):
     for path in ROUTES_200:
         await client.get(path, headers=client.auth)
     assert await snapshot() == before
+
+
+async def test_me_returns_viewer(client):
+    resp = await client.get("/api/me", headers=client.auth)
+    assert (await resp.json())["name"] == "Алиса"
+
+
+async def test_photo_without_bot_is_404(client):
+    resp = await client.get("/api/photo/1", headers=client.auth)
+    assert resp.status == 404
+
+
+class _FakeBot:
+    def __init__(self, has_photo=True, fail=False):
+        self.has_photo, self.fail, self.calls = has_photo, fail, 0
+
+    async def get_user_profile_photos(self, user_id, limit):
+        from types import SimpleNamespace
+
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("telegram недоступен")
+        sizes = [SimpleNamespace(width=80, file_id="small"), SimpleNamespace(width=320, file_id="big")]
+        return SimpleNamespace(photos=[sizes] if self.has_photo else [])
+
+    async def download(self, file_id, destination):
+        destination.write(b"JPEG-" + file_id.encode())
+        return destination
+
+
+async def test_photo_is_served_and_cached(db_factory, monkeypatch):
+    monkeypatch.setenv("WEBAPP_URL", "https://club.example/")
+    monkeypatch.setenv("ADMIN_ID", str(ADMIN))
+    async with db_factory() as s:
+        await _seed(s)
+    bot = _FakeBot()
+    async with TestClient(TestServer(create_app(TOKEN, db_factory, bot))) as c:
+        auth = {"Authorization": "tma " + _init_data(ADMIN)}
+        first = await c.get("/api/photo/2", headers=auth)
+        assert first.status == 200
+        assert await first.read() == b"JPEG-big"  # минимальный размер не меньше 160 px
+        assert first.headers["Content-Type"] == "image/jpeg"
+        await c.get("/api/photo/2", headers=auth)
+        assert bot.calls == 1  # второй раз из кэша
+
+
+async def test_photo_absent_or_failing():
+    from bot.webapp.photos import PhotoCache
+
+    cache = PhotoCache()
+    assert await cache.get(_FakeBot(has_photo=False), 1) is None
+    failing = _FakeBot(fail=True)
+    assert await cache.get(failing, 2) is None
+    assert await cache.get(failing, 2) is None
+    assert failing.calls == 2  # сбой Telegram не кэшируется
