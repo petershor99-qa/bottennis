@@ -5,11 +5,17 @@
    SingularityApp, своя палитра. Шрифт Raleway (файлы в static/fonts, OFL),
    цифры «в строку» и табличные. Никаких эмодзи; иконки только линейные. */
 
+/* В Raleway нет табличных цифр (tnum): ширина цифр разная, колонка рейтинга
+   «плясала» бы. Поэтому цифры исключены из диапазона шрифта (unicode-range) и
+   берутся из системного шрифта телефона, где tabular-nums работает; буквы и
+   знаки — Raleway. Файл — подмножество латиница + кириллица (OFL, fonts/OFL.txt). */
 @font-face {
   font-family: "Raleway";
   src: url("fonts/Raleway-Variable.woff2") format("woff2");
   font-weight: 100 900;
   font-display: swap;
+  unicode-range: U+0000-002F, U+003A-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC,
+                 U+0400-045F, U+0490-0491, U+04B0-04B1, U+2010-203A, U+2116, U+2122, U+2212, U+20BD;
 }
 
 :root {
