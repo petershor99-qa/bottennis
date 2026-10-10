@@ -6,6 +6,7 @@ import os
 import random
 import urllib.parse
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from html import escape as h
 from typing import cast
@@ -871,24 +872,78 @@ def _pin_champion(ranked: list[Player], champion_id: int | None) -> list[Player]
     return ranked
 
 
-async def snapshot_ranks(session: AsyncSession, exclude_match_id: int | None = None) -> dict[int, int]:
-    """Места игроков в рейтинге клуба прямо сейчас ({player_id: rank}) — те же,
-    что видит таблица (чемпион закреплён на #1, игроки с 0 матчей не входят).
-    Берётся до и после матча, чтобы показать «было → стало» (place_change_line)."""
+@dataclass(frozen=True)
+class StandingRow:
+    """Строка таблицы мест для итога матча (v2.159.0)."""
+    rank: int
+    player_id: int
+    name: str
+    rating: float
+    is_champion: bool
+
+
+async def snapshot_standings(
+    session: AsyncSession, exclude_match_id: int | None = None,
+) -> list[StandingRow]:
+    """Все игравшие по местам — ровно как в таблице рейтинга (чемпион закреплён
+    на #1, игроки без матчей не входят) — вместе с именем и рейтингом. Единственное
+    определение «таблицы» для итога матча: места «до» (snapshot_ranks) берутся из
+    него же. exclude_match_id — не учитывать матч (снимок «до»: CAS уже перевёл
+    его в completed, а игрок, впервые сыгравший в нём, ещё не должен быть в рейтинге)."""
     players = (await session.execute(select(Player))).scalars().all()
     counts = await get_match_counts(session, exclude_match_id)
     champion = next((p for p in players if p.is_champion), None)
-    return compute_ranks(players, counts, champion_id=champion.id if champion else None)
+    ranks = compute_ranks(players, counts, champion_id=champion.id if champion else None)
+    by_id = {p.id: p for p in players}
+    return [
+        StandingRow(rank, pid, by_id[pid].display_name, by_id[pid].rating, bool(by_id[pid].is_champion))
+        for pid, rank in sorted(ranks.items(), key=lambda kv: kv[1])
+    ]
 
 
-def place_change_line(before: dict[int, int], after: dict[int, int], player_id: int) -> str:
-    """«🏆 Место в клубе: #2 (было #3)» — только если у игрока было место ДО и оно
-    изменилось. Дебютант (в «до» его нет) и неизменное место дают пустую строку:
-    сообщение о матче не должно расти без причины."""
-    old, new = before.get(player_id), after.get(player_id)
-    if old is None or new is None or old == new:
+async def snapshot_ranks(session: AsyncSession, exclude_match_id: int | None = None) -> dict[int, int]:
+    """Места игроков прямо сейчас ({player_id: rank}) — те же, что в таблице.
+    Берётся до матча, чтобы в блоке «Рейтинг клуба» показать «(было #N)»."""
+    rows = await snapshot_standings(session, exclude_match_id)
+    return {r.player_id: r.rank for r in rows}
+
+
+def ranking_block(
+    before: dict[int, int], standings: list[StandingRow], viewer_id: int,
+) -> str:
+    """Блок «Рейтинг клуба» под итогом матча (v2.159.0) — все игравшие по местам,
+    свой ряд помечен «▶» и словом «Ты», чемпион — 👑, «(было #N)» только если
+    место изменилось, под списком — разрыв до игрока выше (у лидера — отрыв от
+    второго). Разрыв не показывается, если он не положителен: выше стоит
+    закреплённый чемпион с рейтингом ниже (место #1 не занимается по очкам).
+    Пустая строка, если зрителя нет в таблице."""
+    me_index = next((i for i, r in enumerate(standings) if r.player_id == viewer_id), None)
+    if me_index is None:
         return ""
-    return f"🏆 Место в клубе: <b>#{new}</b> (было #{old})"
+    me = standings[me_index]
+    lines = ["🏆 <b>Рейтинг клуба:</b>"]
+    for row in standings:
+        crown = " 👑" if row.is_champion else ""
+        if row.player_id == viewer_id:
+            line = f"▶ #{row.rank}{crown} <b>Ты</b> · {row.rating:.1f}"
+            old = before.get(viewer_id)
+            if old is not None and old != row.rank:
+                line += f" (было #{old})"
+        else:
+            line = f"#{row.rank}{crown} {h(row.name)} · {row.rating:.1f}"
+        lines.append(line)
+
+    if me_index > 0:
+        above = standings[me_index - 1]
+        gap = round(above.rating - me.rating, 1)
+        if gap > 0:
+            lines += ["", f"До #{above.rank} {h(above.name)}: −{gap}"]
+    elif len(standings) > 1:
+        nxt = standings[1]
+        lead = round(me.rating - nxt.rating, 1)
+        if lead > 0:
+            lines += ["", f"Отрыв от #{nxt.rank} {h(nxt.name)}: +{lead}"]
+    return "\n".join(lines)
 
 
 def format_rank(ranks: dict[int, int], player_id: int) -> str:

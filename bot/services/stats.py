@@ -4,6 +4,7 @@
 Вынесено из profile.py в сервисный модуль: scheduler.py импортировал эти
 функции напрямую из хендлера, что смешивало слои (хендлер — не сервис).
 """
+import math
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from html import escape as h
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.services.achievements import ACHIEVEMENTS_MAP, get_achievements
 from bot.services.personal_records import get_personal_records_count
 from bot.utils import (
+    _ru_plural,
     activity_counts_by_day,
     busiest_msk_hour,
     get_career_matches,
@@ -530,6 +532,31 @@ def _style_archetype(radar: dict[str, float], s: dict | None = None) -> str:
             best_margin = margin
             best_label = label
     return best_label or NEUTRAL_ARCHETYPE
+
+
+def _closest_archetype_hint(radar: dict[str, float], s: dict | None = None) -> str | None:
+    """Подсказка для «Универсала» (v2.159.0): к какому архетипу игрок ближе всего
+    и по какой оси чего не хватает. Только «положительные» архетипы (порог
+    «не ниже»): «ближе всего к Донору рейтинга» — не подсказка. Оси без нужной
+    выборки пропускаются (как в _style_archetype). None, если подсказывать нечего."""
+    # Сравниваем ОТНОСИТЕЛЬНЫЙ разрыв (доля порога): оси живут в разных диапазонах
+    # (Камбэки — единицы процентов при пороге 8, Клатч — десятки при пороге 55), и по
+    # абсолютным пунктам всегда выигрывал бы самый «низкий» порог.
+    best: tuple[float, float, str, str] | None = None
+    for axis, threshold, is_low, label in _ARCHETYPE_RULES:
+        if is_low or not _axis_has_sample(axis, s):
+            continue
+        gap = threshold - radar[axis]
+        if gap > 0 and (best is None or gap / threshold < best[0]):
+            best = (gap / threshold, gap, axis, label)
+    if best is None:
+        return None
+    _relative, gap, axis_name, label_name = best
+    points = max(1, math.ceil(gap))
+    return (
+        f"🧭 Ближе всего к «{label_name}»: не хватает "
+        f"{_ru_plural(points, 'пункта', 'пунктов', 'пунктов')} по оси «{axis_name}»"
+    )
 
 
 # Короткая расшифровка каждого архетипа (v2.130.0) — по прямой просьбе
