@@ -1242,7 +1242,7 @@ def compute_h2h(matches: Sequence[Match], viewer_id: int, opponent_id: int) -> d
                 else:
                     break
             if n >= 2:
-                streak_desc = f"ты ведёшь — {n} побед подряд"
+                streak_desc = f"ты ведёшь — {pluralize_wins(n)} подряд"
         elif latest.winner_id is not None:
             n = 0
             for m in matches:

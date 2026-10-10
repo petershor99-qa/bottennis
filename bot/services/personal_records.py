@@ -23,7 +23,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Match, PersonalRecordEarned, Player
-from bot.utils import MSK_OFFSET, as_naive, compute_alltime_streak, get_career_matches
+from bot.utils import MSK_OFFSET, as_naive, compute_alltime_streak, get_career_matches, pluralize_wins
 
 
 async def _get_matches_asc(session: AsyncSession, player_id: int) -> list[Match]:
@@ -162,7 +162,7 @@ async def check_personal_records_on_win(session: AsyncSession, winner: Player, m
     streak_before = compute_alltime_streak(prior, winner.id)
     if streak_before > 0 and streak_now > streak_before:
         records.append((
-            f"⚡ RAMPAGE! {streak_now} побед подряд — новый личный рекорд.",
+            f"⚡ RAMPAGE! {pluralize_wins(streak_now)} подряд — новый личный рекорд.",
             "win_streak", streak_now,
         ))
 
@@ -196,7 +196,7 @@ async def check_personal_records_on_win(session: AsyncSession, winner: Player, m
     vsopp_before = _max_streak_vs_any_opponent(prior, winner.id)
     if vsopp_before > 0 and vsopp_now > vsopp_before:
         records.append((
-            f"🎯 Ты его личный кошмар. {vsopp_now} побед подряд над одним соперником — рекорд.",
+            f"🎯 Ты его личный кошмар. {pluralize_wins(vsopp_now)} подряд над одним соперником — рекорд.",
             "streak_vs_opponent", vsopp_now,
         ))
 

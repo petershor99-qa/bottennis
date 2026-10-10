@@ -48,7 +48,9 @@ from bot.utils import (
     hour_range_label,
     msg_user,
     pluralize_days,
+    pluralize_losses,
     pluralize_matches,
+    pluralize_wins,
     rank_progress,
     rank_title,
 )
@@ -107,11 +109,11 @@ def _stats_groups(player, s: dict) -> dict[str, list[str]]:
 
     streak = s["streak"]
     if streak >= 2:
-        form_lines.append(f"🔥 Серия: <b>{streak} побед подряд</b>")
+        form_lines.append(f"🔥 Серия: <b>{pluralize_wins(streak)} подряд</b>")
     if s["loss_streak"] >= 2:
-        form_lines.append(f"😬 Серия: <b>{s['loss_streak']} поражений подряд</b>")
+        form_lines.append(f"😬 Серия: <b>{pluralize_losses(s['loss_streak'])} подряд</b>")
     if s["best_streak"] >= 2 and s["best_streak"] != streak:
-        form_lines.append(f"🎖 Рекорд серии: <b>{s['best_streak']} побед подряд</b>")
+        form_lines.append(f"🎖 Рекорд серии: <b>{pluralize_wins(s['best_streak'])} подряд</b>")
     if s["activity_streak_days"] >= 2:
         form_lines.append(f"📆 Играешь <b>{pluralize_days(s['activity_streak_days'])}</b> подряд")
 
@@ -574,7 +576,7 @@ async def show_career_recap(callback: CallbackQuery, session: AsyncSession):
     if s["best_win"] is not None:
         lines.append(f"🏆 Лучшая победа: <b>+{s['best_win']} pts</b>")
     if s["best_streak"] >= 2:
-        lines.append(f"🔥 Лучшая серия: <b>{s['best_streak']} побед подряд</b>")
+        lines.append(f"🔥 Лучшая серия: <b>{pluralize_wins(s['best_streak'])} подряд</b>")
     if s["best_opp"]:
         bo = s["best_opp"]
         lines.append(f"🎁 Подарок: <b>{h(bo['name'])}</b> ({bo['wins']}–{bo['losses']}, {bo['rate']}% побед)")

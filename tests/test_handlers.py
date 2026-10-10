@@ -5130,7 +5130,7 @@ async def test_personal_record_fires_end_to_end(db):
     cb, bot = _callback(1, f"confirm_{m.id}"), AsyncMock()
     await confirm_result(cb, db, st, bot)
 
-    assert any("RAMPAGE" in t and "2 побед подряд" in t for t in _texts(bot))
+    assert any("RAMPAGE" in t and "2 победы подряд" in t for t in _texts(bot))
 
 
 # ── Карточка «поделиться победой» ────────────────────────────────────────────

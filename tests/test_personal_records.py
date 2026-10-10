@@ -62,7 +62,7 @@ async def test_win_streak_record_fires_on_second_win_in_a_row(db):
     await db.flush()
 
     msgs = await check_personal_records_on_win(db, p1, m2)
-    assert any("RAMPAGE" in t and "2 побед подряд" in t for t in msgs)
+    assert any("RAMPAGE" in t and "2 победы подряд" in t for t in msgs)
 
 
 async def test_win_streak_record_writes_dated_row(db):
@@ -261,7 +261,7 @@ async def test_streak_vs_single_opponent_record_fires(db):
     await db.flush()
 
     msgs = await check_personal_records_on_win(db, p1, m4)
-    assert any("личный кошмар" in t and "3 побед подряд" in t for t in msgs)
+    assert any("личный кошмар" in t and "3 победы подряд" in t for t in msgs)
 
 
 async def test_streak_vs_single_opponent_not_fired_on_first_win_ever(db):
