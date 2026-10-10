@@ -30,6 +30,8 @@ from bot.handlers.start import router as start_router
 from bot.handlers.year_vote import router as year_vote_router
 from bot.middleware import DatabaseMiddleware, UsageMiddleware
 from bot.scheduler import setup_scheduler
+from bot.webapp.config import webapp_base_url
+from bot.webapp.server import start_webapp
 
 logging.basicConfig(
     level=logging.INFO,
@@ -118,11 +120,23 @@ async def main() -> None:
     scheduler.start()
     logging.info("Планировщик запущен.")
 
+    # Mini App (v2.160.0): только чтение, в том же процессе. Без WEBAPP_URL в
+    # .env не стартует. Сбой запуска (например, занят порт) не должен ронять
+    # бота — приложение необязательно, бот работает как раньше.
+    webapp_runner = None
+    if webapp_base_url():
+        try:
+            webapp_runner = await start_webapp(token, async_session)
+        except Exception:
+            logging.exception("Mini App не запустился, бот работает без него.")
+
     logging.info("Бот запущен. Нажми Ctrl+C для остановки.")
     try:
         await dp.start_polling(bot)
     finally:
         scheduler.shutdown()
+        if webapp_runner is not None:
+            await webapp_runner.cleanup()
 
 
 if __name__ == "__main__":

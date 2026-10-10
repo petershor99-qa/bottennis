@@ -3,6 +3,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
+    WebAppInfo,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -14,6 +15,7 @@ from bot.utils import (
     favor_icon,
     random_challenge_button_label,
 )
+from bot.webapp.config import WEBAPP_BUTTON_TEXT
 
 
 def main_reply_kb() -> ReplyKeyboardMarkup:
@@ -366,21 +368,27 @@ def after_set_kb(match_id: int, has_sets: bool) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def leaderboard_kb(players) -> InlineKeyboardMarkup:
+def leaderboard_kb(rows, web_app_url: str | None = None) -> InlineKeyboardMarkup:
     """Клавиатура под таблицей рейтинга — кнопки профилей игроков.
+    rows — строки `compute_leaderboard` (нужны player_id и name).
 
     4 экранных ссылки ниже сгруппированы по 2 в ряд и с сокращёнными подписями
-    (v2.114.0) — тот же приём и мотивация, что у stats_kb ниже."""
+    (v2.114.0) — тот же приём и мотивация, что у stats_kb ниже.
+
+    web_app_url — кнопка Mini App (v2.160.0); None — кнопки нет (приложение
+    выключено флагом или недоступно этому игроку, см. bot/webapp/config.py)."""
     b = InlineKeyboardBuilder()
     btns = [
         InlineKeyboardButton(
-            text=f"#{i + 1} {p.display_name[:16]}",
-            callback_data=f"player_profile_{p.id}",
+            text=f"#{i + 1} {row.name[:16]}",
+            callback_data=f"player_profile_{row.player_id}",
         )
-        for i, p in enumerate(players)
+        for i, row in enumerate(rows)
     ]
     for i in range(0, len(btns), 2):
         b.row(*btns[i:i + 2])
+    if web_app_url:
+        b.row(InlineKeyboardButton(text=WEBAPP_BUTTON_TEXT, web_app=WebAppInfo(url=web_app_url)))
     b.row(
         InlineKeyboardButton(text="🏆 Рекорды клуба", callback_data="club_records"),
         InlineKeyboardButton(text="📋 Все матчи клуба", callback_data="club_matches_0"),
