@@ -110,7 +110,8 @@ async def test_profile_payload_personal(db):
     assert data["head"]["personal"] is True
     assert data["head"]["rating"] == "1080.0"
     assert [t["label"] for t in data["tiles"]][0] == "Побед"
-    assert len(data["tiles"]) == 4
+    assert len(data["tiles"]) == 6
+    assert data["chart"]["min"] <= data["chart"]["max"]
     assert data["chart"]["values"][-1] == 1080.0
     assert data["versus"] is None  # с самим собой встреч нет
     assert 1 <= len(data["last10"]) <= 10
@@ -441,3 +442,33 @@ async def test_photo_hidden_by_privacy_is_logged(caplog):
     with caplog.at_level(logging.INFO, logger="bot.webapp.photos"):
         assert await PhotoCache().get(_FakeBot(has_photo=False), 4242) is None
     assert any("4242" in r.message and "приватност" in r.message for r in caplog.records)
+
+
+async def test_streak_tile_ignores_single_win(db):
+    """Серия из одного матча серией не считается — вместо неё исход последнего."""
+    a, b, _ = await _seed(db)
+    data = await api.player_payload(db, a, a)
+    tile = data["tiles"][1]
+    if tile["label"] == "Серия побед":
+        assert int(tile["value"]) >= 2
+    else:
+        assert tile["label"] in ("Серия поражений", "Последний матч")
+    lone = _player(31, "Одиночка")
+    db.add(lone)
+    await db.flush()
+    db.add(Match(challenger_id=lone.id, challenged_id=b.id, status=MatchStatus.completed, winner_id=lone.id,
+                 sets_data=[{"w": 11, "l": 3}], rating_change=6.0,
+                 completed_at=datetime.now(timezone.utc).replace(tzinfo=None)))
+    await db.commit()
+    one = (await api.player_payload(db, lone, lone))["tiles"][1]
+    assert one == {"label": "Последний матч", "value": "Победа", "tone": "win"}
+
+
+async def test_profile_tiles_have_distinct_meaning(db):
+    a, _, _ = await _seed(db)
+    tiles = (await api.player_payload(db, a, a))["tiles"]
+    assert [t["label"] for t in tiles][0] == "Побед"
+    assert [t["label"] for t in tiles][2:] == ["Матчей", "Партий выиграно", "Пик рейтинга", "Индекс легенды"]
+    assert "партии" not in tiles[2]["sub"]  # доля партий — отдельная плитка, не подпись «Матчей»
+    assert tiles[-1]["hint"]  # индекс легенды объясняется по нажатию
+    assert float(tiles[4]["value"]) >= a.rating  # пик не ниже текущего рейтинга

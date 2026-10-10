@@ -291,3 +291,15 @@ async def test_leaderboard_screen_shows_button_only_to_admin(db, webapp_env):
     _, player_kb = await _build_leaderboard_screen(db, 2002)
     assert len(_web_app_buttons(admin_kb)) == 1
     assert _web_app_buttons(player_kb) == []
+
+
+async def test_static_files_are_revalidated(client):
+    """РЕГРЕССИЯ v2.164.0: без Cache-Control встроенный браузер Telegram кэшировал
+    app.js и после выкладки показывал старую страницу с новым API."""
+    for path in ("/static/app.js", "/static/app.css"):
+        resp = await client.get(path)
+        assert resp.status == 200
+        assert resp.headers["Cache-Control"] == "no-cache"
+        assert resp.headers.get("ETag")
+        again = await client.get(path, headers={"If-None-Match": resp.headers["ETag"]})
+        assert again.status == 304

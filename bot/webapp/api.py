@@ -304,21 +304,29 @@ async def player_payload(session: AsyncSession, player: Player, viewer: Player) 
 
     total = s["wins"] + s["draws"] + s["losses"]
     legend_index, legend_rank, legend_total = await _legend_index_with_rank(session, player, players_all)
-    if s["streak"] >= 1:
-        streak_tile = {"label": "Серия побед", "value": str(s["streak"]), "tone": "win"}
-    elif s["loss_streak"] >= 1:
+    recent = sorted((m for m in matches if m.completed_at), key=lambda m: m.completed_at)[-10:]
+    last10 = ["d" if m.winner_id is None else ("w" if m.winner_id == player.id else "l") for m in recent]
+
+    # Серия из одного матча серией не считается — вместо неё исход последнего матча
+    if s["streak"] >= 2:
+        streak_tile = {"label": "Серия побед", "value": str(s["streak"]), "tone": "win",
+                       "sub": f"рекорд {s['best_streak']}" if s["best_streak"] > s["streak"] else "твой рекорд"}
+    elif s["loss_streak"] >= 2:
         streak_tile = {"label": "Серия поражений", "value": str(s["loss_streak"]), "tone": "loss"}
     else:
-        streak_tile = {"label": "Серия", "value": "0", "tone": ""}
+        last = last10[-1] if last10 else "d"
+        word, tone = {"w": ("Победа", "win"), "l": ("Поражение", "loss")}.get(last, ("Ничья", ""))
+        streak_tile = {"label": "Последний матч", "value": word, "tone": tone}
+    peak = max(player.peak_rating or 0.0, player.rating)
     tiles = [
         {"label": "Побед", "value": f"{s['win_rate']}%", "sub": f"{s['wins']} из {total}"},
         streak_tile,
-        {"label": "Матчей", "value": str(total), "sub": f"партии {s['sets_win_rate']}%"},
-        {"label": "Индекс легенды", "value": str(legend_index), "sub": f"#{legend_rank} из {legend_total}"},
+        {"label": "Матчей", "value": str(total), "sub": f"{s['wins']} побед · {s['losses']} поражений"},
+        {"label": "Партий выиграно", "value": f"{s['sets_win_rate']}%", "sub": "доля выигранных партий"},
+        {"label": "Пик рейтинга", "value": f"{peak:.1f}", "sub": "максимум за всё время"},
+        {"label": "Индекс легенды", "value": str(legend_index), "sub": f"#{legend_rank} из {legend_total}",
+         "hint": "Индекс легенды считается по достижениям, рекордам клуба и боссфайтам."},
     ]
-
-    recent = sorted((m for m in matches if m.completed_at), key=lambda m: m.completed_at)[-10:]
-    last10 = ["d" if m.winner_id is None else ("w" if m.winner_id == player.id else "l") for m in recent]
 
     goal_lines = []
     if personal:
@@ -339,7 +347,8 @@ async def player_payload(session: AsyncSession, player: Player, viewer: Player) 
     chart = None
     if len(rated) >= 2:
         labels, values = build_rating_series(rated, player.id, player.rating)
-        chart = {"labels": labels, "values": values, "reference": 1000.0}
+        chart = {"labels": labels, "values": values, "reference": 1000.0,
+                 "min": min(values), "max": max(values)}
 
     titled = [{"title": "Положение", "items": position[0]}] if position else []
     for key, title in _available_sections(player, s, matches, include_growth=personal):

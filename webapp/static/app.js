@@ -220,16 +220,36 @@
   function num(cls, text) { var n = el("div", cls); countUp(n, text); return n; }
 
   // ── API ────────────────────────────────────────────────────────────────────
+  // Ответы держим минуту: переключение разделов профиля и возврат «назад» не
+  // ходят на сервер заново. Ошибки не кэшируются. Данные меняются, только когда
+  // вносят матч, — минутная давность не заметна.
+  var CACHE_TTL_MS = 60 * 1000;
+  var apiCache = {};
+
   function api(path) {
     var initData = tg && tg.initData;
     if (!initData) return Promise.reject(new Error("Откройте приложение из бота."));
-    return fetch("api/" + path, { headers: { "Authorization": "tma " + initData } })
+    var hit = apiCache[path];
+    if (hit && Date.now() - hit.t < CACHE_TTL_MS) return hit.p;
+    var p = fetch("api/" + path, { headers: { "Authorization": "tma " + initData } })
       .then(function (resp) {
         return resp.json().then(function (body) {
           if (!resp.ok) throw new Error(body.error || "Не удалось загрузить данные.");
           return body;
         });
       }, function () { throw new Error("Нет связи с сервером. Попробуйте ещё раз."); });
+    apiCache[path] = { t: Date.now(), p: p };
+    p.catch(function () { delete apiCache[path]; });
+    return p;
+  }
+
+  // Серые «скелеты» вместо слова «Загрузка…»
+  function skeleton(kind) {
+    var wrap = el("div", "sk");
+    var shapes = kind === "profile" ? ["sk-hero", "sk-tabs", "sk-tiles"] :
+      kind === "body" ? ["sk-tiles", "sk-card"] : ["sk-title", "sk-card", "sk-card"];
+    shapes.forEach(function (c) { wrap.appendChild(el("div", "sk-block " + c)); });
+    return wrap;
   }
 
   // ── Графики ────────────────────────────────────────────────────────────────
@@ -240,6 +260,7 @@
     var hi = Math.max.apply(null, vals.concat([chart.reference])) + 8;
     function x(i) { return L + (W - L - R) * (vals.length === 1 ? 0.5 : i / (vals.length - 1)); }
     function y(v) { return T + (H - T - B) * (1 - (v - lo) / (hi - lo)); }
+    var wrap = el("div", "chart-wrap");
     var s = svg("svg", { "class": "chart", viewBox: "0 0 " + W + " " + H, role: "img" });
     var ref = y(chart.reference);
     s.appendChild(svg("line", { "class": "chart-ref", x1: L, x2: W - R, y1: ref, y2: ref }));
@@ -249,14 +270,44 @@
       d: "M" + x(0).toFixed(1) + "," + bottom + " L" + pts.join(" L") + " L" + x(vals.length - 1).toFixed(1) + "," + bottom + " Z" }));
     s.appendChild(svg("polyline", { "class": "chart-line", points: pts.join(" "), pathLength: "1" }));
     var last = vals.length - 1;
-    s.appendChild(svg("circle", { "class": "chart-dot", cx: x(last), cy: y(vals[last]), r: 3.5 }));
+    var dot = svg("circle", { "class": "chart-dot", cx: x(last), cy: y(vals[last]), r: 3.5 });
+    var marker = svg("line", { "class": "chart-marker", x1: 0, x2: 0, y1: T, y2: H - B });
+    s.appendChild(marker);
+    s.appendChild(dot);
     var first = svg("text", { "class": "chart-label", x: L, y: H - 3 });
     first.textContent = chart.labels[0];
     var end = svg("text", { "class": "chart-label", x: W - R, y: H - 3, "text-anchor": "end" });
     end.textContent = chart.labels[last];
     s.appendChild(first);
     s.appendChild(end);
-    return s;
+    wrap.appendChild(s);
+
+    var meta = el("div", "chart-meta");
+    var rest = "от " + chart.min.toFixed(1) + " до " + chart.max.toFixed(1) + " · нажмите на график";
+    meta.textContent = rest;
+    wrap.appendChild(meta);
+
+    function pick(ev) {
+      var box = s.getBoundingClientRect();
+      if (!box.width) return;
+      var px = (ev.clientX - box.left) / box.width * W;
+      var i = Math.max(0, Math.min(vals.length - 1, Math.round((px - L) / (W - L - R) * (vals.length - 1))));
+      marker.setAttribute("x1", x(i)); marker.setAttribute("x2", x(i));
+      marker.classList.add("is-on");
+      dot.setAttribute("cx", x(i)); dot.setAttribute("cy", y(vals[i]));
+      meta.textContent = chart.labels[i] + " · " + vals[i].toFixed(1);
+    }
+    function release() {
+      marker.classList.remove("is-on");
+      dot.setAttribute("cx", x(last)); dot.setAttribute("cy", y(vals[last]));
+      meta.textContent = rest;
+    }
+    s.addEventListener("pointerdown", pick);
+    s.addEventListener("pointermove", function (ev) { if (ev.buttons || ev.pointerType === "touch") pick(ev); });
+    s.addEventListener("pointerup", release);
+    s.addEventListener("pointerleave", release);
+    s.addEventListener("pointercancel", release);
+    return wrap;
   }
 
   function heatmap(days) {
@@ -440,9 +491,12 @@
       b.type = "button";
       if (t[0] === "style" && counts && !counts.style) b.classList.add("is-dim");
       b.addEventListener("click", function () {
-        if (t[0] === active) return;
+        // Каркас живёт между разделами, поэтому «текущий» берём из адреса,
+        // а не из значения при создании переключателя.
+        var target = "#/player/" + playerId + (t[0] ? "/" + t[0] : "");
+        if (location.hash === target) return;
         haptic("select");
-        location.replace("#/player/" + playerId + (t[0] ? "/" + t[0] : ""));
+        location.replace(target);
       });
       seg.appendChild(b);
     });
@@ -467,12 +521,47 @@
     c.appendChild(hero);
   }
 
-  function renderProfileShell(c, d, playerId, tab) {
+  // Каркас профиля (шапка с графиком, переключатель разделов) строится один раз
+  // на игрока; при смене раздела меняется только содержимое под переключателем.
+  var shell = null;
+
+  function buildShell(c, d, playerId) {
     profileHero(c, d, playerId);
-    if (!d.empty) c.appendChild(segmented(playerId, tab, d.counts));
+    var seg = null;
+    if (!d.empty) { seg = segmented(playerId, "", d.counts); c.appendChild(seg); }
     var body = el("div", "tab-body");
     c.appendChild(body);
-    return body;
+    shell = { playerId: playerId, data: d, body: body, seg: seg };
+  }
+
+  function setSegment(tab) {
+    if (!shell || !shell.seg) return;
+    var tabs = shell.seg.children;
+    PROFILE_TABS.forEach(function (t, i) {
+      tabs[i].classList.toggle("is-active", t[0] === tab);
+    });
+  }
+
+  function loadTab(tab, token) {
+    var d = shell.data, id = shell.playerId, body = shell.body;
+    body.textContent = "";
+    if (d.empty) { emptyState(body, d.empty); return; }
+    if (tab === "") { renderOverview(body, d, id); return; }
+    body.appendChild(skeleton("body"));
+    var jobs = tab === "matches" ? [api("player/" + id + "/history")] :
+      tab === "achievements" ? [api("player/" + id + "/achievements")] :
+        [api("player/" + id + "/radar"), api("player/" + id + "/activity")];
+    Promise.all(jobs).then(function (r) {
+      if (token !== renderToken) return;
+      body.textContent = "";
+      if (tab === "matches") renderMatchesTab(body, r[0]);
+      else if (tab === "achievements") renderAchievementsTab(body, r[0]);
+      else renderStyleTab(body, r[0], r[1]);
+    }, function (err) {
+      if (token !== renderToken) return;
+      body.textContent = "";
+      emptyState(body, err.message);
+    });
   }
 
   function renderOverview(c, d, playerId) {
@@ -483,6 +572,10 @@
       tile.appendChild(el("div", "tile-label", t.label));
       tile.appendChild(num("tile-value", t.value));
       if (t.sub) tile.appendChild(el("div", "tile-sub", t.sub));
+      if (t.hint) {
+        tile.classList.add("tap", "tile-hinted");
+        tile.addEventListener("click", function () { sheetOpen(null, t.label, t.hint, ""); });
+      }
       tiles.appendChild(tile);
     });
     c.appendChild(tiles);
@@ -531,23 +624,28 @@
     return a.tier ? "badge-" + a.tier : "badge-earned";
   }
 
-  function achievementSheet(a) {
+  function sheetOpen(badgeNode, title, text, meta) {
     var old = document.querySelector(".sheet-wrap");
     if (old) old.remove();
     var wrap = el("div", "sheet-wrap");
     var sheet = el("div", "sheet");
-    var badge = el("div", "badge badge-lg " + badgeClass(a));
-    if (a.hidden) badge.appendChild(el("span", "badge-q", "?"));
-    else badge.appendChild(icon(a.earned ? a.icon : "lock"));
-    sheet.appendChild(badge);
-    sheet.appendChild(el("div", "sheet-title", a.name));
-    sheet.appendChild(el("div", "sheet-text", a.desc));
-    var tierWord = { bronze: "бронза", silver: "серебро", gold: "золото" }[a.tier];
-    sheet.appendChild(el("div", "sheet-meta", a.earned ? (tierWord ? "Получено · " + tierWord : "Получено") : "Ещё не получено"));
+    if (badgeNode) sheet.appendChild(badgeNode);
+    sheet.appendChild(el("div", "sheet-title", title));
+    sheet.appendChild(el("div", "sheet-text", text));
+    if (meta) sheet.appendChild(el("div", "sheet-meta", meta));
     wrap.appendChild(sheet);
     wrap.addEventListener("click", function () { wrap.remove(); });
     document.body.appendChild(wrap);
     haptic("impact");
+  }
+
+  function achievementSheet(a) {
+    var badge = el("div", "badge badge-lg " + badgeClass(a));
+    if (a.hidden) badge.appendChild(el("span", "badge-q", "?"));
+    else badge.appendChild(icon(a.earned ? a.icon : "lock"));
+    var tierWord = { bronze: "бронза", silver: "серебро", gold: "золото" }[a.tier];
+    sheetOpen(badge, a.name, a.desc,
+      a.earned ? (tierWord ? "Получено · " + tierWord : "Получено") : "Ещё не получено");
   }
 
   function renderAchievementsTab(body, d) {
@@ -559,7 +657,7 @@
       t.appendChild(el("span", "group-count", cat.value));
       wrap.appendChild(t);
       var grid = el("div", "badges");
-      cat.items.forEach(function (a) {
+      function badgeCell(a) {
         a.icon = CATEGORY_ICONS[ci] || "trophy";
         var cell = el("button", "badge-cell");
         cell.type = "button";
@@ -569,9 +667,26 @@
         cell.appendChild(badge);
         cell.appendChild(el("span", "badge-name", a.name));
         cell.addEventListener("click", function () { achievementSheet(a); });
-        grid.appendChild(cell);
-      });
+        return cell;
+      }
+      // Полученные — все, закрытых показываем ближайшие три, остальное и скрытые
+      // сворачиваем: стена из замков ничего не говорит.
+      var earned = cat.items.filter(function (a) { return a.earned; });
+      var open = cat.items.filter(function (a) { return !a.earned && !a.hidden; });
+      var hidden = cat.items.filter(function (a) { return !a.earned && a.hidden; });
+      var shown = earned.concat(open.slice(0, 3));
+      var folded = open.slice(3).concat(hidden);
+      shown.forEach(function (a) { grid.appendChild(badgeCell(a)); });
       wrap.appendChild(grid);
+      if (folded.length) {
+        var more = el("button", "more", "Показать остальные (" + folded.length + ")");
+        more.type = "button";
+        more.addEventListener("click", function () {
+          folded.forEach(function (a) { grid.appendChild(badgeCell(a)); });
+          more.remove();
+        });
+        wrap.appendChild(more);
+      }
       body.appendChild(wrap);
     });
   }
@@ -667,6 +782,16 @@
 
     if (d.axes.length) {
       var ax = section("Стиль: ты и " + d.them.name);
+      var key = el("li", "row axis-key");
+      var k1 = el("span", "legend-item");
+      k1.appendChild(el("i", "swatch swatch-me"));
+      k1.appendChild(document.createTextNode("Ты"));
+      var k2 = el("span", "legend-item");
+      k2.appendChild(el("i", "swatch swatch-them"));
+      k2.appendChild(document.createTextNode(d.them.name));
+      key.appendChild(k1);
+      key.appendChild(k2);
+      ax.list.appendChild(key);
       d.axes.forEach(function (a) {
         var li = el("li", "row axis-row");
         li.appendChild(el("div", "axis-name", a.name));
@@ -785,28 +910,16 @@
   // [шаблон адреса, вкладка снизу, загрузка данных, отрисовка]
   function one(path) { return function () { return api(path); }; }
 
-  function playerTabs(extra) {
-    return function (m) {
-      return Promise.all([api("player/" + m[1])].concat(extra.map(function (p) { return api("player/" + m[1] + "/" + p); })));
-    };
-  }
+  var PLAYER_ROUTE = /^player\/(\d+)(?:\/(matches|achievements|style))?$/;
 
   var routes = [
-    [/^$/, "home", one("home"), renderHome],
-    [/^rating$/, "rating", one("leaderboard"), renderLeaderboard],
-    [/^player\/(\d+)$/, null, function (m) { return api("player/" + m[1]); },
-      function (c, d, m) { renderOverview(renderProfileShell(c, d, m[1], ""), d, m[1]); }],
-    [/^player\/(\d+)\/matches$/, null, playerTabs(["history"]),
-      function (c, d, m) { renderMatchesTab(renderProfileShell(c, d[0], m[1], "matches"), d[1]); }],
-    [/^player\/(\d+)\/achievements$/, null, playerTabs(["achievements"]),
-      function (c, d, m) { renderAchievementsTab(renderProfileShell(c, d[0], m[1], "achievements"), d[1]); }],
-    [/^player\/(\d+)\/style$/, null, playerTabs(["radar", "activity"]),
-      function (c, d, m) { renderStyleTab(renderProfileShell(c, d[0], m[1], "style"), d[1], d[2]); }],
-    [/^h2h\/(\d+)$/, null, function (m) { return api("h2h/" + m[1]); }, function (c, d) { renderVersus(c, d); }],
-    [/^records$/, "home", one("records"), renderRecords],
-    [/^matches$/, "home", one("matches"), renderClubMatches],
-    [/^activity\/club$/, "home", one("activity/club"), renderClubActivity],
-    [/^throne$/, "home", one("throne"), renderThrone]
+    [/^$/, "home", one("home"), renderHome, "home"],
+    [/^rating$/, "rating", one("leaderboard"), renderLeaderboard, "rating"],
+    [/^h2h\/(\d+)$/, null, function (m) { return api("h2h/" + m[1]); }, function (c, d) { renderVersus(c, d); }, "h2h"],
+    [/^records$/, "home", one("records"), renderRecords, "records"],
+    [/^matches$/, "home", one("matches"), renderClubMatches, "matches"],
+    [/^activity\/club$/, "home", one("activity/club"), renderClubActivity, "activity"],
+    [/^throne$/, "home", one("throne"), renderThrone, "throne"]
   ];
 
   var TABS = [["home", "", "Клуб", "home"], ["rating", "rating", "Рейтинг", "rating"], ["me", "me", "Я", "user"]];
@@ -828,31 +941,73 @@
     });
   }
 
-  var lastRender = null;
-
   function currentRoute() { return location.hash.replace(/^#\/?/, ""); }
+
+  // Позиция прокрутки по адресу: возврат «назад» попадает на то же место
+  var scrollPos = {};
+  var renderedRoute = null;
+
+  function finishRender(route, keepScroll) {
+    renderedRoute = route;
+    if (keepScroll) return;
+    window.scrollTo(0, scrollPos[route] || 0);
+  }
 
   function render() {
     var route = currentRoute();
+    if (renderedRoute !== null && renderedRoute !== route) scrollPos[renderedRoute] = window.scrollY;
     if (route === "me") { location.replace("#/player/" + viewerId); return; }
+
+    var token = ++renderToken;
+    var pm = route.match(PLAYER_ROUTE);
+
+    if (pm) {
+      var playerId = pm[1], tab = pm[2] || "";
+      drawTabbar(playerId === String(viewerId) ? "me" : null);
+      var isOwn = route === "player/" + viewerId;
+      if (tg && tg.BackButton) { if (isOwn) tg.BackButton.hide(); else tg.BackButton.show(); }
+      if (shell && shell.playerId === playerId && app.contains(shell.body)) {
+        // тот же игрок — переключаем только раздел, шапку не трогаем
+        setSegment(tab);
+        loadTab(tab, token);
+        renderedRoute = route;
+        return;
+      }
+      shell = null;
+      app.textContent = "";
+      app.appendChild(skeleton("profile"));
+      api("player/" + playerId).then(function (d) {
+        if (token !== renderToken) return;
+        app.textContent = "";
+        buildShell(app, d, playerId);
+        setSegment(tab);
+        loadTab(tab, token);
+        finishRender(route, false);
+      }, function (err) {
+        if (token !== renderToken) return;
+        app.textContent = "";
+        emptyState(app, err.message);
+      });
+      return;
+    }
+
     var match = null, entry = null;
     for (var i = 0; i < routes.length && !match; i++) { match = route.match(routes[i][0]); entry = routes[i]; }
     if (!match) { location.replace("#/"); return; }
 
-    var tab = entry[1];
-    if (!tab && /^player\//.test(route) && route.split("/")[1] === String(viewerId)) tab = "me";
-    drawTabbar(tab);
-    var isRoot = route === "" || route === "rating" || route === "player/" + viewerId;
+    shell = null;
+    var tabName = entry[1];
+    drawTabbar(tabName);
+    var isRoot = route === "" || route === "rating";
     if (tg && tg.BackButton) { if (isRoot) tg.BackButton.hide(); else tg.BackButton.show(); }
 
-    var token = ++renderToken;
     app.textContent = "";
-    app.appendChild(el("p", "state", "Загрузка…"));
+    app.appendChild(skeleton("list"));
     entry[2](match).then(function (data) {
       if (token !== renderToken) return;
-      lastRender = function () { app.textContent = ""; entry[3](app, data, match); };
-      lastRender();
-      window.scrollTo(0, 0);
+      app.textContent = "";
+      entry[3](app, data, match);
+      finishRender(route, false);
     }, function (err) {
       if (token !== renderToken) return;
       app.textContent = "";
@@ -864,7 +1019,7 @@
   if (tg) {
     tg.ready();
     tg.expand();
-    tg.onEvent("themeChanged", function () { applyTheme(); if (lastRender) lastRender(); });
+    tg.onEvent("themeChanged", function () { applyTheme(); shell = null; render(); });
     if (tg.BackButton) tg.BackButton.onClick(function () { history.back(); });
   }
   window.addEventListener("hashchange", render);
