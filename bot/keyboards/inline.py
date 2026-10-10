@@ -15,7 +15,7 @@ from bot.utils import (
     favor_icon,
     random_challenge_button_label,
 )
-from bot.webapp.config import WEBAPP_BUTTON_TEXT
+from bot.webapp.config import WEBAPP_BUTTON_TEXT, webapp_url_for
 
 
 def main_reply_kb() -> ReplyKeyboardMarkup:
@@ -55,6 +55,7 @@ def _peer_and_menu_row(b: InlineKeyboardBuilder, peer_text: str, peer_callback: 
 
 def main_menu_kb(
     share_match_id: int | None = None, rematch_opponent_id: int | None = None,
+    viewer_telegram_id: int | None = None,
 ) -> InlineKeyboardMarkup:
     """Главное меню. Кнопки «Внести результат» убраны в v2.148.0: счёт пишут
     прямо в чат (подсказка стоит на экране начала матча и в приветствии).
@@ -66,7 +67,11 @@ def main_menu_kb(
 
     rematch_opponent_id — если задан, под карточкой добавляется «⚔️ Реванш»
     (v2.143.0): уведомление второго участника матча (того, кто счёт не вносил),
-    у репортёра реванш уже есть на экране результата (rematch_kb)."""
+    у репортёра реванш уже есть на экране результата (rematch_kb).
+
+    viewer_telegram_id — кому показывается меню (v2.163.0): если приложению он
+    разрешён (WEBAPP_URL и WEBAPP_AUDIENCE, см. bot/webapp/config.py), сразу под
+    «Вызвать на матч» добавляется строка «Открыть приложение». None — без неё."""
     b = InlineKeyboardBuilder()
     if share_match_id is not None:
         b.row(InlineKeyboardButton(
@@ -77,6 +82,9 @@ def main_menu_kb(
             text="⚔️ Реванш", callback_data=f"rematch_{rematch_opponent_id}",
         ))
     b.row(InlineKeyboardButton(text=random_challenge_button_label(), callback_data="menu_play"))
+    app_url = webapp_url_for(viewer_telegram_id) if viewer_telegram_id is not None else None
+    if app_url:
+        b.row(InlineKeyboardButton(text=WEBAPP_BUTTON_TEXT, web_app=WebAppInfo(url=app_url)))
     b.row(InlineKeyboardButton(text="🏆 Рейтинг клуба", callback_data="menu_leaderboard"))
     b.row(
         InlineKeyboardButton(text="👤 Мой профиль", callback_data="menu_stats"),

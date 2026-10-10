@@ -67,7 +67,7 @@ async def cmd_start(message: Message, command: CommandObject, session: AsyncSess
             f"Привет, <b>{h(player.display_name)}</b>! 🏓\n"
             f"Рейтинг: <b>{round(player.rating, 1)}</b> pts — {format_rank(ranks, player.id)}"
             f"{active_hint}",
-            reply_markup=main_menu_kb(),
+            reply_markup=main_menu_kb(viewer_telegram_id=player.telegram_id),
         )
         player.last_menu_message_id = sent.message_id
         await session.commit()
@@ -96,7 +96,7 @@ async def cmd_start(message: Message, command: CommandObject, session: AsyncSess
         f"👋 Привет, <b>{h(player.display_name)}</b>!\n"
         f"Ты добавлен в список игроков с рейтингом <b>1000</b> pts. 🏓\n\n"
         f"Вызывай соперников и побеждай!",
-        reply_markup=main_menu_kb(),
+        reply_markup=main_menu_kb(viewer_telegram_id=player.telegram_id),
     )
     player.last_menu_message_id = sent.message_id
     await session.commit()
@@ -124,9 +124,13 @@ async def cmd_cancel(message: Message, state: FSMContext, bot: Bot):
                 )
             except Exception:
                 pass
-        await message.answer("Действие отменено.", reply_markup=main_menu_kb())
+        await message.answer(
+            "Действие отменено.", reply_markup=main_menu_kb(viewer_telegram_id=msg_user(message).id),
+        )
     else:
-        await message.answer("Нечего отменять. 🏓", reply_markup=main_menu_kb())
+        await message.answer(
+            "Нечего отменять. 🏓", reply_markup=main_menu_kb(viewer_telegram_id=msg_user(message).id),
+        )
 
 
 # ── /help ─────────────────────────────────────────────────────────────────────
@@ -370,4 +374,6 @@ async def cmd_fix_rating(message: Message, session: AsyncSession):
 async def back_to_menu(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
-    await cb_msg(callback).edit_text("Главное меню 🏓", reply_markup=main_menu_kb())
+    await cb_msg(callback).edit_text(
+        "Главное меню 🏓", reply_markup=main_menu_kb(viewer_telegram_id=callback.from_user.id),
+    )
