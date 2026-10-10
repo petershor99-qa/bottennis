@@ -192,9 +192,21 @@ async def throne(request, session, viewer):
     return await api.hall_of_fame_payload(session)
 
 
+@web.middleware
+async def revalidate_static(request: web.Request, handler):
+    """Статика всегда с проверкой по ETag (v2.164.0). Без заголовка встроенный
+    браузер Telegram кэширует app.js «по эвристике» и после выкладки показывает
+    новый API со старой страницей. С `no-cache` запрос уходит на сервер, а
+    неизменённый файл отдаётся ответом 304 без тела."""
+    response = await handler(request)
+    if request.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
     """bot — экземпляр aiogram.Bot для фото игроков; без него /api/photo отвечает 404."""
-    app = web.Application()
+    app = web.Application(middlewares=[revalidate_static])
     app[BOT_TOKEN_KEY] = bot_token
     app[SESSION_FACTORY_KEY] = session_factory
     app[BOT_KEY] = bot
