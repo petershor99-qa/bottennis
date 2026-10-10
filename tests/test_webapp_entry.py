@@ -120,3 +120,37 @@ async def test_no_admin_id_touches_only_default(env, monkeypatch):
     bot = _bot()
     await sync_menu_button(bot)
     assert [chat for chat, _ in _calls(bot)] == [None]
+
+
+# ── Склонение серий в тексте бота (v2.164.1) ──────────────────────────────────
+
+@pytest.mark.parametrize("n,expected", [
+    (2, "2 победы подряд"), (3, "3 победы подряд"), (5, "5 побед подряд"),
+    (11, "11 побед подряд"), (21, "21 победа подряд"), (22, "22 победы подряд"),
+])
+def test_profile_streak_lines_decline_wins(n, expected):
+    """РЕГРЕССИЯ: было «3 побед подряд», «4 побед подряд» — без склонения."""
+    from bot.handlers.profile import _stats_groups
+
+    s = {"recent_7": [], "streak": n, "loss_streak": 0, "best_streak": n + 1,
+         "activity_streak_days": 0, "best_opp": None, "nemesis": None, "top_opp": None,
+         "unresolved_debts": [], "debtors": [], "trend_30d": None, "avg_delta": None, "best_win": None,
+         "total_earned": 0, "total_lost": 0, "boss_fights_played": 0, "total_sets_played": 0,
+         "deuce_total": 0, "first_set_conv": None, "fav_format": None, "best_day": None, "fav_hour": None,
+         "lucky_day": None, "post_loss": None, "favorite_score": None, "style_insight": None}
+    form = _stats_groups(SimpleNamespace(id=1, peak_rating=None, rating=1000.0), s)["form"]
+    assert any(expected in line for line in form)
+
+
+@pytest.mark.parametrize("n,expected", [(2, "2 поражения подряд"), (4, "4 поражения подряд"), (5, "5 поражений подряд")])
+def test_profile_loss_streak_declines_losses(n, expected):
+    from bot.handlers.profile import _stats_groups
+
+    s = {"recent_7": [], "streak": 0, "loss_streak": n, "best_streak": 0, "activity_streak_days": 0,
+         "best_opp": None, "nemesis": None, "top_opp": None, "unresolved_debts": [], "debtors": [],
+         "trend_30d": None, "avg_delta": None, "best_win": None, "total_earned": 0, "total_lost": 0,
+         "boss_fights_played": 0, "total_sets_played": 0, "deuce_total": 0, "first_set_conv": None,
+         "fav_format": None, "best_day": None, "fav_hour": None, "lucky_day": None, "post_loss": None,
+         "favorite_score": None, "style_insight": None}
+    form = _stats_groups(SimpleNamespace(id=1, peak_rating=None, rating=1000.0), s)["form"]
+    assert any(expected in line for line in form)

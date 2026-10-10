@@ -96,7 +96,7 @@ def test_win_streak():
         mk([{"w": 11, "l": 7}], winner_id=2, challenger_id=1, challenged_id=2, day=26),
     ]
     s = compute_h2h(matches, viewer_id=1, opponent_id=2)
-    assert s["streak_desc"] == "ты ведёшь — 3 побед подряд"
+    assert s["streak_desc"] == "ты ведёшь — 3 победы подряд"
 
 
 def test_loss_streak():
