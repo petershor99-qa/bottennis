@@ -473,7 +473,7 @@ async def do_cancel_match(callback: CallbackQuery, session: AsyncSession, bot: B
         bot,
         opponent.telegram_id,
         f"❌ <b>{h(player.display_name)}</b> отменил матч с тобой.",
-        reply_markup=main_menu_kb(),
+        reply_markup=main_menu_kb(viewer_telegram_id=opponent.telegram_id),
     )
 
     # Достижение «Дух Анкориджа» — обоим участникам отменённого матча

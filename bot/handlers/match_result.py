@@ -660,7 +660,7 @@ async def finish_sets(callback: CallbackQuery, state: FSMContext, session: Async
         await state.clear()
         await cb_msg(callback).edit_text(
             "⚠️ Матч уже завершён или отменён — возможно, соперник внёс результат раньше тебя.",
-            reply_markup=main_menu_kb(),
+            reply_markup=main_menu_kb(viewer_telegram_id=callback.from_user.id),
         )
         await callback.answer()
         return
@@ -1221,7 +1221,10 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
         .values(status=MatchStatus.completed)
     )
     if guard.rowcount == 0:
-        await cb_msg(callback).edit_text("Матч уже завершён или не найден.", reply_markup=main_menu_kb())
+        await cb_msg(callback).edit_text(
+            "Матч уже завершён или не найден.",
+            reply_markup=main_menu_kb(viewer_telegram_id=callback.from_user.id),
+        )
         await state.clear()
         await callback.answer()
         return
@@ -1345,7 +1348,10 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             f"Счёт партий: {notify_sets_str}\n\n"
             f"Твой рейтинг: {round(notify_old, 1)} → <b>{round(notify_player.rating, 1)}</b> ({_fmt_delta(notify_actual_delta)})"
             f"{_place_suffix(ranks_before, standings_after, notify_player.id)}",
-            reply_markup=main_menu_kb(rematch_opponent_id=reporter_player_id),
+            reply_markup=main_menu_kb(
+                rematch_opponent_id=reporter_player_id,
+                viewer_telegram_id=notify_player.telegram_id,
+            ),
         )
 
         # Достижения обоих участников + пасхалки ничьей
@@ -1489,6 +1495,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                 # Реванш (v2.143.0) — как и на экране репортёра, после боссфайта нет
                 reply_markup=main_menu_kb(
                     rematch_opponent_id=None if match.is_boss_fight else winner.id,
+                    viewer_telegram_id=loser.telegram_id,
                 ),
             )
         else:
@@ -1506,6 +1513,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                 reply_markup=main_menu_kb(
                     share_match_id=match_id,
                     rematch_opponent_id=None if match.is_boss_fight else loser.id,
+                    viewer_telegram_id=winner.telegram_id,
                 ),
             )
 

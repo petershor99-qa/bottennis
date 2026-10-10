@@ -31,6 +31,7 @@ from bot.handlers.year_vote import router as year_vote_router
 from bot.middleware import DatabaseMiddleware, UsageMiddleware
 from bot.scheduler import setup_scheduler
 from bot.webapp.config import webapp_base_url
+from bot.webapp.menu_button import sync_menu_button
 from bot.webapp.server import start_webapp
 
 logging.basicConfig(
@@ -129,6 +130,9 @@ async def main() -> None:
             webapp_runner = await start_webapp(token, async_session, bot)
         except Exception:
             logging.exception("Mini App не запустился, бот работает без него.")
+    # Кнопка «Клуб» слева от строки ввода — по .env; без WEBAPP_URL возвращает
+    # обычный список команд (откат без релиза).
+    await sync_menu_button(bot)
 
     logging.info("Бот запущен. Нажми Ctrl+C для остановки.")
     try:
