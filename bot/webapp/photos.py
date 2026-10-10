@@ -40,11 +40,18 @@ class PhotoCache:
     async def _fetch(bot: Bot, telegram_id: int) -> bytes | None:
         photos = await bot.get_user_profile_photos(user_id=telegram_id, limit=1)
         if not photos.photos:
+            # Telegram не отдаёт боту фото, если у игрока оно скрыто настройкой
+            # приватности («Фото профиля» — «Мои контакты») или не загружено.
+            logger.info("Mini App: фото игрока %s недоступно боту (скрыто приватностью или не загружено)", telegram_id)
             return None
         sizes = sorted(photos.photos[0], key=lambda s: s.width)
         size = next((s for s in sizes if s.width >= PHOTO_MIN_SIDE), sizes[-1])
         buf = await bot.download(size.file_id, destination=BytesIO())
         if buf is None:
+            logger.info("Mini App: фото игрока %s не скачалось", telegram_id)
             return None
         data = buf.getvalue()
-        return data if 0 < len(data) <= PHOTO_MAX_BYTES else None
+        if not 0 < len(data) <= PHOTO_MAX_BYTES:
+            logger.info("Mini App: фото игрока %s отброшено: %s байт", telegram_id, len(data))
+            return None
+        return data

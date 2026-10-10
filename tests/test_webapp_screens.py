@@ -431,3 +431,13 @@ async def test_photo_absent_or_failing():
     assert await cache.get(failing, 2) is None
     assert await cache.get(failing, 2) is None
     assert failing.calls == 2  # сбой Telegram не кэшируется
+
+
+async def test_photo_hidden_by_privacy_is_logged(caplog):
+    import logging
+
+    from bot.webapp.photos import PhotoCache
+
+    with caplog.at_level(logging.INFO, logger="bot.webapp.photos"):
+        assert await PhotoCache().get(_FakeBot(has_photo=False), 4242) is None
+    assert any("4242" in r.message and "приватност" in r.message for r in caplog.records)
