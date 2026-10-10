@@ -250,7 +250,7 @@ async def test_api_returns_table_for_admin(client):
 async def test_index_and_static_are_served(client):
     page = await client.get("/")
     assert page.status == 200
-    assert "Рейтинг клуба" in await page.text()
+    assert 'id="tabbar"' in await page.text()
     for path in ("/static/app.css", "/static/app.js", "/static/fonts/Raleway-Variable.woff2", "/static/fonts/OFL.txt"):
         assert (await client.get(path)).status == 200
 

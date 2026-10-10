@@ -102,6 +102,11 @@ async def home(request, session, viewer):
     return await api.home_payload(session, viewer)
 
 
+async def me(request, session, viewer):
+    """id зрителя — для вкладки «Я» (страница сама его не знает)."""
+    return {"id": viewer.id, "name": viewer.display_name}
+
+
 async def photo(request, session, viewer):
     target = await _target(request, session)
     bot = request.app.get(BOT_KEY)
@@ -197,6 +202,7 @@ def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
     app.router.add_get("/", index)
     routes = [
         ("/api/home", home),
+        ("/api/me", me),
         ("/api/leaderboard", leaderboard),
         ("/api/photo/{player_id}", photo),
         ("/api/player/{player_id}", player),
