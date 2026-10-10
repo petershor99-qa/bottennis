@@ -18,9 +18,11 @@ from bot.keyboards.inline import (
 )
 from bot.services.stats import (
     AXIS_GLOSSARY,
+    NEUTRAL_ARCHETYPE,
     _archetype_description,
     _build_style_narrative,
     _build_style_radar,
+    _closest_archetype_hint,
     _compute_player_stats,
     _style_archetype,
     _style_comparison_caption,
@@ -269,6 +271,10 @@ async def _send_style_radar(
         desc = _archetype_description(archetype)
         if desc:
             header += f" — {desc}"
+        if archetype == NEUTRAL_ARCHETYPE:
+            hint = _closest_archetype_hint(radar, s)
+            if hint:
+                header += "\n" + hint
     caption_lines = [header]
     if narrative:
         caption_lines.append(narrative)
