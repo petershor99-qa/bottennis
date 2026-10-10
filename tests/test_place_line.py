@@ -227,7 +227,7 @@ async def test_failing_rank_snapshot_does_not_break_the_result(db, monkeypatch):
 
     monkeypatch.setattr("bot.handlers.match_result.snapshot_ranks", boom)
     cb, bot = await _confirm(db, b, a, reporter=b, sets=SETS_BIG_WIN)
-    assert "Матч завершён" in _screen(cb) and "Рейтинг клуба" not in _screen(cb)
+    assert "Матч завершён" in _screen(cb)            # блок без «(было #N)» всё равно показан
     m = (await db.execute(select(Match).order_by(Match.id.desc()))).scalars().first()
     assert m.status == MatchStatus.completed and m.winner_id == b.id
 
@@ -241,3 +241,16 @@ async def test_failing_standings_snapshot_does_not_break_the_result(db, monkeypa
     monkeypatch.setattr("bot.handlers.match_result.snapshot_standings", boom)
     cb, bot = await _confirm(db, b, a, reporter=b, sets=SETS_BIG_WIN)
     assert "Матч завершён" in _screen(cb) and "Рейтинг клуба" not in _screen(cb)
+
+
+async def test_block_is_shown_even_when_the_before_snapshot_failed(db, monkeypatch):
+    (a, b), _ = await _club(db, [1100.0, 1090.0])
+
+    async def boom(*_a, **_k):
+        raise RuntimeError("места до матча упали")
+
+    monkeypatch.setattr("bot.handlers.match_result.snapshot_ranks", boom)
+    cb, bot = await _confirm(db, b, a, reporter=b, sets=SETS_BIG_WIN)
+    screen = _screen(cb)
+    assert "🏆 <b>Рейтинг клуба:</b>" in screen and "▶ #1 <b>Ты</b>" in screen
+    assert "(было" not in screen

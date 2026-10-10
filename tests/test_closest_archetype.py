@@ -23,10 +23,12 @@ def _stats(**over):
 
 
 def test_hint_names_the_nearest_positive_archetype_and_the_missing_points():
-    radar = _radar()                   # Дожимание 70 → до 80 не хватает 10; Клатч 50 → до 55 только 5
+    # Доминирование 55 при пороге 60 — разрыв 5 пунктов (8% порога), Клатч 50 при 55 — тоже 5,
+    # но 9% порога; Дожимание 70 при 80 — 10 пунктов (12,5%)
+    radar = _radar()
     assert _style_archetype(radar, _stats()) == NEUTRAL_ARCHETYPE
     hint = _closest_archetype_hint(radar, _stats())
-    assert hint == "🧭 Ближе всего к «Нервы стальные»: не хватает 5 пунктов по оси «Клатч»"
+    assert hint == "🧭 Ближе всего к «Каток»: не хватает 5 пунктов по оси «Доминирование»"
 
 
 def test_hint_rounds_the_gap_up_and_uses_correct_plural():
@@ -61,3 +63,12 @@ def test_caption_with_hint_stays_under_telegram_photo_limit():
     hint = _closest_archetype_hint(_radar(), _stats())
     caption = "🕸 Стиль игры — " + "Ж" * 32 + "\n🏷 Архетип: Универсал — ровный игрок\n" + hint + "\n\n" + axes
     assert len(caption) < 1024
+
+
+def test_hint_compares_relative_gap_so_phoenix_does_not_always_win():
+    """Камбэки 3% при пороге 8 — разрыв 5 пунктов, а Клатч 40 при пороге 55 — 15 пунктов.
+    По абсолютным пунктам всегда выигрывал бы «Феникс», хотя игроку до него дальше."""
+    radar = _radar(Винрейт=30.0, Клатч=40.0, Дожимание=50.0, Камбэки=3.0,
+                   Доминирование=40.0, Стабильность=40.0)
+    hint = _closest_archetype_hint(radar, _stats(wins=20))
+    assert "Нервы стальные" in hint and "Феникс" not in hint

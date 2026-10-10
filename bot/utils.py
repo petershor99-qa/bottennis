@@ -872,16 +872,6 @@ def _pin_champion(ranked: list[Player], champion_id: int | None) -> list[Player]
     return ranked
 
 
-async def snapshot_ranks(session: AsyncSession, exclude_match_id: int | None = None) -> dict[int, int]:
-    """Места игроков в рейтинге клуба прямо сейчас ({player_id: rank}) — те же,
-    что видит таблица (чемпион закреплён на #1, игроки с 0 матчей не входят).
-    Берётся до и после матча, чтобы показать «было → стало» (place_change_line)."""
-    players = (await session.execute(select(Player))).scalars().all()
-    counts = await get_match_counts(session, exclude_match_id)
-    champion = next((p for p in players if p.is_champion), None)
-    return compute_ranks(players, counts, champion_id=champion.id if champion else None)
-
-
 @dataclass(frozen=True)
 class StandingRow:
     """Строка таблицы мест для итога матча (v2.159.0)."""
@@ -892,12 +882,16 @@ class StandingRow:
     is_champion: bool
 
 
-async def snapshot_standings(session: AsyncSession) -> list[StandingRow]:
-    """Все игравшие по местам (как в таблице рейтинга: чемпион закреплён на #1,
-    игроки без матчей не входят) вместе с именем и рейтингом — для блока
-    «Рейтинг клуба» в итоге матча (ranking_block)."""
+async def snapshot_standings(
+    session: AsyncSession, exclude_match_id: int | None = None,
+) -> list[StandingRow]:
+    """Все игравшие по местам — ровно как в таблице рейтинга (чемпион закреплён
+    на #1, игроки без матчей не входят) — вместе с именем и рейтингом. Единственное
+    определение «таблицы» для итога матча: места «до» (snapshot_ranks) берутся из
+    него же. exclude_match_id — не учитывать матч (снимок «до»: CAS уже перевёл
+    его в completed, а игрок, впервые сыгравший в нём, ещё не должен быть в рейтинге)."""
     players = (await session.execute(select(Player))).scalars().all()
-    counts = await get_match_counts(session)
+    counts = await get_match_counts(session, exclude_match_id)
     champion = next((p for p in players if p.is_champion), None)
     ranks = compute_ranks(players, counts, champion_id=champion.id if champion else None)
     by_id = {p.id: p for p in players}
@@ -905,6 +899,13 @@ async def snapshot_standings(session: AsyncSession) -> list[StandingRow]:
         StandingRow(rank, pid, by_id[pid].display_name, by_id[pid].rating, bool(by_id[pid].is_champion))
         for pid, rank in sorted(ranks.items(), key=lambda kv: kv[1])
     ]
+
+
+async def snapshot_ranks(session: AsyncSession, exclude_match_id: int | None = None) -> dict[int, int]:
+    """Места игроков прямо сейчас ({player_id: rank}) — те же, что в таблице.
+    Берётся до матча, чтобы в блоке «Рейтинг клуба» показать «(было #N)»."""
+    rows = await snapshot_standings(session, exclude_match_id)
+    return {r.player_id: r.rank for r in rows}
 
 
 def ranking_block(

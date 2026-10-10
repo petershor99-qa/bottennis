@@ -1166,9 +1166,10 @@ def _place_suffix(
     before: dict[int, int] | None, standings: list[StandingRow] | None, player_id: int,
 ) -> str:
     """Блок «Рейтинг клуба» для игрока (с пустой строкой перед ним) или ''."""
-    if before is None or standings is None:
+    if standings is None:
         return ""
-    block = ranking_block(before, standings, player_id)
+    # Места «до» нужны только для пометки «(было #N)»: без них блок всё равно показываем
+    block = ranking_block(before or {}, standings, player_id)
     return "\n\n" + block if block else ""
 
 

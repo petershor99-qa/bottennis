@@ -539,19 +539,23 @@ def _closest_archetype_hint(radar: dict[str, float], s: dict | None = None) -> s
     и по какой оси чего не хватает. Только «положительные» архетипы (порог
     «не ниже»): «ближе всего к Донору рейтинга» — не подсказка. Оси без нужной
     выборки пропускаются (как в _style_archetype). None, если подсказывать нечего."""
-    best: tuple[float, str, str] | None = None
+    # Сравниваем ОТНОСИТЕЛЬНЫЙ разрыв (доля порога): оси живут в разных диапазонах
+    # (Камбэки — единицы процентов при пороге 8, Клатч — десятки при пороге 55), и по
+    # абсолютным пунктам всегда выигрывал бы самый «низкий» порог.
+    best: tuple[float, float, str, str] | None = None
     for axis, threshold, is_low, label in _ARCHETYPE_RULES:
         if is_low or not _axis_has_sample(axis, s):
             continue
         gap = threshold - radar[axis]
-        if gap > 0 and (best is None or gap < best[0]):
-            best = (gap, axis, label)
+        if gap > 0 and (best is None or gap / threshold < best[0]):
+            best = (gap / threshold, gap, axis, label)
     if best is None:
         return None
-    points = max(1, math.ceil(best[0]))
+    _relative, gap, axis_name, label_name = best
+    points = max(1, math.ceil(gap))
     return (
-        f"🧭 Ближе всего к «{best[2]}»: не хватает "
-        f"{_ru_plural(points, 'пункта', 'пунктов', 'пунктов')} по оси «{best[1]}»"
+        f"🧭 Ближе всего к «{label_name}»: не хватает "
+        f"{_ru_plural(points, 'пункта', 'пунктов', 'пунктов')} по оси «{axis_name}»"
     )
 
 
