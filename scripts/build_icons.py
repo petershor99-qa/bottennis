@@ -100,7 +100,15 @@ CANDIDATES: dict[str, list[str]] = {
 }
 
 # Интерфейсные значки (замок, закрытое, общие)
-UI_ICONS = ["lock", "trophy", "question-mark", "star"]
+UI_ICONS = [
+    "lock", "trophy", "question-mark", "star",
+    # Интерфейс приложения (v2.169.0): вкладки, строки меню, кнопки, пустые
+    # экраны, подсказка первого запуска, реакции на матчи, «Когда играют»
+    "home", "chart-bar", "user", "crown", "calendar", "list", "flag", "flame",
+    "target", "chart-histogram", "users", "swords", "chevron-right", "mood-empty",
+    "ball-tennis", "info-circle", "x", "heart", "thumb-up", "mood-happy", "clock",
+    "chart-pie", "flask",
+]
 
 
 def fetch(url: str) -> str | None:

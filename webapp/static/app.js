@@ -51,32 +51,17 @@
     return node;
   }
 
-  // Линейные значки: только контуры, толщина 1.6, цвет — currentColor
+  // Все значки — из набора static/icons.svg (Tabler Icons, MIT): и ачивки, и
+  // интерфейс (v2.169.0, раньше интерфейс рисовался своими контурами).
+  // Короткие имена интерфейса -> имена в наборе.
   var ICONS = {
-    home: "M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z",
-    rating: "M5 20V10M12 20V4M19 20v-7",
-    user: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 20c1.5-3.5 4.5-5 8-5s6.5 1.5 8 5",
-    trophy: "M8 4h8v5a4 4 0 0 1-8 0zM8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8 20h8M10 17h4",
-    crown: "M4 8l4 4 4-7 4 7 4-4-2 10H6z",
-    calendar: "M5 6h14v14H5zM5 10h14M9 4v4M15 4v4",
-    list: "M9 6h11M9 12h11M9 18h11M5 6h.01M5 12h.01M5 18h.01",
-    flag: "M5 21V4M5 4h11l-2 4 2 4H5",
-    flame: "M12 3c3 4 6 6 6 11a6 6 0 0 1-12 0c0-3 2-5 3-7 1 2 2 3 3 3 0-3 0-5 0-7z",
-    target: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 12h.01",
-    bars: "M4 20h16M6 16v-5M10 16V7M14 16v-8M18 16V5",
-    users: "M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM3 20c1-3 3.5-5 6-5s5 2 6 5M16 4.5a3.5 3.5 0 0 1 0 6.5M18 15c1.5.6 2.5 2.4 3 5",
-    lock: "M6.5 11h11v9h-11zM9 11V8a3 3 0 0 1 6 0v3",
-    swords: "M4 4l9 9M4 4h4M4 4v4M20 4l-9 9M20 4h-4M20 4v4M7 15l-3 3 2 2 3-3M17 15l3 3-2 2-3-3",
-    chevron: "M9 6l6 6-6 6"
+    home: "home", rating: "chart-bar", user: "user", trophy: "trophy", crown: "crown",
+    calendar: "calendar", list: "list", flag: "flag", flame: "flame", target: "target",
+    bars: "chart-histogram", users: "users", lock: "lock", swords: "swords", chevron: "chevron-right"
   };
 
-  function icon(name, cls) {
-    var s = svg("svg", { "class": "ico" + (cls ? " " + cls : ""), viewBox: "0 0 24 24", "aria-hidden": "true" });
-    s.appendChild(svg("path", { d: ICONS[name] || ICONS.chevron }));
-    return s;
-  }
+  function icon(name, cls) { return useIcon(ICONS[name] || name, cls); }
 
-  // Иконка из набора static/icons.svg (Tabler Icons, MIT) — иконки ачивок
   function useIcon(name, cls) {
     var s = svg("svg", { "class": "ico" + (cls ? " " + cls : ""), viewBox: "0 0 24 24", "aria-hidden": "true" });
     var u = svg("use", { href: "static/icons.svg#ti-" + name });
@@ -169,7 +154,49 @@
     return li;
   }
 
-  function emptyState(container, text) { container.appendChild(el("p", "state", text)); }
+  // Пустой экран — со значком; ошибка — со значком и кнопкой «Повторить» (v2.169.0)
+  function emptyState(container, text, isError) {
+    var box = el("div", "state" + (isError ? " state-error" : ""));
+    box.appendChild(useIcon(isError ? "info-circle" : "ball-tennis", "state-ico"));
+    box.appendChild(el("p", "state-text", text));
+    if (isError) {
+      var again = el("button", "more", "Повторить");
+      again.type = "button";
+      again.addEventListener("click", function () { haptic("impact"); apiCache = {}; shell = null; render(); });
+      box.appendChild(again);
+    }
+    container.appendChild(box);
+  }
+
+  // ── Память устройства (v2.169.0) ───────────────────────────────────────────
+  // CloudStorage Telegram (общая для всех устройств игрока), без него —
+  // localStorage. undefined — памяти нет: подсказка и подсветка тогда просто
+  // не показываются; null — ключа ещё нет.
+  function cloud() {
+    try { return tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast("6.9") ? tg.CloudStorage : null; }
+    catch (e) { return null; }
+  }
+
+  function storageGet(key, cb) {
+    var cs = cloud();
+    if (cs) {
+      try {
+        cs.getItem(key, function (err, value) { cb(err ? undefined : (value || null)); });
+        return;
+      } catch (e) { /* ниже — localStorage */ }
+    }
+    var value;
+    try { value = window.localStorage.getItem(key); } catch (e) { value = undefined; }
+    cb(value);
+  }
+
+  function storageSet(key, value) {
+    var cs = cloud();
+    try {
+      if (cs) cs.setItem(key, value);
+      else window.localStorage.setItem(key, value);
+    } catch (e) { /* без памяти — без подсказок */ }
+  }
 
   // ── Фото игроков: буква сразу, фото подменяет её, когда загрузится ─────────
   var photoCache = {};
@@ -210,7 +237,7 @@
   function countUp(node, text) {
     // «1080.1», «60%», «+12.4» — досчитывается число, остальное как есть
     var m = /^([^\d−-]*)([−-]?)(\d+(?:\.\d+)?)(.*)$/.exec(text);
-    if (!m || reduceMotion) { node.textContent = text; return; }
+    if (!m || reduceMotion || app.classList.contains("quiet")) { node.textContent = text; return; }
     var target = parseFloat(m[3]), decimals = (m[3].split(".")[1] || "").length;
     var start = null, duration = 650;
     function frame(ts) {
@@ -248,6 +275,21 @@
     apiCache[path] = { t: Date.now(), p: p };
     p.catch(function () { delete apiCache[path]; });
     return p;
+  }
+
+  function post(path, body) {
+    var initData = tg && tg.initData;
+    if (!initData) return Promise.reject(new Error("Откройте приложение из бота."));
+    return fetch("api/" + path, {
+      method: "POST",
+      headers: { "Authorization": "tma " + initData, "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (resp) {
+      return resp.json().then(function (b) {
+        if (!resp.ok) throw new Error(b.error || "Не удалось сохранить.");
+        return b;
+      });
+    });
   }
 
   // Счётчик экранов (v2.166.0): какой экран показан — в ту же статистику, что
@@ -433,6 +475,7 @@
         body.appendChild(versusLine(it));
         body.appendChild(setChips(it.sets, it.winner));
         if (it.report) body.appendChild(el("div", "sub feed-report", it.report));
+        if (it.reactions && it.reactions.length) body.appendChild(reactionCounts(it.reactions));
       } else if (it.type === "achievement") {
         li = clickable(el("li", "row feed-row"), "player/" + it.player.id);
         var badge = el("div", "badge badge-sm " + (it.tier ? "badge-" + it.tier : "badge-earned"));
@@ -459,9 +502,76 @@
     return wrap;
   }
 
+  // Реакции на матчи (v2.169.0, эксперимент): видны только в приложении,
+  // бот о них никому не пишет
+  function reactionCounts(list) {
+    var wrap = el("div", "reaction-counts");
+    list.forEach(function (r) {
+      var n = el("span", "reaction-count");
+      n.appendChild(useIcon(r.icon));
+      n.appendChild(document.createTextNode(String(r.count)));
+      wrap.appendChild(n);
+    });
+    return wrap;
+  }
+
+  function reactionBar(matchId, list) {
+    var bar = el("div", "reactions");
+    function draw(items) {
+      bar.textContent = "";
+      items.forEach(function (r) {
+        var b = el("button", "reaction" + (r.mine ? " is-mine" : ""));
+        b.type = "button";
+        b.setAttribute("aria-label", r.title);
+        b.setAttribute("aria-pressed", r.mine ? "true" : "false");
+        b.appendChild(useIcon(r.icon));
+        if (r.count) b.appendChild(el("span", "reaction-n", String(r.count)));
+        b.addEventListener("click", function () {
+          haptic("select");
+          var next = items.map(function (x) {
+            if (x.kind !== r.kind) return x;
+            return { kind: x.kind, icon: x.icon, title: x.title, mine: !x.mine, count: x.count + (x.mine ? -1 : 1) };
+          });
+          draw(next);
+          post("match/" + matchId + "/react", { kind: r.kind }).then(function (resp) {
+            draw(resp.reactions);
+            delete apiCache["match/" + matchId];
+            delete apiCache.home;
+          }, function () { draw(items); });
+        });
+        bar.appendChild(b);
+      });
+    }
+    draw(list);
+    return bar;
+  }
+
+  // Подсказка при первом запуске (v2.169.0): одна карточка, закрывается крестиком
+  var HINT_KEY = "hint_home_v1";
+
+  function firstRunHint(c) {
+    storageGet(HINT_KEY, function (seen) {
+      if (seen !== null || !c.isConnected) return;
+      var card = el("div", "card hint");
+      card.appendChild(useIcon("info-circle", "ico-lead"));
+      var b = el("div", "body");
+      b.appendChild(el("div", "name", "Это приложение клуба"));
+      b.appendChild(el("div", "sub", "Лента, рейтинг, итоги и профили — здесь. Вызвать на матч и записать счёт — в боте, как раньше. Матчи, игроки и ачивки открываются по нажатию."));
+      card.appendChild(b);
+      var close = el("button", "hint-close");
+      close.type = "button";
+      close.setAttribute("aria-label", "Закрыть подсказку");
+      close.appendChild(useIcon("x"));
+      close.addEventListener("click", function () { haptic("select"); storageSet(HINT_KEY, "1"); card.remove(); });
+      card.appendChild(close);
+      c.insertBefore(card, c.children[1] || null);
+    });
+  }
+
   function renderHome(c, d) {
     c.appendChild(header("Клуб сегодня", d.today.label));
     if (d.empty) { emptyState(c, d.empty); return; }
+    firstRunHint(c);
     c.appendChild(podium(d.podium));
 
     var me = clickable(el("div", "card me-card"), "player/" + d.me.id);
@@ -582,7 +692,7 @@
         s.list.classList.add("board");
         p.rows.forEach(function (row) { s.list.appendChild(periodRow(row)); });
         area.appendChild(s);
-      }, function (err) { area.textContent = ""; emptyState(area, err.message); });
+      }, function (err) { area.textContent = ""; emptyState(area, err.message, true); });
     }));
     c.appendChild(area);
     var board = section();
@@ -675,12 +785,12 @@
       if (token !== renderToken) return;
       body.textContent = "";
       if (tab === "matches") renderMatchesTab(body, r[0]);
-      else if (tab === "achievements") renderAchievementsTab(body, r[0]);
+      else if (tab === "achievements") renderAchievementsTab(body, r[0], id === String(viewerId));
       else renderStyleTab(body, r[0], r[1]);
     }, function (err) {
       if (token !== renderToken) return;
       body.textContent = "";
-      emptyState(body, err.message);
+      emptyState(body, err.message, true);
     });
   }
 
@@ -875,7 +985,25 @@
     sheetOpen(badge, a.name, a.desc, meta);
   }
 
-  function renderAchievementsTab(body, d) {
+  // Новые ачивки светятся один раз (v2.169.0): какие уже видел — помнит память
+  // устройства. Первый визит ничего не подсвечивает — иначе засветилось бы всё.
+  var SEEN_KEY = "seen_achievements_v1";
+
+  function glowNew(body, earnedIds) {
+    storageGet(SEEN_KEY, function (raw) {
+      if (raw === undefined) return;
+      var seen = null;
+      try { seen = JSON.parse(raw || "null"); } catch (e) { seen = null; }
+      if (Array.isArray(seen)) {
+        [].forEach.call(body.querySelectorAll(".badge-cell[data-id]"), function (cell) {
+          if (seen.indexOf(cell.getAttribute("data-id")) < 0) cell.classList.add("is-new");
+        });
+      }
+      storageSet(SEEN_KEY, JSON.stringify(earnedIds.slice().sort()));
+    });
+  }
+
+  function renderAchievementsTab(body, d, own) {
     body.appendChild(el("p", "footnote footnote-top", "Получено " + d.count + ". Нажмите на значок, чтобы прочитать условие."));
     if (d.nearest && d.nearest.length) {
       var near = section("Ближе всего");
@@ -906,6 +1034,7 @@
       function badgeCell(a) {
         var cell = el("button", "badge-cell");
         cell.type = "button";
+        if (a.earned && a.id) cell.setAttribute("data-id", a.id);
         var badge = el("div", "badge " + badgeClass(a));
         if (a.hidden) badge.appendChild(el("span", "badge-q", "?"));
         else badge.appendChild(useIcon(a.icon || "trophy"));
@@ -934,6 +1063,13 @@
       }
       body.appendChild(wrap);
     });
+    if (own) {
+      var ids = [];
+      d.categories.forEach(function (cat) {
+        cat.items.forEach(function (a) { if (a.earned && a.id) ids.push(a.id); });
+      });
+      glowNew(body, ids);
+    }
   }
 
   function legend(activity) {
@@ -1266,6 +1402,7 @@
       if (d.report) story.appendChild(el("p", "feature-reason", d.report));
       c.appendChild(story);
     }
+    if (d.reactions) c.appendChild(reactionBar(d.id, d.reactions));
     var h = section("Личные встречи");
     h.list.appendChild(itemRow({
       label: d.a.name + " — " + d.b.name,
@@ -1326,8 +1463,9 @@
     window.scrollTo(0, scrollPos[route] || 0);
   }
 
-  function render() {
+  function render(quiet) {
     var route = currentRoute();
+    app.classList.toggle("quiet", quiet === true);
     if (renderedRoute !== null && renderedRoute !== route) scrollPos[renderedRoute] = window.scrollY;
     if (route === "me") { location.replace("#/player/" + viewerId); return; }
 
@@ -1360,7 +1498,7 @@
       }, function (err) {
         if (token !== renderToken) return;
         app.textContent = "";
-        emptyState(app, err.message);
+        emptyState(app, err.message, true);
       });
       return;
     }
@@ -1385,18 +1523,66 @@
     }, function (err) {
       if (token !== renderToken) return;
       app.textContent = "";
-      emptyState(app, err.message);
+      emptyState(app, err.message, true);
     });
   }
+
+  // Автообновление (v2.169.0): вернулись в приложение спустя минуту — данные
+  // запрашиваются заново, экран обновляется на месте: без скелета, анимаций и
+  // со своей прокруткой. Нет связи — остаётся прежний экран.
+  var REFRESH_AFTER_MS = 60 * 1000;
+  var hiddenAt = null;
+
+  function routeJobs(route) {
+    var pm = route.match(PLAYER_ROUTE);
+    if (pm) {
+      var id = pm[1], tab = pm[2] || "", jobs = [api("player/" + id)];
+      if (tab === "matches") jobs.push(api("player/" + id + "/history"));
+      else if (tab === "achievements") jobs.push(api("player/" + id + "/achievements"));
+      else if (tab === "style") jobs.push(api("player/" + id + "/radar"), api("player/" + id + "/activity"));
+      return jobs;
+    }
+    for (var i = 0; i < routes.length; i++) {
+      var m = route.match(routes[i][0]);
+      if (m) return [routes[i][2](m)];
+    }
+    return [];
+  }
+
+  function refresh() {
+    var route = currentRoute(), y = window.scrollY;
+    apiCache = {};
+    Promise.all(routeJobs(route)).then(function () {
+      if (currentRoute() !== route || document.querySelector(".sheet-wrap")) return;
+      shell = null;
+      scrollPos[route] = y;
+      render(true);
+      requestAnimationFrame(function () { window.scrollTo(0, y); });
+    }, function () { /* нет связи — оставляем как было */ });
+  }
+
+  function onHidden() { if (hiddenAt === null) hiddenAt = Date.now(); }
+
+  function onShown() {
+    if (hiddenAt === null) return;
+    var away = Date.now() - hiddenAt;
+    hiddenAt = null;
+    if (away >= REFRESH_AFTER_MS && viewerId !== null) refresh();
+  }
+
+  document.addEventListener("visibilitychange", function () { if (document.hidden) onHidden(); else onShown(); });
 
   applyTheme();
   if (tg) {
     tg.ready();
     tg.expand();
-    tg.onEvent("themeChanged", function () { applyTheme(); shell = null; render(); });
+    tg.onEvent("themeChanged", function () { applyTheme(); shell = null; render(true); });
     if (tg.BackButton) tg.BackButton.onClick(function () { history.back(); });
+    // Свернули/развернули приложение (Telegram 8.0+) — то же, что смена видимости
+    tg.onEvent("deactivated", onHidden);
+    tg.onEvent("activated", onShown);
   }
-  window.addEventListener("hashchange", render);
+  window.addEventListener("hashchange", function () { render(); });
   // Переход из бота сразу на нужный экран (v2.167.0): ?r=player/5, ?r=rating&from=3.
   // Скрипт Telegram к этому моменту уже прочитал свои параметры из адреса.
   try {
