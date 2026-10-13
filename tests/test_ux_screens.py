@@ -39,7 +39,7 @@ from bot.keyboards.inline import (
 )
 from bot.middleware import UsageMiddleware
 from bot.services.stats import _compute_player_stats
-from bot.utils import CHALLENGE_BUTTON_LABELS, get_career_matches, match_log_line
+from bot.utils import CHALLENGE_BUTTON_LABELS, get_career_matches, match_log_line, msk_day_start
 from tests.conftest import _callback, _completed, _player, _state
 from tests.test_records_screen import _club_with_history
 
@@ -164,7 +164,8 @@ def test_match_log_line_winner_bold_draw_and_escaping():
 
 
 async def test_today_screen_lists_all_matches_with_scores(db):
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    # не раньше часа после полуночи МСК — иначе матчи «минуту назад» уходят во вчера
+    now = max(datetime.now(timezone.utc).replace(tzinfo=None), msk_day_start() + timedelta(hours=1))
     p1, p2, p3 = _player(1, "Alice"), _player(2, "Bob"), _player(3, "Cara")
     db.add_all([p1, p2, p3])
     await db.flush()
@@ -186,7 +187,7 @@ async def test_today_screen_lists_all_matches_with_scores(db):
 
 
 async def test_today_screen_caps_log_and_fits_telegram_limit(db):
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = max(datetime.now(timezone.utc).replace(tzinfo=None), msk_day_start() + timedelta(hours=1))
     p1, p2 = _player(1, "А" * 30), _player(2, "Б" * 30)
     db.add_all([p1, p2])
     await db.flush()
