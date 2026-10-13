@@ -283,6 +283,7 @@ html, body {
 .badge-silver { background: var(--silver-soft); color: var(--silver); }
 .badge-bronze { background: var(--bronze-soft); color: var(--bronze); }
 .badge-locked, .badge-hidden { border: 1.5px dashed var(--divider); color: var(--hint); opacity: 0.75; }
+.badge-locked .ico { opacity: 0.6; }
 .badge-q { font-size: 22px; font-weight: 700; }
 .badge-name { font-size: 12px; line-height: 1.2; text-align: center; color: var(--hint); max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 

@@ -69,11 +69,18 @@
     swords: "M4 4l9 9M4 4h4M4 4v4M20 4l-9 9M20 4h-4M20 4v4M7 15l-3 3 2 2 3-3M17 15l3 3-2 2-3-3",
     chevron: "M9 6l6 6-6 6"
   };
-  var CATEGORY_ICONS = ["flag", "flame", "target", "bars", "users", "crown"];
 
   function icon(name, cls) {
     var s = svg("svg", { "class": "ico" + (cls ? " " + cls : ""), viewBox: "0 0 24 24", "aria-hidden": "true" });
     s.appendChild(svg("path", { d: ICONS[name] || ICONS.chevron }));
+    return s;
+  }
+
+  // Иконка из набора static/icons.svg (Tabler Icons, MIT) — иконки ачивок
+  function useIcon(name, cls) {
+    var s = svg("svg", { "class": "ico" + (cls ? " " + cls : ""), viewBox: "0 0 24 24", "aria-hidden": "true" });
+    var u = svg("use", { href: "static/icons.svg#ti-" + name });
+    s.appendChild(u);
     return s;
   }
 
@@ -642,7 +649,7 @@
   function achievementSheet(a) {
     var badge = el("div", "badge badge-lg " + badgeClass(a));
     if (a.hidden) badge.appendChild(el("span", "badge-q", "?"));
-    else badge.appendChild(icon(a.earned ? a.icon : "lock"));
+    else badge.appendChild(useIcon(a.icon || "trophy"));
     var tierWord = { bronze: "бронза", silver: "серебро", gold: "золото" }[a.tier];
     sheetOpen(badge, a.name, a.desc,
       a.earned ? (tierWord ? "Получено · " + tierWord : "Получено") : "Ещё не получено");
@@ -658,12 +665,11 @@
       wrap.appendChild(t);
       var grid = el("div", "badges");
       function badgeCell(a) {
-        a.icon = CATEGORY_ICONS[ci] || "trophy";
         var cell = el("button", "badge-cell");
         cell.type = "button";
         var badge = el("div", "badge " + badgeClass(a));
         if (a.hidden) badge.appendChild(el("span", "badge-q", "?"));
-        else badge.appendChild(icon(a.earned ? a.icon : "lock"));
+        else badge.appendChild(useIcon(a.icon || "trophy"));
         cell.appendChild(badge);
         cell.appendChild(el("span", "badge-name", a.name));
         cell.addEventListener("click", function () { achievementSheet(a); });

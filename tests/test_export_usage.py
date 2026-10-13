@@ -97,3 +97,23 @@ def test_cli_csv_export_is_anonymous(tmp_path, capsys):
     text = out.read_text(encoding="utf-8")
     assert text.splitlines()[0] == "player,time_msk,action"
     assert "u1" in text and "4242" not in text
+
+
+def test_flows_count_duration_taps_and_abandoned():
+    events = [
+        ("u1", T0, "menu_play"), ("u1", T0 + timedelta(seconds=10), "challenge"),
+        ("u1", T0 + timedelta(seconds=70), "confirm"),
+        ("u2", T0, "menu_play"),                         # начал и бросил
+        ("u2", T0 + timedelta(hours=2), "menu_leaderboard"),
+    ]
+    done, abandoned = export_usage.flows_of(events)
+    assert done == [(70.0, 3)]
+    assert abandoned == 1
+
+
+def test_report_has_flow_section():
+    events = [("u", T0, "menu_play"), ("u", T0 + timedelta(seconds=40), "confirm")]
+    # build_report принимает «сырые» события: id игрока -> обезличивается внутри
+    report = export_usage.build_report([(1, t, a) for _, t, a in events], LABELS)
+    assert "Флоу «вызов → результат записан»" in report
+    assert "медиана 40 с" in report
