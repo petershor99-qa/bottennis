@@ -1,7 +1,8 @@
 """
 Веб-часть Mini App (v2.160.0): aiohttp в том же процессе, что и бот, только
 чтение. Писать в БД продолжает только бот — иначе второй писатель снова
-упрётся в блокировку SQLite (см. v2.157.2).
+упрётся в блокировку SQLite (см. v2.157.2). Исключения — короткие записи
+своей транзакцией: счётчик экранов (фоном) и реакции на матчи (v2.169.0).
 
 Маршруты:
   GET /                                     — приложение (одна страница, переходы внутри)
@@ -20,6 +21,10 @@
   GET /api/records                          — рекорды клуба
   GET /api/matches?offset=N                 — все матчи клуба, порциями
   GET /api/throne                           — зал славы
+  GET /api/summary/{kind}                   — итоги дня/недели/месяца/квартала/года (v2.168.0)
+  GET /api/match/{id}                       — экран матча (v2.168.0), с реакциями (v2.169.0)
+  GET /api/player/{id}/chart                — график рейтинга по датам (v2.168.0)
+  POST /api/match/{id}/react                — поставить/снять реакцию (v2.169.0)
   POST /api/track                           — счётчик показанных экранов (v2.166.0)
 Вход во все /api — `Authorization: tma <initData>`.
 
@@ -36,7 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Player
 from bot.utils import get_player
-from bot.webapp import api, api_club
+from bot.webapp import api, api_club, reactions
 from bot.webapp.auth import WebAppAuthError, init_data_from_header, telegram_id_from_init_data
 from bot.webapp.config import is_webapp_allowed, webapp_listen
 from bot.webapp.photos import PhotoCache
@@ -72,7 +77,7 @@ async def index(request: web.Request) -> web.FileResponse:
 
 def endpoint(handler: Handler) -> Callable[[web.Request], Awaitable[web.Response]]:
     """Общая обёртка: вход по initData, доступ по флагу, игрок по telegram_id,
-    сессия только для чтения (без commit). None от обработчика — 404."""
+    сессия без общего commit (пишет только `react` — сам). None от обработчика — 404."""
     async def wrapped(request: web.Request) -> web.Response:
         init_data = init_data_from_header(request.headers.get("Authorization"))
         try:
@@ -116,6 +121,12 @@ async def home(request, session, viewer):
     # v2.168.0: лента клуба вместо отдельных «свежих рекордов» и «ещё сегодня»,
     # «Ты сегодня» в карточке игрока, вход в «Итоги»
     payload["feed"] = await api_club.feed_events(session)
+    # v2.169.0: реакции на матчи в ленте — только счётчики
+    feed_matches = [e["id"] for e in payload["feed"] if e.get("type") == "match"]
+    by_match = await reactions.reactions_for(session, feed_matches, viewer.id)
+    for e in payload["feed"]:
+        if e.get("type") == "match":
+            e["reactions"] = reactions.feed_counts(by_match.get(e["id"], []))
     payload["me"]["today"] = await api_club.today_line(session, viewer)
     payload["links"].insert(0, {"route": "summary/day", "title": "Итоги", "value": "", "icon": "calendar"})
     return payload
@@ -130,7 +141,22 @@ async def match_screen(request, session, viewer):
         match_id = int(request.match_info["match_id"])
     except ValueError:
         return None
-    return await api_club.match_payload(session, match_id)
+    payload = await api_club.match_payload(session, match_id)
+    if payload is not None:
+        payload["reactions"] = (await reactions.reactions_for(session, [match_id], viewer.id))[match_id]
+    return payload
+
+
+async def react(request, session, viewer):
+    """Поставить или снять реакцию на матч (v2.169.0). Никаких уведомлений."""
+    try:
+        match_id = int(request.match_info["match_id"])
+        body = await request.json()
+    except Exception:
+        return None
+    kind = str(body.get("kind", "")) if isinstance(body, dict) else ""
+    result = await reactions.toggle_reaction(session, match_id, viewer, kind)
+    return None if result is None else {"reactions": result}
 
 
 async def chart(request, session, viewer):
@@ -302,6 +328,7 @@ def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
     for path, handler in routes:
         app.router.add_get(path, endpoint(handler))
     app.router.add_post("/api/track", endpoint(track))
+    app.router.add_post("/api/match/{match_id}/react", endpoint(react))
     app.router.add_static("/static/", STATIC_DIR, show_index=False)
     return app
 

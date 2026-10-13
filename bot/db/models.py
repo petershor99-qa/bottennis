@@ -167,6 +167,25 @@ class DigestSnapshot(Base):
     )
 
 
+class MatchReaction(Base):
+    """Реакция игрока на матч в Mini App (v2.169.0, эксперимент). Одна строка на
+    (match_id, player_id, kind): повторное нажатие снимает реакцию. Реакции
+    видны только в приложении — бот о них никому не пишет. Таблица создаётся
+    `create_all`."""
+    __tablename__ = "match_reactions"
+    __table_args__ = (
+        UniqueConstraint("match_id", "player_id", "kind", name="uq_match_reaction"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    match_id: Mapped[int] = mapped_column(ForeignKey("matches.id"), index=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"))
+    kind: Mapped[str]  # fire | like | lol — набор в bot/webapp/reactions.py
+    created_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+
+
 class YearVote(Base):
     """Голос в номинации ежегодного голосования «Итоги года: неформальные
     звания» (v2.134.0, этап 3 дорожной карты). Одна строка на
