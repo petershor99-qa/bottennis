@@ -36,7 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Player
 from bot.utils import get_player
-from bot.webapp import api
+from bot.webapp import api, api_club
 from bot.webapp.auth import WebAppAuthError, init_data_from_header, telegram_id_from_init_data
 from bot.webapp.config import is_webapp_allowed, webapp_listen
 from bot.webapp.photos import PhotoCache
@@ -110,7 +110,32 @@ async def _target(request: web.Request, session: AsyncSession) -> Player | None:
 
 
 async def home(request, session, viewer):
-    return await api.home_payload(session, viewer)
+    payload = await api.home_payload(session, viewer)
+    if payload.get("empty"):
+        return payload
+    # v2.168.0: лента клуба вместо отдельных «свежих рекордов» и «ещё сегодня»,
+    # «Ты сегодня» в карточке игрока, вход в «Итоги»
+    payload["feed"] = await api_club.feed_events(session)
+    payload["me"]["today"] = await api_club.today_line(session, viewer)
+    payload["links"].insert(0, {"route": "summary/day", "title": "Итоги", "value": "", "icon": "calendar"})
+    return payload
+
+
+async def summary(request, session, viewer):
+    return await api_club.summary_payload(session, request.match_info["kind"])
+
+
+async def match_screen(request, session, viewer):
+    try:
+        match_id = int(request.match_info["match_id"])
+    except ValueError:
+        return None
+    return await api_club.match_payload(session, match_id)
+
+
+async def chart(request, session, viewer):
+    target = await _target(request, session)
+    return await api_club.chart_payload(session, target) if target else None
 
 
 async def me(request, session, viewer):
@@ -146,6 +171,9 @@ async def track(request, session, viewer):
 
 
 async def leaderboard(request, session, viewer):
+    period = request.query.get("period", "")
+    if period:
+        return await api_club.period_leaderboard_payload(session, viewer, period)
     return await api.leaderboard_payload(session, viewer.id)
 
 
@@ -163,7 +191,19 @@ async def player_stats(request, session, viewer):
 
 async def achievements(request, session, viewer):
     target = await _target(request, session)
-    return api.achievements_payload(target) if target else None
+    if target is None:
+        return None
+    payload = api.achievements_payload(target)
+    # v2.168.0: редкость «есть у N из M», дата получения, три ближайшие с прогрессом
+    extras = await api_club.achievements_extras(session, target)
+    for cat in payload["categories"]:
+        for item in cat["items"]:
+            if "id" in item:
+                item.update(extras["per_ach"].get(item["id"], {}))
+                if not item["earned"]:
+                    item.pop("date", None)
+    payload["nearest"] = extras["nearest"]
+    return payload
 
 
 async def achievement_category(request, session, viewer):
@@ -253,6 +293,9 @@ def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
         ("/api/h2h/{player_id}", h2h),
         ("/api/activity/club", club_activity),
         ("/api/records", records),
+        ("/api/summary/{kind}", summary),
+        ("/api/match/{match_id}", match_screen),
+        ("/api/player/{player_id}/chart", chart),
         ("/api/matches", matches),
         ("/api/throne", throne),
     ]

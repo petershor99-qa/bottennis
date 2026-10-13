@@ -151,8 +151,27 @@ async def preview(request):
     return web.Response(text=PREVIEW_HTML % json.dumps(init_data(1001)), content_type="text/html")
 
 
+class _SilentBot:
+    """Подставной бот: рассылки сводок проходят целиком, но никуда не уходят."""
+
+    async def send_message(self, *args, **kwargs):
+        return None
+
+
+async def seed_digests():
+    """Настоящие сводки дня, недели и месяца — для экрана «Итоги» (снимки)."""
+    from bot import scheduler
+
+    for job in (scheduler.send_daily_summary, scheduler.send_weekly_digest, scheduler.send_monthly_summary):
+        try:
+            await job(_SilentBot())
+        except Exception as exc:  # превью не должно падать из-за одной сводки
+            print("сводка не собралась:", job.__name__, exc)
+
+
 async def main():
     await seed()
+    await seed_digests()
     app = create_app(TOKEN, async_session)
     app.router.add_get("/preview", preview)
     runner = web.AppRunner(app)

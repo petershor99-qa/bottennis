@@ -151,6 +151,22 @@ class ClubRecordPing(Base):
     )
 
 
+class DigestSnapshot(Base):
+    """Клубная часть разосланной сводки (v2.168.0): день, неделя, месяц,
+    квартал, год. Нужна экрану «Итоги» в Mini App — он показывает ровно то, что
+    ушло в чат, без второго подсчёта. Личная шапка (недельная/месячная) не
+    хранится: она у каждого своя. Таблица создаётся `create_all`."""
+    __tablename__ = "digest_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(index=True)  # day | week | month | quarter | year
+    text: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(
+        index=True,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+
+
 class YearVote(Base):
     """Голос в номинации ежегодного голосования «Итоги года: неформальные
     звания» (v2.134.0, этап 3 дорожной карты). Одна строка на

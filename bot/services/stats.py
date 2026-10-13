@@ -836,24 +836,25 @@ def _progress_bar(ratio: float, width: int = 10) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
-def _nearest_achievement_progress(player, s: dict, total_players: int) -> str | None:
-    """Возвращает строку прогресса до ближайшей незаработанной счётной ачивки или None."""
+def nearest_achievements(player, s: dict, total_players: int) -> list[tuple[float, str, int, int, str]]:
+    """Незаработанные счётные ачивки с прогрессом, от самой близкой:
+    [(доля 0..1, id ачивки, сейчас, цель, единица)]. Общий источник для строки
+    цели в боте и «ближайших ачивок» в Mini App (v2.168.0)."""
     earned = set(get_achievements(player))
     total_matches = s["wins"] + s["draws"] + s["losses"]
     if total_matches == 0:
-        return None
+        return []
     streak = s["streak"]
-    candidates: list[tuple[float, str]] = []
+    candidates: list[tuple[float, str, int, int, str]] = []
 
     def _add(ach_id: str, current: int, target: int, unit: str, ratio: float | None = None) -> None:
         if ach_id in earned:
             return
-        a = ACHIEVEMENTS_MAP.get(ach_id)
-        if not a:
+        if not ACHIEVEMENTS_MAP.get(ach_id):
             return
         if ratio is None:
             ratio = current / target
-        candidates.append((ratio, f"{a.emoji} {a.name}: {current}/{target} {unit}"))
+        candidates.append((ratio, ach_id, current, target, unit))
 
     if streak > 0:
         _add("hat_trick", streak, 3, "побед подряд")
@@ -882,8 +883,15 @@ def _nearest_achievement_progress(player, s: dict, total_players: int) -> str | 
         ratio=(player.rating - 1000.0) / 200.0,
     )
 
-    valid = [(r, t) for r, t in candidates if r < 1.0]
-    if not valid:
+    valid = [c for c in candidates if c[0] < 1.0]
+    return sorted(valid, key=lambda c: -c[0])
+
+
+def _nearest_achievement_progress(player, s: dict, total_players: int) -> str | None:
+    """Возвращает строку прогресса до ближайшей незаработанной счётной ачивки или None."""
+    nearest = nearest_achievements(player, s, total_players)
+    if not nearest:
         return None
-    ratio, text = max(valid, key=lambda x: x[0])
-    return f"⏳ Цель: {text}\n{_progress_bar(ratio)}"
+    ratio, ach_id, current, target, unit = nearest[0]
+    a = ACHIEVEMENTS_MAP[ach_id]
+    return f"⏳ Цель: {a.emoji} {a.name}: {current}/{target} {unit}\n{_progress_bar(ratio)}"
