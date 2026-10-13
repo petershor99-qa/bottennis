@@ -16,14 +16,17 @@ import bot.scheduler as scheduler
 from bot.db.models import AchievementEarned, ChampionReign, ClubRecordPing, DigestSnapshot, Match, MatchStatus
 from bot.services.digest_delivery import deliver_digest, save_snapshot, short_part
 from bot.services.stats import _compute_player_stats, _nearest_achievement_progress, nearest_achievements
-from bot.utils import get_career_matches
+from bot.utils import get_career_matches, msk_day_start
 from bot.webapp import api_club
 from bot.webapp.server import create_app
 from bot.webapp.text import plain
 from tests.conftest import _completed, _player
 from tests.test_webapp import ADMIN, TOKEN, _init_data
 
-NOW = datetime.now(timezone.utc).replace(tzinfo=None)
+# «Сейчас», но не раньше часа после полуночи МСК: события «N минут назад» в
+# первый час суток иначе уехали бы во «вчера» (CI, запущенный в 00:00 МСК, падал).
+# Запросы «сегодня» ограничены только снизу, событие чуть в будущем им не мешает.
+NOW = max(datetime.now(timezone.utc).replace(tzinfo=None), msk_day_start() + timedelta(hours=1))
 
 DAY_TEXT = (
     "📅 <b>Итоги дня — 13.10</b>\n\n"
