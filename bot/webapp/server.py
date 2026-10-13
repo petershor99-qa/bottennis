@@ -25,6 +25,8 @@
   GET /api/match/{id}                       — экран матча (v2.168.0), с реакциями (v2.169.0)
   GET /api/player/{id}/chart                — график рейтинга по датам (v2.168.0)
   POST /api/match/{id}/react                — поставить/снять реакцию (v2.169.0)
+  GET /api/when?who=club|me                 — «Когда играют»: день недели × час (v2.170.0)
+  GET /api/usage                            — «Использование», только администратор (v2.170.0)
   POST /api/track                           — счётчик показанных экранов (v2.166.0)
 Вход во все /api — `Authorization: tma <initData>`.
 
@@ -41,9 +43,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Player
 from bot.utils import get_player
-from bot.webapp import api, api_club, reactions
+from bot.webapp import api, api_club, api_insights, reactions
 from bot.webapp.auth import WebAppAuthError, init_data_from_header, telegram_id_from_init_data
-from bot.webapp.config import is_webapp_allowed, webapp_listen
+from bot.webapp.config import is_admin, is_webapp_allowed, webapp_listen
 from bot.webapp.photos import PhotoCache
 from bot.webapp.usage import SCREEN_RE, UsageWriter, log_boot_time
 
@@ -129,11 +131,30 @@ async def home(request, session, viewer):
             e["reactions"] = reactions.feed_counts(by_match.get(e["id"], []))
     payload["me"]["today"] = await api_club.today_line(session, viewer)
     payload["links"].insert(0, {"route": "summary/day", "title": "Итоги", "value": "", "icon": "calendar"})
+    # v2.170.0: «Когда играют» — всем, «Использование» — только администратору
+    payload["links"].append({"route": "when", "title": "Когда играют", "value": "", "icon": "clock"})
+    if is_admin(viewer.telegram_id):
+        payload["links"].append({"route": "usage", "title": "Использование", "value": "", "icon": "chart-pie"})
     return payload
 
 
 async def summary(request, session, viewer):
-    return await api_club.summary_payload(session, request.match_info["kind"])
+    payload = await api_club.summary_payload(session, request.match_info["kind"])
+    if payload is not None and payload["kind"] == "year":
+        # v2.170.0: «Твой год» и неформальные звания (голосование — в боте)
+        payload.update(await api_insights.year_extras(session, viewer))
+    return payload
+
+
+async def when(request, session, viewer):
+    return await api_insights.when_payload(session, viewer, request.query.get("who", "club"))
+
+
+async def usage(request, session, viewer):
+    """Не администратору — 404: экран не должен даже обнаруживаться."""
+    if not is_admin(viewer.telegram_id):
+        return None
+    return await api_insights.usage_payload(session)
 
 
 async def match_screen(request, session, viewer):
@@ -324,6 +345,8 @@ def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
         ("/api/player/{player_id}/chart", chart),
         ("/api/matches", matches),
         ("/api/throne", throne),
+        ("/api/when", when),
+        ("/api/usage", usage),
     ]
     for path, handler in routes:
         app.router.add_get(path, endpoint(handler))
