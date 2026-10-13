@@ -101,6 +101,38 @@ def sessions_of(events):
     return result
 
 
+FLOW_START = {"menu_play", "challenge", "rematch"}   # начало «вызова»
+FLOW_END = "confirm"                                  # «Всё верно» — результат записан
+
+
+def flows_of(events):
+    """Флоу «вызов -> результат» по каждому игроку: [(секунд, нажатий)] завершённых и число
+    начатых, но не доведённых до подтверждения за SESSION_GAP."""
+    by_user: dict[str, list] = defaultdict(list)
+    for user, ts, action in events:
+        by_user[user].append((ts, action))
+    done: list[tuple[float, int]] = []
+    abandoned = 0
+    for items in by_user.values():
+        start = None
+        taps = 0
+        for ts, action in items:
+            if start is not None and ts - start > SESSION_GAP:
+                abandoned += 1
+                start, taps = None, 0
+            if start is None:
+                if action in FLOW_START:
+                    start, taps = ts, 1
+                continue
+            taps += 1
+            if action == FLOW_END:
+                done.append(((ts - start).total_seconds(), taps))
+                start, taps = None, 0
+        if start is not None:
+            abandoned += 1
+    return done, abandoned
+
+
 def label_of(action: str, labels: dict[str, str]) -> str:
     return labels.get(action, action)
 
@@ -176,6 +208,22 @@ def build_report(events, labels: dict[str, str], top: int = 25) -> str:
         "", "Самые частые пути (первые 5 шагов):",
         table(["Путь", "Раз"], [[p, c] for p, c in paths.most_common(12)]),
     ]
+
+    # 3б. Флоу «вызов -> результат»
+    done, abandoned = flows_of(anon)
+    lines += ["", "## Флоу «вызов → результат записан»", ""]
+    if done:
+        secs = [d for d, _ in done]
+        taps = [t for _, t in done]
+        lines += [
+            f"Доведено до подтверждения: {len(done)}, брошено без подтверждения: {abandoned}.",
+            f"Время от первого нажатия до «Подтвердить»: медиана {median(secs):.0f} с, среднее {sum(secs) / len(secs):.0f} с, "
+            f"максимум {max(secs):.0f} с.",
+            f"Нажатий на пути: медиана {median(taps):g}, минимум {min(taps)}, максимум {max(taps)} "
+            "(считаются нажатия кнопок и команд, прямой ввод счёта текстом не считается).",
+        ]
+    else:
+        lines.append(f"Завершённых флоу не найдено (начато без подтверждения: {abandoned}).")
 
     # 4. Когда
     by_hour = Counter(ts.hour for _, ts, _ in anon)

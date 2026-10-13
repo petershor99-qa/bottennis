@@ -45,6 +45,13 @@ from bot.webapp.server import create_app  # noqa: E402
 
 TOKEN = "123456:PREVIEW"
 NAMES = ["Алиса", "Боб", "Вика", "Гоша", "Дима", "Ева"]
+# У первого игрока («Алиса», зритель) много ачивок разных категорий и ступеней
+# лестниц — чтобы в превью было видно иконки и цвета уровней.
+RICH_ACHIEVEMENTS = [
+    "press_start", "first_blood", "beginners_luck", "hat_trick", "im_on_fire", "fatality", "night_owl",
+    "comeback", "deuce_maker", "marathon", "titans", "fifty", "veteran", "legend", "point_saver",
+    "sturdy_grinder", "set_sniper", "diplomat", "collector", "highlander", "fk_tyumen", "weekend_warrior",
+]
 
 
 def init_data(user_id: int) -> str:
@@ -69,7 +76,7 @@ async def seed():
     rng = random.Random(7)
     async with async_session() as s:
         players = [Player(telegram_id=1001 + i, display_name=n, rating=1000.0, peak_rating=1000.0,
-                          achievements=json.dumps(["press_start", "first_blood", "hat_trick"][: 1 + i % 3]),
+                          achievements=json.dumps(RICH_ACHIEVEMENTS if i == 0 else ["press_start", "first_blood", "hat_trick"][: 1 + i % 3]),
                           backfill_version=0) for i, n in enumerate(NAMES)]
         s.add_all(players)
         await s.flush()
