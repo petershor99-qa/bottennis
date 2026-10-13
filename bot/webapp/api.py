@@ -50,6 +50,7 @@ from bot.utils import (
     pluralize_wins,
     rank_title,
 )
+from bot.webapp.achievement_icons import ACHIEVEMENT_ICONS
 from bot.webapp.text import groups, plain
 
 MIN_MATCHES_FOR_RADAR = 5  # как у радара в боте (bot/handlers/history.py)
@@ -430,6 +431,11 @@ def achievement_tier(ach_id: str) -> str:
     return ""
 
 
+def _achievement_icon(ach_id: str) -> str:
+    """Имя иконки из набора webapp/static/icons.svg (ti-<имя>); trophy — запасная."""
+    return ACHIEVEMENT_ICONS.get(ach_id, "trophy")
+
+
 def achievements_payload(player: Player) -> dict:
     earned = set(get_achievements(player))
     categories = []
@@ -438,11 +444,14 @@ def achievements_payload(player: Player) -> dict:
         items = []
         for a in sorted(achs, key=lambda a: a.id not in earned):
             if a.id in earned:
-                items.append({"name": a.name, "desc": a.desc, "earned": True, "tier": achievement_tier(a.id)})
+                items.append({"name": a.name, "desc": a.desc, "earned": True, "tier": achievement_tier(a.id),
+                              "icon": _achievement_icon(a.id)})
             elif a.hidden:
-                items.append({"name": "?", "desc": "Скрытое достижение", "earned": False, "hidden": True, "tier": ""})
+                items.append({"name": "?", "desc": "Скрытое достижение", "earned": False, "hidden": True,
+                              "tier": "", "icon": "lock"})
             else:
-                items.append({"name": a.name, "desc": a.desc, "earned": False, "tier": achievement_tier(a.id)})
+                items.append({"name": a.name, "desc": a.desc, "earned": False, "tier": achievement_tier(a.id),
+                              "icon": _achievement_icon(a.id)})
         categories.append({
             "index": i,
             "title": plain(category),

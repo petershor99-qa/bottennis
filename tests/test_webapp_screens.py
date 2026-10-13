@@ -472,3 +472,38 @@ async def test_profile_tiles_have_distinct_meaning(db):
     assert "партии" not in tiles[2]["sub"]  # доля партий — отдельная плитка, не подпись «Матчей»
     assert tiles[-1]["hint"]  # индекс легенды объясняется по нажатию
     assert float(tiles[4]["value"]) >= a.rating  # пик не ниже текущего рейтинга
+
+
+# ── Иконки ачивок (v2.165.0) ──────────────────────────────────────────────────
+
+def test_every_achievement_has_an_icon_in_the_sprite():
+    """Каждая ачивка сопоставлена с иконкой, которая есть в наборе icons.svg;
+    набор не тянет внешних ресурсов."""
+    from pathlib import Path
+
+    from bot.services.achievements import ACHIEVEMENTS_LIST
+    from bot.webapp.achievement_icons import ACHIEVEMENT_ICONS
+
+    sprite = (Path(__file__).resolve().parent.parent / "webapp" / "static" / "icons.svg").read_text(encoding="utf-8")
+    for ach in ACHIEVEMENTS_LIST:
+        icon = ACHIEVEMENT_ICONS.get(ach.id)
+        assert icon, f"нет иконки у {ach.id}"
+        assert f'id="ti-{icon}"' in sprite, f"{icon} ({ach.id}) нет в наборе"
+    assert "http://" not in sprite.replace("http://www.w3.org/2000/svg", "")
+    assert 'id="ti-lock"' in sprite
+
+
+async def test_achievement_payload_items_carry_icons(db):
+    a, _, _ = await _seed(db)
+    data = api.achievements_payload(a)
+    items = [it for c in data["categories"] for it in c["items"]]
+    assert all(it["icon"] for it in items)
+    hidden = [it for it in items if it.get("hidden")]
+    assert hidden and all(it["icon"] == "lock" for it in hidden)  # скрытые не раскрывают смысл иконкой
+
+
+def test_ladder_steps_share_icon():
+    from bot.webapp.achievement_icons import ACHIEVEMENT_ICONS
+
+    for ladder in api.ACHIEVEMENT_LADDERS:
+        assert len({ACHIEVEMENT_ICONS[a] for a in ladder}) == 1, ladder
