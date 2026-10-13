@@ -5,14 +5,63 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>Клуб</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="stylesheet" href="static/app.css">
 </head>
 <body>
   <main class="screen" id="app">
-    <p class="state">Загрузка…</p>
+    <p class="state" id="boot-state">Загрузка…</p>
   </main>
   <nav class="tabbar" id="tabbar" aria-label="Разделы"></nav>
-  <script src="static/app.js"></script>
+  <script>
+    // Загрузчик скрипта Telegram (v2.164.2). Раньше он стоял в <head> обычным
+    // блокирующим тегом: если telegram.org отвечал медленно, страница вставала
+    // на ~10% и помогал только перезапуск. Теперь страница отрисовывается сразу,
+    // скрипт подгружается после неё с таймаутом и повторами, и приложение
+    // стартует, как только он пришёл. app.js нельзя запускать раньше: маршрутизация
+    // меняет адрес после «#», а скрипт Telegram читает из него параметры запуска.
+    (function () {
+      var URL = "https://telegram.org/js/telegram-web-app.js";
+      var TIMEOUT_MS = 5000, MAX_TRIES = 4;
+      var tries = 0, booted = false;
+
+      function boot() {
+        if (booted) return;
+        booted = true;
+        var s = document.createElement("script");
+        s.src = "static/app.js";
+        document.body.appendChild(s);
+      }
+
+      function giveUp() {
+        var node = document.getElementById("boot-state");
+        if (!node || booted) return;
+        node.textContent = "Не удалось загрузить приложение. Проверьте соединение. ";
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "button button-quiet";
+        b.textContent = "Обновить";
+        b.addEventListener("click", function () { location.reload(); });
+        node.parentNode.appendChild(b);
+      }
+
+      function attempt() {
+        if (booted) return;
+        if (tries >= MAX_TRIES) { giveUp(); return; }
+        tries += 1;
+        var mine = tries;
+        var s = document.createElement("script");
+        s.src = URL + (mine > 1 ? "?retry=" + mine : "");
+        // Опоздавший ответ предыдущей попытки тоже годится: boot() сработает один раз
+        s.onload = boot;
+        s.onerror = function () { if (!booted && tries === mine) setTimeout(attempt, 300); };
+        document.head.appendChild(s);
+        // Нет ответа за TIMEOUT_MS — следующая попытка (старая может ещё дойти)
+        setTimeout(function () { if (!booted && tries === mine) attempt(); }, TIMEOUT_MS);
+      }
+
+      if (document.readyState === "complete") attempt();
+      else window.addEventListener("load", attempt);
+    })();
+  </script>
 </body>
 </html>

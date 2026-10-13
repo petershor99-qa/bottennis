@@ -303,3 +303,14 @@ async def test_static_files_are_revalidated(client):
         assert resp.headers.get("ETag")
         again = await client.get(path, headers={"If-None-Match": resp.headers["ETag"]})
         assert again.status == 304
+
+
+async def test_index_does_not_block_on_telegram_script(client):
+    """РЕГРЕССИЯ v2.164.2: скрипт telegram.org стоял в <head> блокирующим тегом;
+    при медленном ответе страница вставала на ~10% загрузки. Теперь он
+    подгружается загрузчиком после отрисовки, а app.js стартует только после него."""
+    html = await (await client.get("/")).text()
+    assert '<script src="https://telegram.org' not in html          # нет блокирующего тега
+    assert "telegram-web-app.js" in html                              # но загрузчик есть
+    assert '<script src="static/app.js">' not in html                 # app.js стартует из загрузчика
+    assert "MAX_TRIES" in html and "Обновить" in html                 # повторы и запасной выход
