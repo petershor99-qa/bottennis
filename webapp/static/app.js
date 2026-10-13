@@ -1319,7 +1319,7 @@
       seg.appendChild(b);
     });
     c.appendChild(seg);
-    if (d.empty) { emptyState(c, d.empty); return; }
+    if (d.empty) { emptyState(c, d.empty); yearExtras(c, d); return; }
     if (d.played.length) {
       var chips = el("div", "summary-played");
       d.played.forEach(function (line, i) {
@@ -1350,6 +1350,137 @@
       g.forEach(function (it) { sec.list.appendChild(itemRow(it)); });
       c.appendChild(sec);
     });
+    yearExtras(c, d);
+  }
+
+  // Итоги года (v2.170.0): «Твой год» и неформальные звания — только просмотр,
+  // голосование остаётся в боте
+  function yearExtras(c, d) {
+    [d.mine, d.vote].forEach(function (block) {
+      if (!block) return;
+      var sec = section(block.title);
+      block.items.forEach(function (it) { sec.list.appendChild(itemRow(it)); });
+      c.appendChild(sec);
+    });
+  }
+
+  // ── Когда играют (v2.170.0) ────────────────────────────────────────────────
+  function renderWhen(c, d, who) {
+    c.appendChild(header(d.title, [d.period, d.total].filter(Boolean).join(" · ")));
+    var seg = el("div", "segmented");
+    [["club", "Клуб"], ["me", "Я"]].forEach(function (t) {
+      var b = el("button", "seg" + (t[0] === who ? " is-active" : ""), t[1]);
+      b.type = "button";
+      b.addEventListener("click", function () {
+        if (t[0] === who) return;
+        haptic("select");
+        location.replace(t[0] === "me" ? "#/when/me" : "#/when");
+      });
+      seg.appendChild(b);
+    });
+    c.appendChild(seg);
+    if (d.empty) { emptyState(c, d.empty); return; }
+
+    var card = el("div", "card when");
+    var grid = el("div", "when-grid");
+    grid.style.setProperty("--cols", String(d.hours.length));
+    grid.appendChild(el("span", "when-corner"));
+    d.hours.forEach(function (h, i) { grid.appendChild(el("span", "when-hour", i % 2 === 0 ? String(h) : "")); });
+    d.rows.forEach(function (row, ri) {
+      grid.appendChild(el("span", "when-day", row.day));
+      row.cells.forEach(function (cell, ci) {
+        var b = el("button", "when-cell heat-" + cell.lvl);
+        b.type = "button";
+        b.style.animationDelay = (ri * 40 + ci * 12) + "ms";
+        b.setAttribute("aria-label", row.full + ", " + cell.h + ":00 — " + cell.n);
+        b.addEventListener("click", function () {
+          var hh = (cell.h < 10 ? "0" : "") + cell.h;
+          var next = (cell.h + 1 < 10 ? "0" : "") + (cell.h + 1);
+          sheetOpen(null, row.full + ", " + hh + ":00–" + next + ":00", matchesWord(cell.n), "");
+        });
+        grid.appendChild(b);
+      });
+    });
+    card.appendChild(grid);
+    c.appendChild(card);
+    var lg = el("div", "legend");
+    [["0", "нет"], ["1", "реже"], ["3", "чаще всего"]].forEach(function (x) {
+      var item = el("span", "legend-item");
+      item.appendChild(el("i", "swatch heat-" + x[0]));
+      item.appendChild(document.createTextNode(x[1]));
+      lg.appendChild(item);
+    });
+    c.appendChild(lg);
+
+    var facts = section("Главное");
+    d.facts.forEach(function (it) { facts.list.appendChild(itemRow(it)); });
+    c.appendChild(facts);
+  }
+
+  function matchesWord(n) {
+    var m10 = n % 10, m100 = n % 100;
+    var w = m100 >= 11 && m100 <= 14 ? "матчей" : m10 === 1 ? "матч" : m10 >= 2 && m10 <= 4 ? "матча" : "матчей";
+    return n === 0 ? "Матчей не было" : n + " " + w + " за 90 дней";
+  }
+
+  // ── Использование, только администратор (v2.170.0) ─────────────────────────
+  function usageBars(daily) {
+    var W = 320, H = 96, B = 14, gap = 2;
+    var max = Math.max.apply(null, daily.map(function (x) { return x.bot + x.app; }).concat([1]));
+    var bw = (W - gap * (daily.length - 1)) / daily.length;
+    var s = svg("svg", { "class": "chart usage-bars", viewBox: "0 0 " + W + " " + H, role: "img" });
+    daily.forEach(function (x, i) {
+      var left = i * (bw + gap);
+      var hBot = (H - B) * x.bot / max, hApp = (H - B) * x.app / max;
+      var t = svg("title");
+      t.textContent = x.d + ": бот " + x.bot + ", приложение " + x.app;
+      var g = svg("g");
+      g.appendChild(t);
+      g.appendChild(svg("rect", { "class": "bar-bot", x: left.toFixed(1), y: (H - B - hBot).toFixed(1), width: bw.toFixed(1), height: hBot.toFixed(1), rx: 1.5 }));
+      g.appendChild(svg("rect", { "class": "bar-app", x: left.toFixed(1), y: (H - B - hBot - hApp).toFixed(1), width: bw.toFixed(1), height: hApp.toFixed(1), rx: 1.5 }));
+      s.appendChild(g);
+    });
+    [0, daily.length - 1].forEach(function (i) {
+      var lbl = svg("text", { "class": "chart-label", x: i === 0 ? 0 : W, y: H - 2, "text-anchor": i === 0 ? "start" : "end" });
+      lbl.textContent = daily[i].d;
+      s.appendChild(lbl);
+    });
+    return s;
+  }
+
+  function renderUsage(c, d) {
+    c.appendChild(header(d.title, d.period));
+    if (d.empty) { emptyState(c, d.empty); return; }
+    var tiles = el("div", "tiles");
+    d.tiles.forEach(function (t) {
+      var tile = el("div", "tile");
+      tile.appendChild(el("div", "tile-label", t.label));
+      tile.appendChild(num("tile-value", t.value));
+      if (t.sub) tile.appendChild(el("div", "tile-sub", t.sub));
+      tiles.appendChild(tile);
+    });
+    c.appendChild(tiles);
+    var card = el("div", "card");
+    var head = el("div", "pair-top");
+    head.appendChild(el("span", "eyebrow", "По дням"));
+    card.appendChild(head);
+    card.appendChild(usageBars(d.daily));
+    var lg = el("div", "legend legend-tight");
+    [["bar-bot", "бот"], ["bar-app", "приложение"]].forEach(function (x) {
+      var item = el("span", "legend-item");
+      item.appendChild(el("i", "swatch " + x[0]));
+      item.appendChild(document.createTextNode(x[1]));
+      lg.appendChild(item);
+    });
+    card.appendChild(lg);
+    c.appendChild(card);
+    [["Приложение", d.app], ["Бот", d.bot]].forEach(function (x) {
+      if (!x[1].length) return;
+      var sec = section(x[0]);
+      x[1].forEach(function (it) { sec.list.appendChild(itemRow(it)); });
+      c.appendChild(sec);
+    });
+    c.appendChild(el("p", "footnote", "Без разбивки по людям: сколько раз открыт экран и сколькими игроками."));
   }
 
   // ── Экран матча (v2.168.0) ─────────────────────────────────────────────────
@@ -1428,7 +1559,10 @@
     [/^throne$/, "home", one("throne"), renderThrone, "throne"],
     [/^summary\/(day|week|month|quarter|year)$/, "home", function (m) { return api("summary/" + m[1]); },
       function (c, d, m) { renderSummary(c, d, m[1]); }, "summary"],
-    [/^match\/(\d+)$/, null, function (m) { return api("match/" + m[1]); }, function (c, d) { renderMatch(c, d); }, "match"]
+    [/^match\/(\d+)$/, null, function (m) { return api("match/" + m[1]); }, function (c, d) { renderMatch(c, d); }, "match"],
+    [/^when(?:\/(me))?$/, "home", function (m) { return api("when?who=" + (m[1] || "club")); },
+      function (c, d, m) { renderWhen(c, d, m[1] || "club"); }, "when"],
+    [/^usage$/, "home", one("usage"), renderUsage, "usage"]
   ];
 
   var TABS = [["home", "", "Клуб", "home"], ["rating", "rating", "Рейтинг", "rating"], ["me", "me", "Я", "user"]];

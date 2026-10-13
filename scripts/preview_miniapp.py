@@ -39,7 +39,7 @@ from aiohttp import web  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 
 from bot.db.database import async_session, engine  # noqa: E402
-from bot.db.models import Base, ChampionReign, ClubRecordPing, Match, MatchStatus, Player  # noqa: E402
+from bot.db.models import Base, ChampionReign, ClubRecordPing, Match, MatchStatus, Player, UsageEvent  # noqa: E402
 from bot.services.rating import calculate_rating_change  # noqa: E402
 from bot.webapp.server import create_app  # noqa: E402
 
@@ -129,6 +129,12 @@ async def seed():
         s.add(ChampionReign(player_id=players[3].id, started_at=start + timedelta(days=10),
                             ended_at=start + timedelta(days=30)))
         s.add(ChampionReign(player_id=champ.id, started_at=start + timedelta(days=30)))
+        # Счётчик экранов за 30 дней — для экрана «Использование» (v2.170.0)
+        actions = ["menu_leaderboard", "menu_stats", "challenge", "result_confirm", "app_home",
+                   "app_rating", "app_me", "app_player", "app_summary_day", "app_match", "app_when"]
+        for _ in range(400):
+            s.add(UsageEvent(user_id=rng.choice([1001, 2002, 3003, 4004, 5005]), action=rng.choice(actions),
+                             created_at=now - timedelta(minutes=rng.randint(0, 30 * 24 * 60))))
         await s.commit()
         ids = (await s.execute(select(Player.id, Player.display_name))).all()
         print("players:", ids)
