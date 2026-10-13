@@ -158,7 +158,7 @@ def build_report(events, labels: dict[str, str], top: int = 25) -> str:
     if first < FIX_DATE:
         lines.append(
             f"Оговорка: до {FIX_DATE:%d.%m.%Y} действия с записью (вызов, ввод счёта, голос) занижены — "
-            "события терялись из-за блокировки SQLite (v2.157.2). Нажатия в Mini App сюда не входят."
+            "события терялись из-за блокировки SQLite (v2.157.2). Экраны Mini App пишутся с v2.166.0 (действия app_*)."
         )
 
     # 1. Действия

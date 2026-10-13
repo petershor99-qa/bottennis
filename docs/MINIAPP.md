@@ -81,6 +81,10 @@
    ```
    затем `systemctl reload caddy`. Проверка: `curl -sI https://<имя>/ | grep -i alt-svc` ничего не выводит.
 
+## Счётчик экранов
+
+После каждого показанного экрана страница шлёт `POST /api/track {"screen": "…"}` — в `usage_events` пишется `app_<экран>` (`app_home`, `app_rating`, `app_me`, `app_me_matches`, `app_player`, `app_h2h`, …), видно в `/usage` и `scripts/export_usage.py`. Первый экран после запуска добавляет время загрузки — оно в логе сервиса («Mini App: загрузка N мс до первого экрана»), не в базе.
+
 ## Входы из бота
 
 | Где | Подпись | Кому |
