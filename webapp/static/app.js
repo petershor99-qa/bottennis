@@ -499,14 +499,39 @@
     return li;
   }
 
+  // Подъём в рейтинге (v2.167.0): бот после матча открывает рейтинг со ссылкой
+  // ?r=rating&from=<место до матча>. Если место выросло — своя строка «въезжает»
+  // снизу на новое место, над таблицей короткая плашка. Один раз за запуск.
+  var pendingRise = null;
+
+  function animateRise(c, li, from, to) {
+    var note = el("div", "rise-note");
+    note.appendChild(icon("rating", "ico-lead"));
+    note.appendChild(document.createTextNode("Ты поднялся с #" + from + " на #" + to));
+    c.insertBefore(note, c.children[1] || null);
+    if (reduceMotion) { li.classList.add("rise-flash"); return; }
+    requestAnimationFrame(function () {
+      li.style.setProperty("--rise", ((from - to) * li.offsetHeight) + "px");
+      li.classList.add("rise");
+    });
+    try { if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success"); } catch (e) { /* нет вибрации */ }
+  }
+
   function renderLeaderboard(c, d) {
     c.appendChild(header(d.title, d.players_label));
     if (d.empty) { emptyState(c, d.empty); return; }
     var board = section();
     board.list.classList.add("board");
-    d.rows.forEach(function (row) { board.list.appendChild(boardRow(row)); });
+    var mine = null, myRow = null;
+    d.rows.forEach(function (row) {
+      var li = boardRow(row);
+      if (row.is_viewer) { mine = li; myRow = row; }
+      board.list.appendChild(li);
+    });
     c.appendChild(board);
     if (d.gap) c.appendChild(el("p", "footnote", d.gap));
+    if (pendingRise && mine && pendingRise > myRow.rank) animateRise(c, mine, pendingRise, myRow.rank);
+    pendingRise = null;
   }
 
   // ── Профиль ────────────────────────────────────────────────────────────────
@@ -1052,5 +1077,16 @@
     if (tg.BackButton) tg.BackButton.onClick(function () { history.back(); });
   }
   window.addEventListener("hashchange", render);
+  // Переход из бота сразу на нужный экран (v2.167.0): ?r=player/5, ?r=rating&from=3.
+  // Скрипт Telegram к этому моменту уже прочитал свои параметры из адреса.
+  try {
+    var params = new URLSearchParams(location.search);
+    var startRoute = params.get("r");
+    if (params.has("from")) pendingRise = parseInt(params.get("from"), 10) || null;
+    if (startRoute !== null && /^[a-z0-9_\/]{0,60}$/.test(startRoute) && location.hash.indexOf("#/") !== 0) {
+      history.replaceState(null, "", location.pathname + location.search + "#/" + startRoute);
+    }
+  } catch (e) { /* старый браузер — откроется главная */ }
+
   api("me").then(function (d) { viewerId = d.id; }, function () { viewerId = null; }).then(render);
 })();

@@ -15,6 +15,7 @@ WEBAPP_HOST/PORT — где слушает веб-сервер внутри VPS 
 через monkeypatch.setenv, а `.env` в main.py грузится раньше всего остального.
 """
 import os
+from urllib.parse import urlencode
 
 from bot.utils import env_int
 
@@ -23,6 +24,9 @@ from bot.utils import env_int
 WEBAPP_BUTTON_TEXT = "📱 Открыть приложение"
 # Подпись кнопки меню Telegram слева от строки ввода (одна на чат, короткая)
 WEBAPP_MENU_BUTTON_TEXT = "Клуб"
+# Короткий бот (v2.167.0): одна кнопка вместо глубоких экранов и переход сразу в рейтинг
+WEBAPP_MORE_TEXT = "📱 Подробнее в приложении"
+WEBAPP_RATING_TEXT = "📱 Рейтинг в приложении"
 
 
 def webapp_base_url() -> str | None:
@@ -55,3 +59,22 @@ def webapp_url_for(telegram_id: int) -> str | None:
     if not is_webapp_allowed(telegram_id):
         return None
     return webapp_base_url()
+
+
+def webapp_link(telegram_id: int, route: str = "", **params) -> str | None:
+    """Ссылка сразу на экран приложения (v2.167.0): `?r=player/5&from=3`.
+    Страница при запуске открывает маршрут `r`; `from` — место до матча для
+    анимации подъёма в рейтинге. None — приложение этому игроку недоступно."""
+    base = webapp_url_for(telegram_id)
+    if base is None:
+        return None
+    query = {"r": route} if route else {}
+    query.update({k: v for k, v in params.items() if v is not None})
+    return base + ("?" + urlencode(query) if query else "")
+
+
+def slim_bot_for(telegram_id: int) -> bool:
+    """Короткий бот (v2.167.0): если приложение игроку доступно, глубокая
+    статистика в боте прячется за кнопкой «Подробнее в приложении». Без
+    приложения (WEBAPP_URL пуст или не та аудитория) бот полный, как раньше."""
+    return webapp_url_for(telegram_id) is not None
