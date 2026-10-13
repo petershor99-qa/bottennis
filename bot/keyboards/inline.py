@@ -39,6 +39,9 @@ def main_reply_kb() -> ReplyKeyboardMarkup:
             KeyboardButton(text=REPLY_KB_PROFILE),
         ]],
         resize_keyboard=True,
+        # Постоянная (v2.166.0): по данным usage 38% сессий начинались с /start —
+        # клавиатуру сворачивали, а меню под сообщением уходило вверх по чату.
+        is_persistent=True,
     )
 
 

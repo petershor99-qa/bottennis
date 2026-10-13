@@ -340,6 +340,10 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
             f"{boss_fight_note}\n\n"
             f"📋 После игры просто напиши счёт сюда: <code>11:7 9:11 11:5</code>",
             reply_markup=active_match_kb(match.id),
+            # Тихо (v2.166.0): в клубе вызывают уже после игры, соперник рядом,
+            # и через полминуты придёт результат — второй звонок подряд не нужен.
+            # Само сообщение остаётся: забывшему записать оно служит напоминанием.
+            disable_notification=True,
         )
     except Exception:
         logger.exception("Не удалось отправить вызов в чат %s, матч %s отменён", opponent.telegram_id, match.id)
