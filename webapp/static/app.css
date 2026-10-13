@@ -410,3 +410,54 @@ html, body {
 .axis-key { display: flex; gap: 16px; color: var(--hint); font-size: 13px; padding-top: 10px; padding-bottom: 4px; min-height: 0; }
 .swatch-me { background: var(--accent); }
 .swatch-them { background: var(--them); }
+
+/* ── Релиз 3а (v2.168.0): лента, итоги, экран матча, график ─────────── */
+.feed-day { list-style: none; padding: 12px 16px 4px; font-size: 13px; font-weight: 700; color: var(--hint);
+  text-transform: uppercase; letter-spacing: 0.04em; }
+.feed-row { align-items: flex-start; animation: fade .35s ease-out both; }
+.feed-row .vs-line { flex-wrap: wrap; }
+.feed-report { margin-top: 8px; font-style: italic; }
+.feed-time { font-size: 12px; padding-top: 3px; }
+.badge-sm { width: 36px; height: 36px; border-radius: 11px; flex: 0 0 36px; }
+.badge-sm .ico { width: 20px; height: 20px; }
+
+.segmented-flat { position: static; backdrop-filter: none; -webkit-backdrop-filter: none; margin-bottom: 14px; }
+
+.summary-played { display: flex; flex-direction: column; gap: 6px; margin: -4px 0 14px; }
+.summary-pill { background: var(--card); border-radius: 12px; padding: 10px 14px; font-weight: 600; font-size: 14px;
+  animation: rise .45s ease-out both; }
+.podium-summary .podium-block { justify-content: center; }
+.grow { transform-origin: bottom; animation: grow .7s cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes grow { from { transform: scaleY(0); opacity: .3; } to { transform: none; opacity: 1; } }
+.stagger { animation: rise .4s ease-out both; }
+
+.versus-side.is-winner .versus-name { font-weight: 800; }
+.set-row { gap: 10px; }
+.set-n { flex: 0 0 18px; color: var(--hint); font-weight: 700; text-align: center; }
+.set-bars { flex: 1; display: flex; flex-direction: column; gap: 5px; }
+.set-line { display: flex; align-items: center; gap: 8px; }
+.set-bar { display: block; height: 8px; border-radius: 4px; background: var(--soft); transform-origin: left;
+  animation: grow-x .7s cubic-bezier(.2, .8, .2, 1) both; }
+.set-bar-a.is-won { background: var(--accent); }
+.set-bar-b.is-won { background: var(--them); }
+.set-pts { font-size: 13px; color: var(--hint); min-width: 20px; }
+.set-pts.is-won { color: var(--text); font-weight: 700; }
+@keyframes grow-x { from { transform: scaleX(0); } to { transform: none; } }
+
+.trend .chips-pick { margin-top: 10px; }
+.chip-btn { border: 0; cursor: pointer; font: 600 13px var(--font); }
+.chip-btn.is-active { background: var(--accent); color: var(--button-text); }
+.trend-area { margin-top: 6px; min-height: 60px; }
+.trend-key { margin: 6px 0 0; }
+.trend-compare { align-items: center; }
+.trend-compare-label { font-size: 13px; color: var(--hint); margin-right: 2px; }
+.chart-line-them { stroke: var(--them); }
+.chart-dot-them { fill: var(--them); }
+
+@media (prefers-reduced-motion: reduce) {
+  .grow, .stagger, .set-bar, .feed-row, .summary-pill { animation: none; }
+}
+/* Переключатели с большим числом вкладок (итоги: 5 периодов) — прокрутка, а не вылет за экран */
+.segmented-flat { overflow-x: auto; scrollbar-width: none; }
+.segmented-flat::-webkit-scrollbar { display: none; }
+.segmented-flat .seg { flex: 1 0 auto; padding: 8px 12px; white-space: nowrap; }
