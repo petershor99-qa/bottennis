@@ -397,6 +397,15 @@ html, body {
 .tile-hinted { cursor: pointer; }
 .tile-hinted .tile-label::after { content: " \24D8"; }
 
+/* Подъём в рейтинге (v2.167.0) */
+.rise { position: relative; z-index: 1; animation: rise-up 1s cubic-bezier(.2, .8, .2, 1) both, rise-glow 1.8s ease-out .7s; }
+.rise-flash { animation: rise-glow 1.8s ease-out; }
+@keyframes rise-up { from { transform: translateY(var(--rise)); } to { transform: none; } }
+@keyframes rise-glow { 0% { background: color-mix(in srgb, var(--win) 28%, var(--card)); } 100% { background: var(--selected); } }
+.rise-note { display: flex; align-items: center; gap: 8px; margin: -4px 4px 12px; padding: 10px 14px;
+  border-radius: 12px; background: var(--win-soft); color: var(--win); font-weight: 700; font-size: 15px; animation: fade .4s ease-out; }
+.rise-note .ico { color: var(--win); }
+
 /* «Ты против …»: ключ цветов */
 .axis-key { display: flex; gap: 16px; color: var(--hint); font-size: 13px; padding-top: 10px; padding-bottom: 4px; min-height: 0; }
 .swatch-me { background: var(--accent); }

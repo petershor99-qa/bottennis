@@ -48,7 +48,7 @@ from bot.utils import (
     shortest_champion_reign,
     steadiest_career,
 )
-from bot.webapp.config import webapp_url_for
+from bot.webapp.config import webapp_link, webapp_url_for
 
 router = Router()
 
@@ -113,7 +113,14 @@ async def _build_leaderboard_screen(session: AsyncSession, telegram_id: int):
         )
 
     lines.append(f"\n<i>{LEADERBOARD_LEGEND}</i>")
-    return "\n".join(lines), leaderboard_kb(rows, web_app_url=webapp_url_for(telegram_id))
+    base = webapp_url_for(telegram_id)
+    if base:
+        # Короткий бот (v2.167.0): игроки открываются сразу в приложении
+        kb = leaderboard_kb(rows, web_app_url=webapp_link(telegram_id, ""),
+                            player_url=lambda pid: webapp_link(telegram_id, f"player/{pid}"))
+    else:
+        kb = leaderboard_kb(rows)
+    return "\n".join(lines), kb
 
 
 @router.callback_query(F.data == "menu_leaderboard")

@@ -24,20 +24,20 @@ def _buttons(kb):
 
 def test_main_menu_uses_new_names():
     texts = [b.text for b in _buttons(main_menu_kb())]
-    assert "🏆 Рейтинг клуба" in texts and "👤 Мой профиль" in texts
+    assert "🏆 Рейтинг клуба" in texts and "📊 Мой рейтинг" in texts
     assert "📊 Рейтинг" not in texts and "📈 Статистика" not in texts
 
 
 def test_reply_keyboard_is_shortened_and_matches_constants():
     row = main_reply_kb().keyboard[0]
-    assert [b.text for b in row][1:] == ["🏆 Клуб", "👤 Профиль"]
-    assert utils.REPLY_KB_LEADERBOARD == "🏆 Клуб" and utils.REPLY_KB_PROFILE == "👤 Профиль"
+    assert [b.text for b in row][1:] == ["🏆 Рейтинг", "📊 Мой рейтинг"]
+    assert utils.REPLY_KB_LEADERBOARD == "🏆 Рейтинг" and utils.REPLY_KB_PROFILE == "📊 Мой рейтинг"
 
 
 def test_old_reply_keyboard_texts_still_accepted():
     """У игрока может стоять прежняя нижняя клавиатура — её кнопки не должны замолчать."""
-    assert {"🏆 Клуб", "📊 Рейтинг"} == utils.REPLY_KB_LEADERBOARD_ALL
-    assert {"👤 Профиль", "📈 Статистика"} == utils.REPLY_KB_PROFILE_ALL
+    assert {"🏆 Рейтинг", "🏆 Клуб", "📊 Рейтинг"} == utils.REPLY_KB_LEADERBOARD_ALL
+    assert {"📊 Мой рейтинг", "👤 Профиль", "📈 Статистика"} == utils.REPLY_KB_PROFILE_ALL
 
 
 def test_no_old_screen_names_left_in_bot_sources():
@@ -167,5 +167,5 @@ def test_help_mentions_new_names_and_club_matches():
     screens = _help_section_text("screens")
     assert "Рейтинг клуба" in screens and "Мой профиль" in screens and "Все матчи клуба" in screens
     play = _help_section_text("play")
-    assert "🏆 Клуб" in play and "👤 Профиль" in play
-    assert re.search(r"📊 Рейтинг|📈 Статистика", screens + play) is None
+    assert "🏆 Рейтинг" in play and "📊 Мой рейтинг" in play and "«Клуб»" in play
+    assert re.search(r"📈 Статистика|🏆 Клуб|👤 Профиль", screens + play) is None
