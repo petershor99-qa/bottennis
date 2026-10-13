@@ -26,6 +26,7 @@ _EMOJI_RE = re.compile(
     "]+"
 )
 _TAG_RE = re.compile(r"<[^>]+>")
+_EMOJI_SPACE_RE = re.compile(_EMOJI_RE.pattern + " ")
 _GAP_RE = re.compile(r"(?<=\S) {2,}(?=[^\s(|])")
 _SPACES_RE = re.compile(r"[ \t ]{2,}")
 
@@ -44,7 +45,9 @@ def plain(line: str) -> str:
         if not stripped.startswith(emoji):
             line = line.replace(emoji, word)
     text = html.unescape(_TAG_RE.sub("", line))
-    text = _EMOJI_RE.sub("", text).strip()
+    # Эмодзи убирается вместе с пробелом после него: иначе «Цель: 💯 Рейтинг»
+    # давало бы двойной пробел, а его ниже разбор принимает за разделитель « · ».
+    text = _EMOJI_RE.sub("", _EMOJI_SPACE_RE.sub("", text)).strip()
     # Двойной пробел в боте — визуальный разделитель («+36.4 pts  11:5»);
     # перед скобкой он просто отступ («Форма  (12 матчей)»).
     text = _GAP_RE.sub(" · ", text)

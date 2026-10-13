@@ -22,6 +22,7 @@ from bot.services.achievements import (
     notify_new_achievements,
     record_achievements_earned,
 )
+from bot.services.digest_delivery import deliver_digest, save_snapshot, short_part
 from bot.services.digests import is_digest_muted
 from bot.services.stats import _compute_player_stats, _nearest_achievement_progress
 from bot.services.year_vote import (
@@ -689,6 +690,10 @@ async def send_weekly_digest(bot: Bot) -> None:
 
         club_block = "\n".join(standings) + "\n\n" + "\n".join(hero_lines) + match_week
 
+        # Снимок клубной части — для экрана «Итоги» в Mini App (v2.168.0)
+        await save_snapshot(session, "week", club_block)
+        club_short = short_part(club_block)
+
         # ── Персональные сообщения: личная шапка + общий клубный блок ───────────
         for player in players:
             if is_digest_muted(player, "week"):
@@ -733,7 +738,8 @@ async def send_weekly_digest(bot: Bot) -> None:
                 header += f"{progress}\n"
 
             text = header + "\n" + club_block
-            await safe_send(bot, player.telegram_id, text)
+            # Короткая версия + кнопка в приложение, если оно у игрока есть (v2.168.0)
+            await deliver_digest(bot, player, "week", text, header + "\n" + club_short)
 
     logger.info("Еженедельный дайджест отправлен")
 
@@ -893,10 +899,13 @@ async def send_daily_summary(bot: Bot) -> None:
         lines.append("\n".join(log_lines))
 
         text = "\n".join(lines)
+        # Снимок для экрана «Итоги» в Mini App и короткая версия в чат (v2.168.0)
+        await save_snapshot(session, "day", text)
+        short = short_part(text)
         for p in players:
             if is_digest_muted(p, "day"):
                 continue
-            await safe_send(bot, p.telegram_id, text)
+            await deliver_digest(bot, p, "day", text, short)
 
     logger.info("Итоги дня отправлены")
 
@@ -1124,6 +1133,10 @@ async def send_monthly_summary(bot: Bot) -> None:
 
         club_block = "\n".join(standings) + "\n\n" + "\n".join(hero_lines) + match_month
 
+        # Снимок клубной части — для экрана «Итоги» в Mini App (v2.168.0)
+        await save_snapshot(session, "month", club_block)
+        club_short = short_part(club_block)
+
         # ── Персональные сообщения: личная шапка + общий клубный блок ───────────
         for player in players:
             if is_digest_muted(player, "month"):
@@ -1170,7 +1183,8 @@ async def send_monthly_summary(bot: Bot) -> None:
                 header += f"{progress}\n"
 
             text = header + "\n" + club_block
-            await safe_send(bot, player.telegram_id, text)
+            # Короткая версия + кнопка в приложение, если оно у игрока есть (v2.168.0)
+            await deliver_digest(bot, player, "month", text, header + "\n" + club_short)
 
     logger.info("Итоги месяца за %s отправлены", month_label)
 
@@ -1324,10 +1338,13 @@ async def send_quarterly_summary(bot: Bot) -> None:
             lines.append(f"\n{top}")
 
         text = "\n".join(lines)
+        # Снимок для экрана «Итоги» в Mini App и короткая версия в чат (v2.168.0)
+        await save_snapshot(session, "quarter", text)
+        short = short_part(text)
         for p in players:
             if is_digest_muted(p, "quarter"):
                 continue
-            await safe_send(bot, p.telegram_id, text)
+            await deliver_digest(bot, p, "quarter", text, short)
 
     logger.info("Итоги квартала за %s отправлены", quarter_label)
 
@@ -1478,10 +1495,13 @@ async def send_yearly_summary(bot: Bot) -> None:
             lines.append(f"\n{top}\n<i>Если бы это сняли — билеты бы раскупили за час.</i>")
 
         text = "\n".join(lines)
+        # Снимок для экрана «Итоги» в Mini App и короткая версия в чат (v2.168.0)
+        await save_snapshot(session, "year", text)
+        short = short_part(text)
         for p in players:
             if is_digest_muted(p, "year"):
                 continue
-            await safe_send(bot, p.telegram_id, text)
+            await deliver_digest(bot, p, "year", text, short)
 
     logger.info("Итоги года за %d отправлены", year_start_msk.year)
 

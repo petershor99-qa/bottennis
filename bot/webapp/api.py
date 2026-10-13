@@ -161,6 +161,7 @@ def _sets_chips(m: Match) -> list[str]:
 def _club_match(m: Match) -> dict:
     winner = "a" if m.winner_id == m.challenger_id else ("b" if m.winner_id == m.challenged_id else "")
     return {
+        "id": m.id,
         "date": _msk_date(m.completed_at),
         "a": _person(m.challenger), "b": _person(m.challenged),
         "winner": winner,
@@ -444,14 +445,14 @@ def achievements_payload(player: Player) -> dict:
         items = []
         for a in sorted(achs, key=lambda a: a.id not in earned):
             if a.id in earned:
-                items.append({"name": a.name, "desc": a.desc, "earned": True, "tier": achievement_tier(a.id),
-                              "icon": _achievement_icon(a.id)})
+                items.append({"id": a.id, "name": a.name, "desc": a.desc, "earned": True,
+                              "tier": achievement_tier(a.id), "icon": _achievement_icon(a.id)})
             elif a.hidden:
                 items.append({"name": "?", "desc": "Скрытое достижение", "earned": False, "hidden": True,
                               "tier": "", "icon": "lock"})
             else:
-                items.append({"name": a.name, "desc": a.desc, "earned": False, "tier": achievement_tier(a.id),
-                              "icon": _achievement_icon(a.id)})
+                items.append({"id": a.id, "name": a.name, "desc": a.desc, "earned": False,
+                              "tier": achievement_tier(a.id), "icon": _achievement_icon(a.id)})
         categories.append({
             "index": i,
             "title": plain(category),
@@ -550,6 +551,7 @@ def _match_row(m: Match, player_id: int) -> dict:
     if m.rating_change is not None:
         delta = _signed(match_rating_delta(m, player_id))
     return {
+        "id": m.id,
         "date": _msk_date(m.completed_at),
         "opponent": opponent.display_name,
         "opponent_id": opponent.id,
@@ -667,6 +669,7 @@ async def club_matches_payload(session: AsyncSession, offset: int) -> dict:
     for m in rows:
         winner = "a" if m.winner_id == m.challenger_id else ("b" if m.winner_id == m.challenged_id else "")
         items.append({
+            "id": m.id,
             "date": _msk_date(m.completed_at),
             "a": m.challenger.display_name, "a_id": m.challenger_id,
             "b": m.challenged.display_name, "b_id": m.challenged_id,
