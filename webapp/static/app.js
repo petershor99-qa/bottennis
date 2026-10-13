@@ -250,6 +250,27 @@
     return p;
   }
 
+  // Счётчик экранов (v2.166.0): какой экран показан — в ту же статистику, что
+  // и у бота. Первый экран приносит время загрузки (в лог сервера, не в базу).
+  var firstTrack = true;
+  function track(route) {
+    var initData = tg && tg.initData;
+    if (!initData) return;
+    var screen = route
+      .replace(/^player\/(\d+)/, function (_, id) { return id === String(viewerId) ? "me" : "player"; })
+      .replace(/\/\d+/g, "")
+      .replace(/\//g, "_") || "home";
+    var body = { screen: screen };
+    if (firstTrack && window.performance) { body.boot_ms = Math.round(performance.now()); firstTrack = false; }
+    try {
+      fetch("api/track", {
+        method: "POST", keepalive: true,
+        headers: { "Authorization": "tma " + initData, "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      }).catch(function () {});
+    } catch (e) { /* счётчик не должен мешать приложению */ }
+  }
+
   // Серые «скелеты» вместо слова «Загрузка…»
   function skeleton(kind) {
     var wrap = el("div", "sk");
@@ -955,6 +976,7 @@
 
   function finishRender(route, keepScroll) {
     renderedRoute = route;
+    track(route);
     if (keepScroll) return;
     window.scrollTo(0, scrollPos[route] || 0);
   }
@@ -977,6 +999,7 @@
         setSegment(tab);
         loadTab(tab, token);
         renderedRoute = route;
+        track(route);
         return;
       }
       shell = null;

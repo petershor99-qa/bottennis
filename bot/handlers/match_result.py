@@ -644,6 +644,46 @@ def _sets_progress_text(sets_data: list) -> str:
 
 # ── Завершить ввод партий ─────────────────────────────────────────────────────
 
+MATCH_GONE_TEXT = "⚠️ Матч уже завершён или отменён — возможно, соперник внёс результат раньше тебя."
+BOSS_DRAW_TEXT = (
+    "⚔️ В босс-файте не может быть ничьей — играйте решающую партию. "
+    "В конце останется только один."
+)
+
+
+async def _confirmation(session: AsyncSession, match_id: int, sets_data: list) -> tuple[str, bool] | str:
+    """Текст экрана «Проверь результат» и признак ничьей, либо причина отказа:
+    "gone" — матч уже не активен, "boss_draw" — ничья в боссфайте. Общая часть
+    кнопки «Завершить матч» и ввода всего счёта одним сообщением (v2.166.0)."""
+    match = (await session.execute(select(Match).where(Match.id == match_id))).scalar_one_or_none()
+    if not match or match.status != MatchStatus.accepted:
+        return "gone"
+
+    reporter_sets_won = sum(1 for s in sets_data if s["reporter"] > s["opponent"])
+    opponent_sets_won = sum(1 for s in sets_data if s["opponent"] > s["reporter"])
+    is_draw = reporter_sets_won == opponent_sets_won
+    if is_draw and match.is_boss_fight:
+        return "boss_draw"
+
+    sets_preview = "  ".join(f"{s['reporter']}:{s['opponent']}" for s in sets_data)
+    if is_draw:
+        summary = f"🤝 <b>Ничья</b> — {reporter_sets_won}:{opponent_sets_won} по партиям"
+    elif reporter_sets_won > opponent_sets_won:
+        summary = f"🏆 Ты победил — {reporter_sets_won}:{opponent_sets_won} по партиям"
+    else:
+        summary = (
+            f"😔 Ты проиграл — {reporter_sets_won}:{opponent_sets_won} по партиям\n"
+            f"<i>(Результат будет записан корректно)</i>"
+        )
+    text = (
+        f"📋 <b>Проверь результат:</b>\n\n"
+        f"Счёт партий: <b>{sets_preview}</b>\n"
+        f"{summary}\n\n"
+        f"Всё верно?"
+    )
+    return text, is_draw
+
+
 @router.callback_query(F.data.startswith("finish_sets_"), MatchResultStates.entering_set_score)
 async def finish_sets(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
     data = await state.get_data()
@@ -654,51 +694,23 @@ async def finish_sets(callback: CallbackQuery, state: FSMContext, session: Async
         await callback.answer("Нет ни одной партии!", show_alert=True)
         return
 
-    r = await session.execute(select(Match).where(Match.id == match_id))
-    match = r.scalar_one_or_none()
-    if not match or match.status != MatchStatus.accepted:
+    result = await _confirmation(session, match_id, sets_data)
+    if result == "gone":
         await state.clear()
         await cb_msg(callback).edit_text(
-            "⚠️ Матч уже завершён или отменён — возможно, соперник внёс результат раньше тебя.",
+            MATCH_GONE_TEXT,
             reply_markup=main_menu_kb(viewer_telegram_id=callback.from_user.id),
         )
         await callback.answer()
         return
-
-    reporter_sets_won = sum(1 for s in sets_data if s["reporter"] > s["opponent"])
-    opponent_sets_won = sum(1 for s in sets_data if s["opponent"] > s["reporter"])
-    is_draw = reporter_sets_won == opponent_sets_won
-
-    if is_draw and match.is_boss_fight:
-        await callback.answer(
-            "⚔️ В босс-файте не может быть ничьей — играйте решающую партию. "
-            "В конце останется только один.",
-            show_alert=True,
-        )
+    if result == "boss_draw":
+        await callback.answer(BOSS_DRAW_TEXT, show_alert=True)
         return
 
-    sets_preview = "  ".join(f"{s['reporter']}:{s['opponent']}" for s in sets_data)
-
-    if is_draw:
-        summary = f"🤝 <b>Ничья</b> — {reporter_sets_won}:{opponent_sets_won} по партиям"
-    elif reporter_sets_won > opponent_sets_won:
-        summary = f"🏆 Ты победил — {reporter_sets_won}:{opponent_sets_won} по партиям"
-    else:
-        summary = (
-            f"😔 Ты проиграл — {reporter_sets_won}:{opponent_sets_won} по партиям\n"
-            f"<i>(Результат будет записан корректно)</i>"
-        )
-
+    text, is_draw = result
     await state.update_data(is_draw=is_draw)
     await state.set_state(MatchResultStates.confirming)
-
-    await cb_msg(callback).edit_text(
-        f"📋 <b>Проверь результат:</b>\n\n"
-        f"Счёт партий: <b>{sets_preview}</b>\n"
-        f"{summary}\n\n"
-        f"Всё верно?",
-        reply_markup=_confirm_kb(match_id),
-    )
+    await cb_msg(callback).edit_text(text, reply_markup=_confirm_kb(match_id))
     await callback.answer()
 
 
@@ -771,13 +783,13 @@ async def handle_direct_score(message: Message, session: AsyncSession, state: FS
         fsm_chat_id=message.chat.id,
         fsm_bot_message_id=None,
     )
-    await process_set_score(message, state)
+    await process_set_score(message, state, session)
 
 
 # ── Step 2: ввод счёта очередной партии ──────────────────────────────────────
 
 @router.message(MatchResultStates.entering_set_score)
-async def process_set_score(message: Message, state: FSMContext):
+async def process_set_score(message: Message, state: FSMContext, session: AsyncSession):
     data = await state.get_data()
     sets_data: list = data["sets_data"]
     match_id: int = data["match_id"]
@@ -827,8 +839,24 @@ async def process_set_score(message: Message, state: FSMContext):
             new_sets.append({"reporter": my_s, "opponent": op_s})
 
         sets_data.extend(new_sets)
+        # Весь счёт одним сообщением («11-7 9-11 11-5» — так пишут все) —
+        # сразу экран «Проверь результат», без лишнего «Завершить матч»
+        # (v2.166.0, разбор usage: два подтверждения подряд на каждом матче).
+        result = await _confirmation(session, match_id, sets_data)
+        if result == "gone":
+            await state.clear()
+            await message.answer(MATCH_GONE_TEXT, reply_markup=main_menu_kb(viewer_telegram_id=msg_user(message).id))
+            return
+        if isinstance(result, tuple):
+            text, is_draw = result
+            await state.update_data(sets_data=sets_data, is_draw=is_draw, fsm_chat_id=message.chat.id)
+            await state.set_state(MatchResultStates.confirming)
+            sent = await message.answer(text, reply_markup=_confirm_kb(match_id))
+            await state.update_data(fsm_bot_message_id=sent.message_id)
+            return
+        # Ничья в боссфайте — нужна решающая партия: остаёмся на вводе
         sent = await message.answer(
-            _sets_progress_text(sets_data),
+            f"{BOSS_DRAW_TEXT}\n\n{_sets_progress_text(sets_data)}",
             reply_markup=after_set_kb(match_id, has_sets=True),
         )
         await state.update_data(
