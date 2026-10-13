@@ -201,7 +201,9 @@ async def summary_payload(session: AsyncSession, kind: str) -> dict | None:
     tabs = [{"kind": k, "title": t, "available": k in latest} for k, t in SUMMARY_KINDS]
     snap = latest.get(kind)
     if snap is None:
-        return {"kind": kind, "tabs": tabs, "empty": "Эти итоги появятся после ближайшей сводки."}
+        empty = ("Итоги года выйдут 30 декабря в 12:00." if kind == "year"
+                 else "Эти итоги появятся после ближайшей сводки.")
+        return {"kind": kind, "tabs": tabs, "empty": empty}
     return {"kind": kind, "tabs": tabs, "date": _msk_date(snap.created_at, "%d.%m.%Y"), "empty": "",
             **parse_summary(snap.text, kind)}
 

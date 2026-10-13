@@ -54,6 +54,12 @@ def is_webapp_allowed(telegram_id: int) -> bool:
     return admin_id != 0 and telegram_id == admin_id
 
 
+def is_admin(telegram_id: int) -> bool:
+    """Администратор (ADMIN_ID) — ему в приложении виден экран «Использование»."""
+    admin_id = env_int("ADMIN_ID")
+    return admin_id != 0 and telegram_id == admin_id
+
+
 def webapp_url_for(telegram_id: int) -> str | None:
     """URL страницы «Рейтинг клуба» для кнопки, либо None — кнопку не показывать."""
     if not is_webapp_allowed(telegram_id):
