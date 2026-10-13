@@ -20,6 +20,7 @@
   GET /api/records                          — рекорды клуба
   GET /api/matches?offset=N                 — все матчи клуба, порциями
   GET /api/throne                           — зал славы
+  POST /api/track                           — счётчик показанных экранов (v2.166.0)
 Вход во все /api — `Authorization: tma <initData>`.
 
 Снаружи сервер закрыт: слушает 127.0.0.1, HTTPS даёт прокси (Caddy), см.
@@ -39,6 +40,7 @@ from bot.webapp import api
 from bot.webapp.auth import WebAppAuthError, init_data_from_header, telegram_id_from_init_data
 from bot.webapp.config import is_webapp_allowed, webapp_listen
 from bot.webapp.photos import PhotoCache
+from bot.webapp.usage import SCREEN_RE, UsageWriter, log_boot_time
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,8 @@ BOT_TOKEN_KEY: web.AppKey[str] = web.AppKey("bot_token", str)
 SESSION_FACTORY_KEY: web.AppKey = web.AppKey("session_factory")
 BOT_KEY: web.AppKey = web.AppKey("bot")
 PHOTOS_KEY: web.AppKey[PhotoCache] = web.AppKey("photos", PhotoCache)
+USAGE_KEY: web.AppKey[UsageWriter] = web.AppKey("usage", UsageWriter)
+TRACK_REQUEST_KEY = "bottennis_track"  # что записать в счётчик после ответа
 
 _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -82,6 +86,13 @@ def endpoint(handler: Handler) -> Callable[[web.Request], Awaitable[web.Response
             if viewer is None:
                 return _json_error(403, "Сначала зарегистрируйтесь в боте.")
             payload = await handler(request, session, viewer)
+        # Запись счётчика — только после закрытия сессии запроса: иначе при общем
+        # соединении (SQLite в памяти в тестах) закрытие сессии откатило бы её.
+        pending = request.get(TRACK_REQUEST_KEY)
+        if pending is not None:
+            telegram_id_, screen_, boot_ms_ = pending
+            if request.app[USAGE_KEY].record(telegram_id_, screen_):
+                log_boot_time(screen_, boot_ms_)
         if payload is None:
             return _json_error(404, "Не найдено.")
         if isinstance(payload, web.StreamResponse):
@@ -118,6 +129,20 @@ async def photo(request, session, viewer):
     return web.Response(body=data, content_type="image/jpeg", headers={
         "X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=3600",
     })
+
+
+async def track(request, session, viewer):
+    """Показан экран приложения — записать в счётчик (v2.166.0). Ответ сразу,
+    запись фоном; неподходящее имя экрана не пишется."""
+    try:
+        body = await request.json()
+    except Exception:
+        return {"ok": False}
+    screen = str(body.get("screen", "")) if isinstance(body, dict) else ""
+    if not SCREEN_RE.match(screen):
+        return {"ok": False}
+    request[TRACK_REQUEST_KEY] = (viewer.telegram_id, screen, body.get("boot_ms"))
+    return {"ok": True}
 
 
 async def leaderboard(request, session, viewer):
@@ -211,6 +236,7 @@ def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
     app[SESSION_FACTORY_KEY] = session_factory
     app[BOT_KEY] = bot
     app[PHOTOS_KEY] = PhotoCache()
+    app[USAGE_KEY] = UsageWriter(session_factory)
     app.router.add_get("/", index)
     routes = [
         ("/api/home", home),
@@ -232,6 +258,7 @@ def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
     ]
     for path, handler in routes:
         app.router.add_get(path, endpoint(handler))
+    app.router.add_post("/api/track", endpoint(track))
     app.router.add_static("/static/", STATIC_DIR, show_index=False)
     return app
 

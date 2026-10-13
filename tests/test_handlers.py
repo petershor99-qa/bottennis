@@ -147,7 +147,7 @@ async def _prep_input_state(match_id: int) -> FSMContext:
 async def test_process_set_score_valid_single(db):
     st = await _prep_input_state(1)
     msg = _message(1, "11:7")
-    await process_set_score(msg, st)
+    await process_set_score(msg, st, db)
     data = await st.get_data()
     assert data["sets_data"] == [{"reporter": 11, "opponent": 7}]
 
@@ -156,29 +156,88 @@ async def test_process_set_score_invalid_is_rejected(db):
     """Некорректный счёт 15:7 → ошибка, партия не добавлена."""
     st = await _prep_input_state(1)
     msg = _message(1, "15:7")
-    await process_set_score(msg, st)
+    await process_set_score(msg, st, db)
     data = await st.get_data()
     assert data["sets_data"] == []
     msg.answer.assert_called()
 
 
 async def test_process_set_score_batch(db):
-    """Пакетный ввод '11:7 9:11' → две партии."""
-    st = await _prep_input_state(1)
-    msg = _message(1, "11:7 9:11")
-    await process_set_score(msg, st)
+    """Пакетный ввод '11:7 9:11' → две партии и сразу экран «Проверь результат»
+    (v2.166.0: без лишнего «Завершить матч»)."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m = await _accepted_match(db, p1, p2)
+    st = await _prep_input_state(m.id)
+    msg = _message(1, "11:7 9:11 11:5")
+    await process_set_score(msg, st, db)
     data = await st.get_data()
     assert data["sets_data"] == [
         {"reporter": 11, "opponent": 7},
         {"reporter": 9, "opponent": 11},
+        {"reporter": 11, "opponent": 5},
     ]
+    assert await st.get_state() == MatchResultStates.confirming.state
+    assert data["is_draw"] is False
+    text = msg.answer.call_args.args[0]
+    assert "Проверь результат" in text and "Ты победил — 2:1" in text
+    kb = msg.answer.call_args.kwargs["reply_markup"]
+    assert any(b.callback_data.startswith("confirm_") for row in kb.inline_keyboard for b in row)
+
+
+async def test_process_set_score_batch_with_dashes_goes_to_confirmation(db):
+    """Так пишут в клубе: «11-7 9-11 11-5» одним сообщением."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m = await _accepted_match(db, p1, p2)
+    st = await _prep_input_state(m.id)
+    msg = _message(1, "11-7 9-11 11-5")
+    await process_set_score(msg, st, db)
+    assert await st.get_state() == MatchResultStates.confirming.state
+
+
+async def test_process_set_score_batch_when_match_gone(db):
+    """Матч уже записал соперник — ввод закрывается понятным сообщением."""
+    st = await _prep_input_state(9999)
+    msg = _message(1, "11:7 11:5")
+    await process_set_score(msg, st, db)
+    assert await st.get_state() is None
+    assert "уже завершён" in msg.answer.call_args.args[0]
+
+
+async def test_process_set_score_batch_boss_draw_stays_in_input(db):
+    """Ничья в боссфайте невозможна — остаёмся на вводе, предупреждаем."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+    m = await _accepted_match(db, p1, p2)
+    m.is_boss_fight = True
+    await db.flush()
+    st = await _prep_input_state(m.id)
+    msg = _message(1, "11:7 5:11")
+    await process_set_score(msg, st, db)
+    assert await st.get_state() == MatchResultStates.entering_set_score.state
+    assert "босс-файте не может быть ничьей" in msg.answer.call_args.args[0]
+    assert len((await st.get_data())["sets_data"]) == 2
+
+
+async def test_process_set_score_single_set_keeps_finish_button(db):
+    """Одна партия — может быть не последней: как раньше, с «Завершить матч»."""
+    st = await _prep_input_state(1)
+    msg = _message(1, "11:7")
+    await process_set_score(msg, st, db)
+    assert await st.get_state() == MatchResultStates.entering_set_score.state
+    kb = msg.answer.call_args.kwargs["reply_markup"]
+    assert any(b.callback_data.startswith("finish_sets_") for row in kb.inline_keyboard for b in row)
 
 
 async def test_process_set_score_dash_separator(db):
     """Дефис как разделитель: '11-7' = '11:7'."""
     st = await _prep_input_state(1)
     msg = _message(1, "11-7")
-    await process_set_score(msg, st)
+    await process_set_score(msg, st, db)
     data = await st.get_data()
     assert data["sets_data"] == [{"reporter": 11, "opponent": 7}]
 
@@ -4563,7 +4622,7 @@ async def test_process_set_score_rejects_invalid_inputs(db, text):
     добавляется, пользователь получает объяснение."""
     st = await _prep_input_state(1)
     msg = _message(1, text)
-    await process_set_score(msg, st)
+    await process_set_score(msg, st, db)
     data = await st.get_data()
     assert data["sets_data"] == []
     msg.answer.assert_called()
