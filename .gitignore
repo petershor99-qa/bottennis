@@ -16,3 +16,6 @@ habr_career_profile.md
 
 # hypothesis: локальная база найденных примеров
 .hypothesis/
+
+# Выгрузки scripts/export_usage.py (локально, не в репозиторий)
+usage*.txt
