@@ -73,6 +73,7 @@ from bot.utils import (
     snapshot_standings,
     try_transfer_champion,
 )
+from bot.webapp.config import webapp_link
 
 logger = logging.getLogger(__name__)
 
@@ -640,6 +641,12 @@ def _sets_progress_text(sets_data: list) -> str:
         "Например: <code>11:7</code>\n"
         "<i>Или сразу все партии: <code>11:7 9:11 11:8</code></i>"
     )
+
+
+def _rating_link(telegram_id: int, ranks_before: dict | None, player_id: int) -> str | None:
+    """Ссылка на рейтинг в приложении с местом до матча — страница анимирует
+    подъём (v2.167.0). None — приложения у игрока нет, кнопки не будет."""
+    return webapp_link(telegram_id, "rating", **{"from": (ranks_before or {}).get(player_id)})
 
 
 # ── Завершить ввод партий ─────────────────────────────────────────────────────
@@ -1354,7 +1361,9 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             f"{_place_suffix(ranks_before, standings_after, reporter_player_id)}"
         )
         draw_opponent_id = challenged.id if reporter_player_id == match.challenger_id else challenger.id
-        await cb_msg(callback).edit_text(result_text, reply_markup=rematch_kb(draw_opponent_id))
+        await cb_msg(callback).edit_text(result_text, reply_markup=rematch_kb(
+            draw_opponent_id, app_url=_rating_link(callback.from_user.id, ranks_before, reporter_player_id),
+        ))
 
         # Уведомляем второго участника (того, кто не вносил результат)
         notify_player = challenged if reporter_player_id == match.challenger_id else challenger
@@ -1379,6 +1388,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
             reply_markup=main_menu_kb(
                 rematch_opponent_id=reporter_player_id,
                 viewer_telegram_id=notify_player.telegram_id,
+                app_url=_rating_link(notify_player.telegram_id, ranks_before, notify_player.id),
             ),
         )
 
@@ -1506,6 +1516,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                 reporter_opponent_id,
                 can_rematch=not match.is_boss_fight,
                 share_match_id=match_id if reporter_is_winner else None,
+                app_url=_rating_link(callback.from_user.id, ranks_before, reporter_player_id),
             ),
         )
 
@@ -1524,6 +1535,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                 reply_markup=main_menu_kb(
                     rematch_opponent_id=None if match.is_boss_fight else winner.id,
                     viewer_telegram_id=loser.telegram_id,
+                    app_url=_rating_link(loser.telegram_id, ranks_before, loser.id),
                 ),
             )
         else:
@@ -1542,6 +1554,7 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                     share_match_id=match_id,
                     rematch_opponent_id=None if match.is_boss_fight else loser.id,
                     viewer_telegram_id=winner.telegram_id,
+                    app_url=_rating_link(winner.telegram_id, ranks_before, winner.id),
                 ),
             )
 

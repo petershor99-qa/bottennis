@@ -5434,7 +5434,7 @@ async def test_reply_kb_sent_on_start_for_new_player(db):
     # Первая подпись случайная из CHALLENGE_BUTTON_LABELS (v2.117.0)
     from bot.utils import CHALLENGE_BUTTON_LABELS
     assert buttons[0] in CHALLENGE_BUTTON_LABELS
-    assert buttons[1:] == ["🏆 Клуб", "👤 Профиль"]
+    assert buttons[1:] == ["🏆 Рейтинг", "📊 Мой рейтинг"]
 
 
 async def test_reply_kb_sent_on_start_for_returning_player(db):

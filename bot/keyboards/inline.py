@@ -15,7 +15,12 @@ from bot.utils import (
     favor_icon,
     random_challenge_button_label,
 )
-from bot.webapp.config import WEBAPP_BUTTON_TEXT, webapp_url_for
+from bot.webapp.config import (
+    WEBAPP_BUTTON_TEXT,
+    WEBAPP_MORE_TEXT,
+    WEBAPP_RATING_TEXT,
+    webapp_url_for,
+)
 
 
 def main_reply_kb() -> ReplyKeyboardMarkup:
@@ -58,7 +63,7 @@ def _peer_and_menu_row(b: InlineKeyboardBuilder, peer_text: str, peer_callback: 
 
 def main_menu_kb(
     share_match_id: int | None = None, rematch_opponent_id: int | None = None,
-    viewer_telegram_id: int | None = None,
+    viewer_telegram_id: int | None = None, app_url: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Главное меню. Кнопки «Внести результат» убраны в v2.148.0: счёт пишут
     прямо в чат (подсказка стоит на экране начала матча и в приветствии).
@@ -74,7 +79,10 @@ def main_menu_kb(
 
     viewer_telegram_id — кому показывается меню (v2.163.0): если приложению он
     разрешён (WEBAPP_URL и WEBAPP_AUDIENCE, см. bot/webapp/config.py), сразу под
-    «Вызвать на матч» добавляется строка «Открыть приложение». None — без неё."""
+    «Вызвать на матч» добавляется строка «Открыть приложение». None — без неё.
+
+    app_url — переход сразу в рейтинг приложения после матча (v2.167.0): тогда
+    строка называется «Рейтинг в приложении» и ведёт на него."""
     b = InlineKeyboardBuilder()
     if share_match_id is not None:
         b.row(InlineKeyboardButton(
@@ -85,12 +93,15 @@ def main_menu_kb(
             text="⚔️ Реванш", callback_data=f"rematch_{rematch_opponent_id}",
         ))
     b.row(InlineKeyboardButton(text=random_challenge_button_label(), callback_data="menu_play"))
-    app_url = webapp_url_for(viewer_telegram_id) if viewer_telegram_id is not None else None
     if app_url:
-        b.row(InlineKeyboardButton(text=WEBAPP_BUTTON_TEXT, web_app=WebAppInfo(url=app_url)))
+        b.row(InlineKeyboardButton(text=WEBAPP_RATING_TEXT, web_app=WebAppInfo(url=app_url)))
+    else:
+        open_url = webapp_url_for(viewer_telegram_id) if viewer_telegram_id is not None else None
+        if open_url:
+            b.row(InlineKeyboardButton(text=WEBAPP_BUTTON_TEXT, web_app=WebAppInfo(url=open_url)))
     b.row(InlineKeyboardButton(text="🏆 Рейтинг клуба", callback_data="menu_leaderboard"))
     b.row(
-        InlineKeyboardButton(text="👤 Мой профиль", callback_data="menu_stats"),
+        InlineKeyboardButton(text="📊 Мой рейтинг", callback_data="menu_stats"),
         InlineKeyboardButton(text="🎯 С кем сыграть?", callback_data="menu_matches"),
     )
     b.row(InlineKeyboardButton(text="❓ Справка", callback_data="menu_help"))
@@ -248,6 +259,7 @@ def achievement_category_kb(player_id: int | None = None) -> InlineKeyboardMarku
 
 def rematch_kb(
     opponent_id: int, can_rematch: bool = True, share_match_id: int | None = None,
+    app_url: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Клавиатура после матча — предлагает реванш.
 
@@ -263,6 +275,18 @@ def rematch_kb(
         ))
     if can_rematch:
         b.row(InlineKeyboardButton(text="⚔️ Реванш", callback_data=f"rematch_{opponent_id}"))
+    if app_url:
+        # v2.167.0: рейтинг в приложении с анимацией подъёма на новое место
+        b.row(InlineKeyboardButton(text=WEBAPP_RATING_TEXT, web_app=WebAppInfo(url=app_url)))
+    _peer_and_menu_row(b, "🏆 Рейтинг клуба", "menu_leaderboard")
+    return b.as_markup()
+
+
+def short_stats_kb(app_url: str) -> InlineKeyboardMarkup:
+    """«Мой рейтинг» в коротком боте (v2.167.0): вся подробная статистика — в
+    приложении, здесь одна кнопка туда и выходы к рейтингу и в меню."""
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text=WEBAPP_MORE_TEXT, web_app=WebAppInfo(url=app_url)))
     _peer_and_menu_row(b, "🏆 Рейтинг клуба", "menu_leaderboard")
     return b.as_markup()
 
@@ -379,7 +403,7 @@ def after_set_kb(match_id: int, has_sets: bool) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def leaderboard_kb(rows, web_app_url: str | None = None) -> InlineKeyboardMarkup:
+def leaderboard_kb(rows, web_app_url: str | None = None, player_url=None) -> InlineKeyboardMarkup:
     """Клавиатура под таблицей рейтинга — кнопки профилей игроков.
     rows — строки `compute_leaderboard` (нужны player_id и name).
 
@@ -387,10 +411,17 @@ def leaderboard_kb(rows, web_app_url: str | None = None) -> InlineKeyboardMarkup
     (v2.114.0) — тот же приём и мотивация, что у stats_kb ниже.
 
     web_app_url — кнопка Mini App (v2.160.0); None — кнопки нет (приложение
-    выключено флагом или недоступно этому игроку, см. bot/webapp/config.py)."""
+    выключено флагом или недоступно этому игроку, см. bot/webapp/config.py).
+
+    player_url — функция id игрока -> ссылка на его профиль в приложении
+    (v2.167.0, короткий бот): тогда кнопки игроков открывают приложение, а
+    глубокие разделы клуба заменены одной кнопкой «Подробнее в приложении»."""
     b = InlineKeyboardBuilder()
     btns = [
         InlineKeyboardButton(
+            text=f"#{i + 1} {row.name[:16]}",
+            web_app=WebAppInfo(url=player_url(row.player_id)),
+        ) if player_url else InlineKeyboardButton(
             text=f"#{i + 1} {row.name[:16]}",
             callback_data=f"player_profile_{row.player_id}",
         )
@@ -398,6 +429,10 @@ def leaderboard_kb(rows, web_app_url: str | None = None) -> InlineKeyboardMarkup
     ]
     for i in range(0, len(btns), 2):
         b.row(*btns[i:i + 2])
+    if player_url and web_app_url:
+        b.row(InlineKeyboardButton(text=WEBAPP_MORE_TEXT, web_app=WebAppInfo(url=web_app_url)))
+        _peer_and_menu_row(b, "📊 Мой рейтинг", "menu_stats")
+        return b.as_markup()
     if web_app_url:
         b.row(InlineKeyboardButton(text=WEBAPP_BUTTON_TEXT, web_app=WebAppInfo(url=web_app_url)))
     b.row(
@@ -409,7 +444,7 @@ def leaderboard_kb(rows, web_app_url: str | None = None) -> InlineKeyboardMarkup
         InlineKeyboardButton(text="🌡 Кто в форме", callback_data="form_index"),
     )
     b.row(InlineKeyboardButton(text="🏛 Трон", callback_data="hall_of_fame_0"))
-    _peer_and_menu_row(b, "👤 Мой профиль", "menu_stats")
+    _peer_and_menu_row(b, "📊 Мой рейтинг", "menu_stats")
     return b.as_markup()
 
 

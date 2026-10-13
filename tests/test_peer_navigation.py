@@ -32,7 +32,7 @@ def test_result_screen_keeps_share_and_rematch_above():
 
 
 def test_rating_has_profile_next_to_menu():
-    assert _last_row(leaderboard_kb([])) == [("👤 Мой профиль", "menu_stats"), MENU]
+    assert _last_row(leaderboard_kb([])) == [("📊 Мой рейтинг", "menu_stats"), MENU]
 
 
 def test_profile_has_rating_next_to_menu():

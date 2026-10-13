@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from html import escape as h
 
 from aiogram import F, Router
@@ -13,6 +14,7 @@ from bot.keyboards.inline import (
     player_achievements_kb,
     player_profile_kb,
     player_stats_section_kb,
+    short_stats_kb,
     stats_kb,
     stats_section_kb,
     what_if_kb,
@@ -46,6 +48,7 @@ from bot.utils import (
     get_mvp_of_month,
     get_player,
     hour_range_label,
+    match_rating_delta,
     msg_user,
     pluralize_days,
     pluralize_losses,
@@ -54,6 +57,7 @@ from bot.utils import (
     rank_progress,
     rank_title,
 )
+from bot.webapp.config import webapp_link  # noqa: E402
 
 router = Router()
 
@@ -398,10 +402,59 @@ def _append_rank_and_throne_lines(
 
 # ── My stats ──────────────────────────────────────────────────────────────────
 
+FORM_ICONS = {"w": "🟢", "l": "🔴", "d": "🟡"}
+
+
+async def _build_short_stats_screen(session: AsyncSession, player: Player, app_url: str):
+    """«Мой рейтинг» в коротком боте (v2.167.0): у кого есть приложение, в боте
+    только самое нужное — рейтинг и место, неделя, форма, ближайшие цели; всё
+    подробное (графики, ачивки, стиль, история) — по кнопке в приложении."""
+    players_all, _champion, _counts, _ranks, rank_str, _challenger = await _load_ranking_context(session, player)
+    head = (
+        f"📊 <b>Мой рейтинг — {h(player.display_name)}</b>\n\n"
+        f"⭐ <b>{round(player.rating, 1)}</b> pts — {rank_str} · {rank_title(player.rating)}"
+    )
+    matches = await get_career_matches(session, player.id, with_opponents=True)
+    if not matches:
+        return (
+            f"{head}\n\nТы ещё не сыграл ни одного матча. Вызови кого-нибудь! 🏓",
+            short_stats_kb(app_url),
+        )
+
+    lines = [head]
+    week_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
+    week = [m for m in matches if m.completed_at and m.completed_at >= week_ago]
+    if week:
+        delta = round(sum(match_rating_delta(m, player.id) for m in week), 1)
+        sign = "+" if delta >= 0 else ""
+        lines.append(f"📅 За неделю: <b>{sign}{delta}</b> pts · {pluralize_matches(len(week))}")
+    else:
+        lines.append("📅 За неделю матчей не было")
+    recent = sorted((m for m in matches if m.completed_at), key=lambda m: m.completed_at)[-5:]
+    form = "".join(
+        FORM_ICONS["d" if m.winner_id is None else ("w" if m.winner_id == player.id else "l")] for m in recent
+    )
+    lines.append(f"🗓 Форма: {form}  <i>(последние {len(recent)})</i>")
+
+    s = _compute_player_stats(player, matches)
+    goals = [_rank_title_progress_line(player.rating), _nearest_achievement_progress(player, s, len(players_all))]
+    goals = [g for g in goals if g]
+    if goals:
+        lines.append("")
+        lines.extend(goals)
+    lines.append("")
+    lines.append("Графики, ачивки, стиль и история — в приложении 👇")
+    return "\n".join(lines), short_stats_kb(app_url)
+
+
 async def _build_stats_screen(session: AsyncSession, player: Player):
     """Строит (текст, клавиатуру) экрана «Мой профиль» (раньше «Статистика») для уже найденного
     игрока — общая часть для инлайн-кнопки меню (edit_text) и постоянной
-    клавиатуры снизу (answer)."""
+    клавиатуры снизу (answer). Если игроку доступно приложение — короткий
+    «Мой рейтинг» (v2.167.0), без приложения — полный профиль, как раньше."""
+    app_url = webapp_link(player.telegram_id, f"player/{player.id}")
+    if app_url:
+        return await _build_short_stats_screen(session, player, app_url)
     players_all, champion, _match_counts, ranks, rank_str, challenger_player = (
         await _load_ranking_context(session, player)
     )

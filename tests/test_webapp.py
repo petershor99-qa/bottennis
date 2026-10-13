@@ -289,8 +289,11 @@ async def test_leaderboard_screen_shows_button_only_to_admin(db, webapp_env):
     await _seed(db)
     _, admin_kb = await _build_leaderboard_screen(db, ADMIN)
     _, player_kb = await _build_leaderboard_screen(db, 2002)
-    assert len(_web_app_buttons(admin_kb)) == 1
-    assert _web_app_buttons(player_kb) == []
+    # v2.167.0: у кого есть приложение — короткий бот: игроки и «Подробнее» ведут в приложение
+    admin_app = _web_app_buttons(admin_kb)
+    assert len(admin_app) == 3  # 2 игрока в таблице + «Подробнее в приложении»
+    assert admin_app[0].web_app.url.startswith("https://club.example/?r=player%2F")
+    assert _web_app_buttons(player_kb) == []  # без приложения — прежний полный бот
 
 
 async def test_static_files_are_revalidated(client):
