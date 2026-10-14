@@ -5,7 +5,6 @@ v2.175.0: приложение стартует без скрипта Telegram (
 Запуск: pytest tests/test_boot_robust.py
 """
 import logging
-import re
 from pathlib import Path
 
 import pytest
@@ -44,9 +43,8 @@ async def client(db_factory, monkeypatch):
 def test_loader_starts_app_without_waiting_for_telegram():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     body = html[html.index("(function () {"):]
-    # app.js грузится сразу, а не из обработчика загрузки скрипта Telegram
-    assert re.search(r"bootApp\(\);\s*attempt\(\);", body)
-    assert "s.onload = onTelegram" in body and "window.__clubOnTelegram" in body
+    # app.js грузится сразу; скрипт Telegram — своя копия, без попыток к telegram.org (v2.178.0)
+    assert "bootApp();" in body and "attempt()" not in body
     # сторож: нет первого экрана — сообщение, «Обновить» и отчёт на сервер
     assert "WATCHDOG_MS" in body and "api/boot_fail" in body and "Обновить" in body
 

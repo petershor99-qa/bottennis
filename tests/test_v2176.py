@@ -17,7 +17,7 @@ from sqlalchemy import select
 import bot.webapp.share as share
 from bot.db.models import AchievementEarned, ChampionReign, ClubRecordPing, FeedReaction
 from bot.utils import msk_day_start
-from bot.webapp import api_day
+from bot.webapp import api_club, api_day, api_month
 from bot.webapp.api import versus_table
 from bot.webapp.api_day import day_label, day_payload, usual_line
 from bot.webapp.reactions import feed_reactions_for, toggle_feed_reaction, toggle_reaction
@@ -27,6 +27,20 @@ from tests.conftest import _completed, _player
 from tests.test_webapp import ADMIN, TOKEN, _init_data
 
 TODAY = msk_day_start() + timedelta(hours=1)   # «сегодня» с запасом от полуночи по МСК
+
+
+@pytest.fixture(autouse=True)
+def _clock_after_today(monkeypatch):
+    """Часы приложения — не раньше TODAY + 2 ч (v2.178.0). TODAY — полночь по МСК
+    + 1 ч, а экраны дня и месяца берут матчи «до сейчас»: в первый час суток
+    «сегодняшние» матчи теста оказывались в будущем и тест падал (15.10, 00:48 МСК)."""
+    real = api_club._now
+
+    def clock():
+        return max(real(), TODAY + timedelta(hours=2))
+
+    for mod in (api_club, api_day, api_month):
+        monkeypatch.setattr(mod, "_now", clock)
 STATIC = Path(__file__).resolve().parent.parent / "webapp" / "static"
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 PNG_URL = "data:image/png;base64," + base64.b64encode(PNG).decode()

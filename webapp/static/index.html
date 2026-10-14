@@ -12,47 +12,53 @@
     <p class="state" id="boot-state">Загрузка…</p>
   </main>
   <nav class="tabbar" id="tabbar" aria-label="Разделы"></nav>
+  <!-- Скрипт Telegram — своя копия (v2.178.0, scripts/update_telegram_js.py),
+       не с telegram.org: висящий telegram.org не давал Telegram убрать заставку. -->
+  <script src="static/telegram-web-app.js"></script>
   <script>
-    // Загрузчик (v2.164.2, переделан в v2.175.0). Страница рисуется сразу,
-    // app.js грузится тут же, а скрипт Telegram — параллельно, с таймаутом и
-    // повторами. Раньше app.js ждал скрипт Telegram: если telegram.org у игрока
-    // открывался медленно или не открывался, оставалась «Загрузка…». Теперь
-    // приложение стартует без него (подпись для входа — из адреса запуска) и
-    // подключает его, когда он придёт. Если за WATCHDOG_MS первый экран так и не
-    // показался — сообщение с кнопкой «Обновить» и отчёт на сервер (в лог).
+    // Загрузчик (v2.164.2, v2.175.0, v2.178.0). Telegram держит свою заставку с
+    // полоской загрузки, пока приложение не скажет «готово» (web_app_ready) или
+    // пока страница не загрузится целиком. До v2.178.0 и то и другое ждало скрипт
+    // с telegram.org: если он у игрока отвечал медленно или висел, полоска
+    // вставала «на первых процентах», хотя приложение под ней уже было готово.
+    // Теперь скрипт свой, а «готово» уходит сразу, как только страница
+    // нарисована, — даже если скрипт не загрузился (тогда — напрямую через мост
+    // Telegram, как это делает сам скрипт). Дальше — наша «Загрузка…» и сторож:
+    // если за WATCHDOG_MS первый экран не показался — сообщение с кнопкой
+    // «Обновить» и отчёт на сервер (в лог).
     (function () {
-      var URL = "https://telegram.org/js/telegram-web-app.js";
-      var TIMEOUT_MS = 5000, MAX_TRIES = 4, WATCHDOG_MS = 12000;
-      var tries = 0, telegramLoaded = false, appLoaded = false, appFailed = false, lastError = "";
+      var WATCHDOG_MS = 12000;
+      var appLoaded = false, appFailed = false, lastError = "";
       var launchHash = location.hash;
+      var w = window.Telegram && window.Telegram.WebApp;
 
       window.addEventListener("error", function (e) {
         if (e && e.message) lastError = e.message + (e.filename ? " @ " + e.filename.split("/").pop() + ":" + e.lineno : "");
       });
 
+      // Событие для Telegram в обход скрипта — тем же путём, что и telegram-web-app.js
+      function postEvent(type) {
+        try {
+          if (window.TelegramWebviewProxy !== undefined) {
+            window.TelegramWebviewProxy.postEvent(type, JSON.stringify(""));
+          } else if (window.external && "notify" in window.external) {
+            window.external.notify(JSON.stringify({ eventType: type, eventData: "" }));
+          } else if (window.parent !== window) {
+            window.parent.postMessage(JSON.stringify({ eventType: type, eventData: "" }), "*");
+          }
+        } catch (e) { /* не в Telegram — нечего сообщать */ }
+      }
+
+      // «Готово» — сразу: игрок видит нашу «Загрузку…» и сторожа, а не заставку
+      try {
+        if (w) { w.ready(); w.expand(); }
+        else { postEvent("web_app_ready"); postEvent("web_app_expand"); }
+      } catch (e) { postEvent("web_app_ready"); }
+
       function param(name) {
         var m = new RegExp("[#&?]" + name + "=([^&]*)").exec(launchHash);
         if (!m) return "";
         try { return decodeURIComponent(m[1].replace(/\+/g, "%20")); } catch (e) { return m[1]; }
-      }
-
-      function onTelegram() {
-        telegramLoaded = true;
-        if (window.__clubOnTelegram) window.__clubOnTelegram();
-      }
-
-      function attempt() {
-        if (telegramLoaded) return;
-        if (tries >= MAX_TRIES) return;  // приложение работает и без него
-        tries += 1;
-        var mine = tries;
-        var s = document.createElement("script");
-        s.src = URL + (mine > 1 ? "?retry=" + mine : "");
-        // Опоздавший ответ предыдущей попытки тоже годится
-        s.onload = onTelegram;
-        s.onerror = function () { if (!telegramLoaded && tries === mine) setTimeout(attempt, 300); };
-        document.head.appendChild(s);
-        setTimeout(function () { if (!telegramLoaded && tries === mine) attempt(); }, TIMEOUT_MS);
       }
 
       function bootApp() {
@@ -73,7 +79,7 @@
           fetch("api/boot_fail", {
             method: "POST", keepalive: true,
             headers: { "Authorization": "tma " + initData, "Content-Type": "application/json" },
-            body: JSON.stringify({ stage: stage, error: lastError, tg: telegramLoaded,
+            body: JSON.stringify({ stage: stage, error: lastError, tg: !!w,
               platform: param("tgWebAppPlatform"), version: param("tgWebAppVersion") })
           }).catch(function () {});
         } catch (e) { /* отчёт не должен мешать */ }
@@ -93,7 +99,6 @@
       }
 
       bootApp();
-      attempt();
       setTimeout(watchdog, WATCHDOG_MS);
     })();
   </script>

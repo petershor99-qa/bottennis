@@ -319,7 +319,7 @@ async def test_index_does_not_block_on_telegram_script(client):
     подгружается загрузчиком после отрисовки. С v2.175.0 app.js его не ждёт:
     стартует сразу, скрипт Telegram подключается, когда придёт."""
     html = await (await client.get("/")).text()
-    assert '<script src="https://telegram.org' not in html          # нет блокирующего тега
-    assert "telegram-web-app.js" in html                              # но загрузчик есть
+    assert "https://telegram.org" not in html                         # с v2.178.0 — своя копия скрипта
+    assert 'src="static/telegram-web-app.js?v=' in html               # сжатая, с версией
     assert '<script src="static/app.js">' not in html                 # app.js стартует из загрузчика
-    assert "MAX_TRIES" in html and "Обновить" in html                 # повторы и запасной выход
+    assert "Обновить" in html                                         # запасной выход
