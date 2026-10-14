@@ -19,6 +19,7 @@ import bot.webapp.api as api_mod
 import bot.webapp.usage as usage
 from bot.db.models import AchievementEarned, AppBoot, ChampionReign, ClubRecordPing, PersonalRecordEarned
 from bot.utils import msk_day_start
+from bot.webapp import api_club, api_day, api_month
 from bot.webapp.api_chronicle import chronicle_payload, duel_history, scores_payload
 from bot.webapp.api_insights import boot_summary
 from bot.webapp.api_month import month_payload
@@ -30,6 +31,20 @@ from tests.conftest import _completed, _player
 from tests.test_webapp import ADMIN, TOKEN, _init_data
 
 TODAY = msk_day_start() + timedelta(hours=1)
+
+
+@pytest.fixture(autouse=True)
+def _clock_after_today(monkeypatch):
+    """Часы приложения — не раньше TODAY + 2 ч (v2.178.0). TODAY — полночь по МСК
+    + 1 ч, а экраны дня и месяца берут матчи «до сейчас»: в первый час суток
+    «сегодняшние» матчи теста оказывались в будущем и тест падал (15.10, 00:48 МСК)."""
+    real = api_club._now
+
+    def clock():
+        return max(real(), TODAY + timedelta(hours=2))
+
+    for mod in (api_club, api_day, api_month):
+        monkeypatch.setattr(mod, "_now", clock)
 STATIC = Path(__file__).resolve().parent.parent / "webapp" / "static"
 
 

@@ -91,7 +91,8 @@ async def test_big_json_is_gzipped_small_is_not(client):
 
 def test_assets_reload_when_file_changes(tmp_path: Path):
     for name, text in {"app.js": 'var x = "static/icons.svg#ti-a";', "app.css": "a{}",
-                       "icons.svg": "<svg/>", "index.html": '<link href="static/app.css">'}.items():
+                       "icons.svg": "<svg/>", "telegram-web-app.js": "var t;",
+                       "index.html": '<link href="static/app.css">'}.items():
         (tmp_path / name).write_text(text, encoding="utf-8")
     assets = Assets(tmp_path)
     first = assets.get("app.js").version

@@ -24,6 +24,9 @@ ASSET_TYPES = {
     "app.js": "application/javascript",
     "app.css": "text/css",
     "icons.svg": "image/svg+xml",
+    # Копия скрипта Telegram (v2.178.0, scripts/update_telegram_js.py): без
+    # зависимости от telegram.org, которая держала заставку Telegram при запуске
+    "telegram-web-app.js": "application/javascript",
 }
 IMMUTABLE = "public, max-age=31536000, immutable"
 
@@ -76,11 +79,13 @@ class Assets:
         return asset
 
     def index_html(self) -> bytes:
-        """index.html со ссылками на текущие версии app.css и app.js."""
+        """index.html со ссылками на текущие версии app.css, app.js и скрипта Telegram."""
         html = (self.dir / "index.html").read_text(encoding="utf-8")
         css, js = self.get("app.css").version, self.get("app.js").version
         html = html.replace('href="static/app.css"', f'href="static/app.css?v={css}"')
         html = html.replace('s.src = "static/app.js"', f's.src = "static/app.js?v={js}"')
+        tg = self.get("telegram-web-app.js").version
+        html = html.replace('src="static/telegram-web-app.js"', f'src="static/telegram-web-app.js?v={tg}"')
         return html.encode("utf-8")
 
     def response(self, request: web.Request, name: str) -> web.Response:
