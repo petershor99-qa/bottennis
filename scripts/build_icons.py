@@ -108,6 +108,8 @@ UI_ICONS = [
     "target", "chart-histogram", "users", "swords", "chevron-right", "mood-empty",
     "ball-tennis", "info-circle", "x", "heart", "thumb-up", "mood-happy", "clock",
     "chart-pie", "flask", "poo",
+    # v2.176.0: листание итогов дня, «Поделиться», фильтр истории
+    "chevron-left", "share", "filter",
 ]
 
 

@@ -170,6 +170,25 @@ class DigestSnapshot(Base):
     )
 
 
+class FeedReaction(Base):
+    """Реакция игрока на событие ленты, кроме матча (v2.176.0): ачивка
+    (`target` = "ach:<id строки AchievementEarned>") или рекорд клуба
+    ("rec:<id ClubRecordPing>"). Одна реакция игрока на событие, как у матчей.
+    Без уведомлений. Таблица создаётся `create_all`."""
+    __tablename__ = "feed_reactions"
+    __table_args__ = (
+        UniqueConstraint("target", "player_id", name="uq_feed_reaction_player"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    target: Mapped[str] = mapped_column(index=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"))
+    kind: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+
+
 class MatchReaction(Base):
     """Реакция игрока на матч в Mini App (v2.169.0, эксперимент). С v2.174.0 одна
     строка на (match_id, player_id): другая реакция заменяет прежнюю, та же —
