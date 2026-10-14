@@ -22,6 +22,9 @@
   GET /api/matches?offset=N                 — все матчи клуба, порциями
   GET /api/throne                           — зал славы
   GET /api/summary/{kind}                   — итоги дня/недели/месяца/квартала/года (v2.168.0)
+  GET /api/month?ym=ГГГГММ                  — «Твой месяц» карточками (v2.177.0)
+  GET /api/chronicle                        — летопись клуба (v2.177.0)
+  GET /api/scores                           — счета клуба: частые счета, дьюсы (v2.177.0)
   GET /api/day?date=ГГГГ-ММ-ДД              — итоги дня на лету: табло, игрок дня, движение, матч дня… (v2.176.0)
   GET /api/match/{id}                       — экран матча (v2.168.0), с реакциями (v2.169.0)
   GET /api/player/{id}/chart                — график рейтинга по датам (v2.168.0)
@@ -32,6 +35,7 @@
   POST /api/track                           — счётчик показанных экранов (v2.166.0)
   POST /api/share                           — «Поделиться»: картинка игроку в чат с ботом (v2.176.0)
   POST /api/feed/react                      — реакция на ачивку или рекорд в ленте (v2.176.0)
+  POST /api/client_error                    — ошибка JS на странице: в журнал (v2.177.0)
   POST /api/boot_fail                       — страница не запустилась: причина в лог (v2.175.0)
 Вход во все /api — `Authorization: tma <initData>`.
 
@@ -48,13 +52,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Player
 from bot.utils import get_player
-from bot.webapp import api, api_club, api_day, api_insights, reactions
+from bot.webapp import api, api_chronicle, api_club, api_day, api_insights, api_month, api_personal, reactions
 from bot.webapp.assets import ASSET_TYPES, Assets, accepts_gzip
 from bot.webapp.auth import WebAppAuthError, init_data_from_header, telegram_id_from_init_data
 from bot.webapp.config import is_admin, is_webapp_allowed, webapp_listen
 from bot.webapp.photos import PhotoCache, photo_etag
 from bot.webapp.share import send_share
-from bot.webapp.usage import SCREEN_RE, UsageWriter, log_boot_failure, log_boot_time
+from bot.webapp.usage import SCREEN_RE, UsageWriter, log_boot_failure, log_boot_time, log_client_error
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +119,9 @@ def endpoint(handler: Handler) -> Callable[[web.Request], Awaitable[web.Response
         if pending is not None:
             telegram_id_, screen_, boot_ms_, info_ = pending
             if request.app[USAGE_KEY].record(telegram_id_, screen_):
-                log_boot_time(screen_, boot_ms_, info_)
+                boot = log_boot_time(screen_, boot_ms_, info_)
+                if boot:
+                    request.app[USAGE_KEY].record_boot(*boot)
         if payload is None:
             return _json_error(404, "Не найдено.")
         if isinstance(payload, web.StreamResponse):
@@ -148,6 +154,10 @@ async def home(request, session, viewer):
         featured["reactions"] = reactions.feed_counts(by_match[featured["id"]])
     payload["me"]["today"] = await api_club.today_line(session, viewer)
     payload["links"].insert(0, {"route": "summary/day", "title": "Итоги", "value": "", "icon": "calendar"})
+    # v2.177.0: «Твой месяц», летопись и счета клуба
+    payload["links"].insert(1, {"route": "month", "title": "Твой месяц", "value": "", "icon": "sparkles"})
+    payload["links"].append({"route": "chronicle", "title": "Летопись", "value": "", "icon": "book"})
+    payload["links"].append({"route": "scores", "title": "Счета клуба", "value": "", "icon": "list-numbers"})
     # v2.170.0: «Когда играют» — всем, «Использование» — только администратору
     payload["links"].append({"route": "when", "title": "Когда играют", "value": "", "icon": "clock"})
     if is_admin(viewer.telegram_id):
@@ -184,6 +194,19 @@ async def feed(request, session, viewer):
 async def day(request, session, viewer):
     """Итоги дня на лету (v2.176.0): ?date=ГГГГ-ММ-ДД, без даты — последний игровой день."""
     return await api_day.day_payload(session, viewer, request.query.get("date") or None)
+
+
+async def month(request, session, viewer):
+    """«Твой месяц» (v2.177.0): ?ym=ГГГГММ, без него — текущий (или прошлый)."""
+    return await api_month.month_payload(session, viewer, request.query.get("ym") or None)
+
+
+async def chronicle(request, session, viewer):
+    return await api_chronicle.chronicle_payload(session)
+
+
+async def scores(request, session, viewer):
+    return await api_chronicle.scores_payload(session)
 
 
 async def summary(request, session, viewer):
@@ -303,6 +326,15 @@ async def track(request, session, viewer):
     return {"ok": True}
 
 
+async def client_error(request, session, viewer):
+    """Ошибка JS на странице после запуска (v2.177.0): в журнал сервиса."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return {"ok": log_client_error(viewer.telegram_id, body)}
+
+
 async def boot_fail(request, session, viewer):
     """Страница не дошла до первого экрана (v2.175.0): причина — в лог сервиса."""
     try:
@@ -334,6 +366,11 @@ async def player(request, session, viewer):
             username = None
         if username:
             payload["head"]["photo_link"] = f"https://t.me/{username}?start=photo"
+    # v2.177.0: личные рекорды, коронный счёт, главный соперник; в чужом
+    # профиле — сразу шанс против него (раньше только на «Ты против …»)
+    payload["personal"] = await api_personal.personal_payload(session, target)
+    if target.id != viewer.id and not payload.get("empty"):
+        payload["forecast"] = await api._forecast(session, viewer, target)
     return payload
 
 
@@ -469,6 +506,9 @@ def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
         ("/api/records", records),
         ("/api/summary/{kind}", summary),
         ("/api/day", day),
+        ("/api/month", month),
+        ("/api/chronicle", chronicle),
+        ("/api/scores", scores),
         ("/api/match/{match_id}", match_screen),
         ("/api/player/{player_id}/chart", chart),
         ("/api/matches", matches),
@@ -481,6 +521,7 @@ def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
         app.router.add_get(path, endpoint(handler))
     app.router.add_post("/api/track", endpoint(track))
     app.router.add_post("/api/boot_fail", endpoint(boot_fail))
+    app.router.add_post("/api/client_error", endpoint(client_error))
     app.router.add_post("/api/feed/react", endpoint(feed_react))
     app.router.add_post("/api/share", endpoint(share))
     app.router.add_post("/api/match/{match_id}/react", endpoint(react))

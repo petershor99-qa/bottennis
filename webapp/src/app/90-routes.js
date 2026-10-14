@@ -22,7 +22,12 @@
     [/^match\/(\d+)$/, null, function (m) { return api("match/" + m[1]); }, function (c, d) { renderMatch(c, d); }, "match"],
     [/^when(?:\/(me))?$/, "home", function (m) { return api("when?who=" + (m[1] || "club")); },
       function (c, d, m) { renderWhen(c, d, m[1] || "club"); }, "when"],
-    [/^usage$/, "home", one("usage"), renderUsage, "usage"]
+    [/^usage$/, "home", one("usage"), renderUsage, "usage"],
+    // v2.177.0: летопись, счета клуба, «Твой месяц»
+    [/^chronicle$/, "home", one("chronicle"), renderChronicle, "chronicle"],
+    [/^scores$/, "home", one("scores"), renderScores, "scores"],
+    [/^month(?:\/(\d{6}))?$/, "me", function (m) { return api("month" + (m[1] ? "?ym=" + m[1] : "")); },
+      function (c, d) { renderMonth(c, d); }, "month"]
   ];
 
   var TABS = [["home", "", "Клуб", "home"], ["rating", "rating", "Рейтинг", "rating"], ["me", "me", "Я", "user"]];

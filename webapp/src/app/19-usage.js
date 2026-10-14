@@ -49,6 +49,11 @@
     });
     card.appendChild(lg);
     c.appendChild(card);
+    if (d.boot && d.boot.length) {
+      var boot = section("Запуск приложения");
+      d.boot.forEach(function (it) { boot.list.appendChild(itemRow(it)); });
+      c.appendChild(boot);
+    }
     [["Приложение", d.app], ["Бот", d.bot]].forEach(function (x) {
       if (!x[1].length) return;
       var sec = section(x[0]);

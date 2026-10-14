@@ -139,6 +139,12 @@ async def cmd_usage(message: Message, session: AsyncSession) -> None:
             f"{pluralize_opens(row.opens)}, {pluralize_players(row.users)}, "
             f"последнее {last_str}"
         )
+    # v2.177.0: время запуска Mini App — медиана за неделю (если приложение включено)
+    from bot.webapp.api_insights import boot_summary
+    boot = await boot_summary(session)
+    if boot:
+        lines.append("\n🚀 <b>Запуск приложения</b>")
+        lines.extend(f"{h(b['label'])}: {b['value']} ({b['note']})" for b in boot)
     await _send(message, "\n".join(lines))
 
 

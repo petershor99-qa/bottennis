@@ -36,6 +36,26 @@ jobs:
       - name: Mini App logic tests (node --test)
         run: node --test tests/js/*.test.js
 
+  # Проход по Mini App в настоящем браузере (v2.177.0, Playwright): каждый экран
+  # без ошибок JS, основные действия. Пока советующая, как mypy: в деплой не входит
+  # (сначала убедиться, что в CI она стабильна). Скриншот-тесты — только локально.
+  e2e:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies and Chromium
+        run: |
+          pip install -r requirements.txt -r requirements-dev.txt -r requirements-e2e.txt
+          python -m playwright install --with-deps chromium
+      - name: Mini App in browser
+        env:
+          RUN_E2E: "1"
+        run: pytest -q tests/e2e
+
   mypy:
     runs-on: ubuntu-latest
     # Советующая проверка, НЕ блокирующая (continue-on-error) — на момент

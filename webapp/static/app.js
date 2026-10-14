@@ -14,7 +14,7 @@
       matchesWord: matchesWord, screenName: screenName, splitNumber: splitNumber, badgeClass: badgeClass,
       parseLaunchParams: parseLaunchParams, isColorDark: isColorDark,
       filterMatches: filterMatches, recordLine: recordLine, compactDate: compactDate,
-      toggledReactions: toggledReactions
+      toggledReactions: toggledReactions, matchMood: matchMood
     };
     return;
   }
@@ -239,9 +239,23 @@
   }
 
   // Пустой экран — со значком; ошибка — со значком и кнопкой «Повторить» (v2.169.0)
+  // Пустой экран (v2.177.0): свой рисунок — ракетка и мяч над сеткой — вместо
+  // стандартного значка; у ошибки — прежний значок
+  function tableArt() {
+    var s = svg("svg", { "class": "table-art", viewBox: "0 0 120 72", "aria-hidden": "true" });
+    s.appendChild(svg("path", { d: "M8 58 H112", "class": "art-table" }));
+    s.appendChild(svg("path", { d: "M60 40 V58", "class": "art-net" }));
+    s.appendChild(svg("path", { d: "M54 40 H66", "class": "art-net" }));
+    s.appendChild(svg("circle", { cx: 34, cy: 30, r: 13, "class": "art-racket" }));
+    s.appendChild(svg("path", { d: "M42 39 L50 50", "class": "art-handle" }));
+    s.appendChild(svg("circle", { cx: 84, cy: 22, r: 5, "class": "art-ball" }));
+    s.appendChild(svg("path", { d: "M84 30 Q86 44 92 54", "class": "art-trail" }));
+    return s;
+  }
+
   function emptyState(container, text, isError) {
     var box = el("div", "state" + (isError ? " state-error" : ""));
-    box.appendChild(useIcon(isError ? "info-circle" : "ball-tennis", "state-ico"));
+    box.appendChild(isError ? useIcon("info-circle", "state-ico") : tableArt());
     box.appendChild(el("p", "state-text", text));
     if (isError) {
       var again = el("button", "more", "Повторить");
@@ -369,6 +383,23 @@
     p.catch(function () { delete apiCache[path]; });
     return p;
   }
+
+  // Ошибки JS на устройстве (v2.177.0): после запуска — в журнал сервера, не
+  // больше трёх за сессию. Только запись в лог, без уведомлений.
+  var reportedErrors = 0;
+  window.addEventListener("error", function (e) {
+    if (reportedErrors >= 3 || !initDataNow() || !e || !e.message) return;
+    reportedErrors += 1;
+    var info = clientInfo();
+    try {
+      fetch("api/client_error", {
+        method: "POST", keepalive: true,
+        headers: { "Authorization": "tma " + initDataNow(), "Content-Type": "application/json" },
+        body: JSON.stringify({ message: e.message, where: (e.filename || "").split("/").pop() + ":" + e.lineno,
+          route: currentRoute(), platform: info.platform, version: info.version })
+      }).catch(function () {});
+    } catch (err) { /* отчёт не должен мешать */ }
+  });
 
   function post(path, body) {
     var initData = initDataNow();
@@ -946,7 +977,9 @@
 
   function profileHero(c, d, playerId) {
     var h = d.head;
-    var hero = el("div", "card hero");
+    // Карточка игрока (v2.177.0): полоса «стола» сверху, характеристики из радара
+    var hero = el("div", "card hero player-card");
+    hero.appendChild(el("div", "table-band"));
     var top = el("div", "hero-top");
     top.appendChild(avatar({ id: +playerId, initial: h.initial }, "xl"));
     var who = el("div", "body");
@@ -959,9 +992,24 @@
     line.appendChild(num("hero-value", h.rating));
     if (h.week) line.appendChild(el("span", "hero-week " + (h.week_up ? "tone-win" : "tone-loss"), h.week));
     hero.appendChild(line);
+    if (d.card) hero.appendChild(cardStats(d.card, playerId));
     if (d.chart) hero.appendChild(ratingChart(d.chart));
     if (h.photo_link && !d.empty) hero.appendChild(shareButton("profile", function () { return profileCardBlocks(d); }));
     c.appendChild(hero);
+  }
+
+  function cardStats(card, playerId) {
+    var wrap = clickable(el("div", "card-stats"), "player/" + playerId + "/style");
+    card.stats.forEach(function (s, i) {
+      var cell = el("div", "card-stat stagger");
+      cell.style.animationDelay = (i * 50) + "ms";
+      cell.title = s.name;
+      cell.appendChild(el("span", "card-stat-value scoreboard", String(s.value)));
+      cell.appendChild(el("span", "card-stat-name", s.short));
+      wrap.appendChild(cell);
+    });
+    if (card.archetype) wrap.appendChild(el("div", "card-archetype", card.archetype));
+    return wrap;
   }
 
   // Своё фото ставится в боте (v2.174.0): ссылка открывает чат с ботом.
@@ -1051,6 +1099,21 @@
 
     c.appendChild(trendCard(playerId));
 
+    // Прогноз на чужом профиле (v2.177.0): шанс сразу, без перехода в «Ты против …»
+    if (d.forecast) {
+      var fc = clickable(el("div", "card forecast"), "h2h/" + playerId);
+      var ft = el("div", "pair-top");
+      ft.appendChild(el("span", "eyebrow", "Твой шанс против него"));
+      ft.appendChild(num("forecast-num", d.forecast.chance + "%"));
+      fc.appendChild(ft);
+      fc.appendChild(progressBar(d.forecast.chance / 100));
+      var wl = el("div", "forecast-split");
+      wl.appendChild(el("span", "tone-win", "Победа " + d.forecast.win));
+      wl.appendChild(el("span", "tone-loss", "Поражение " + d.forecast.lose));
+      fc.appendChild(wl);
+      c.appendChild(fc);
+    }
+
     if (d.versus) {
       var btn = el("button", "button");
       btn.type = "button";
@@ -1059,6 +1122,16 @@
       btn.addEventListener("click", function () { go("h2h/" + playerId); });
       c.appendChild(btn);
     }
+
+    if (String(playerId) === String(viewerId)) {
+      var mb = el("button", "button button-quiet month-btn");
+      mb.type = "button";
+      mb.appendChild(icon("sparkles", "ico-btn"));
+      mb.appendChild(document.createTextNode("Твой месяц"));
+      mb.addEventListener("click", function () { go("month"); });
+      c.appendChild(mb);
+    }
+    if (d.personal) personalBlocks(c, d.personal, playerId);
 
     if (d.goals.length) {
       var g = section("Цели");
@@ -1070,6 +1143,52 @@
       b.items.forEach(function (it) { s.list.appendChild(itemRow(it)); });
       c.appendChild(s);
     });
+  }
+
+  // Личные рекорды, коронный счёт, главный соперник (v2.177.0)
+  function personalBlocks(c, p, playerId) {
+    if (p.rival) {
+      var own = String(playerId) === String(viewerId);
+      var r = p.rival;
+      var card = clickable(el("div", "card rival"), own ? "h2h/" + r.id : "player/" + r.id);
+      card.appendChild(avatar(r, "md"));
+      var b = el("div", "body");
+      b.appendChild(el("div", "eyebrow", "Главный соперник"));
+      b.appendChild(el("div", "name", r.name));
+      b.appendChild(el("div", "sub", r.meetings + " · последняя " + r.last));
+      card.appendChild(b);
+      card.appendChild(num("rival-score" + (r.tone ? " tone-" + r.tone : ""), r.score));
+      c.appendChild(card);
+    }
+    if (p.bests.length) {
+      var s = section("Личные рекорды");
+      p.bests.forEach(function (it) {
+        var li = el("li", "row row-pair");
+        var lb = el("div", "label", it.label);
+        li.appendChild(lb);
+        li.appendChild(el("div", "value", it.value));
+        if (it.date) li.appendChild(el("div", "sub sub-wide", "с " + it.date));
+        s.list.appendChild(li);
+      });
+      c.appendChild(s);
+    }
+    if (p.signature) {
+      var sg = p.signature;
+      var tiles = el("div", "tiles signature");
+      if (sg.score) {
+        var t1 = el("div", "tile");
+        t1.appendChild(el("div", "tile-label", "Коронный счёт"));
+        t1.appendChild(el("div", "tile-value scoreboard", sg.score));
+        t1.appendChild(el("div", "tile-sub", sg.times));
+        tiles.appendChild(t1);
+      }
+      var t2 = el("div", "tile");
+      t2.appendChild(el("div", "tile-label", "Партии на дьюсе"));
+      t2.appendChild(num("tile-value", sg.deuce));
+      t2.appendChild(el("div", "tile-sub", "из " + sg.sets));
+      tiles.appendChild(t2);
+      c.appendChild(tiles);
+    }
   }
 
   // График рейтинга с периодами и сравнением (v2.168.0): ось — даты, поэтому
@@ -1445,6 +1564,80 @@
     return li;
   }
 
+  // История дуэли (v2.177.0): кто вёл по ходу встреч (баланс побед), лучшие
+  // серии, лучший матч пары и последние месяцы
+  function balanceSvg(points) {
+    var W = 320, H = 110, T = 10, B = 18;
+    var vals = points.map(function (p) { return p.v; });
+    var lo = Math.min.apply(null, vals.concat([0])), hi = Math.max.apply(null, vals.concat([0]));
+    if (hi === lo) { hi += 1; lo -= 1; }
+    function x(i) { return points.length < 2 ? W / 2 : 4 + (W - 8) * i / (points.length - 1); }
+    function y(v) { return T + (H - T - B) * (1 - (v - lo) / (hi - lo)); }
+    var s = svg("svg", { "class": "chart balance", viewBox: "0 0 " + W + " " + H, role: "img" });
+    s.appendChild(svg("line", { x1: 0, x2: W, y1: y(0), y2: y(0), "class": "balance-zero" }));
+    var dpath = points.map(function (p, i) { return (i ? "L" : "M") + x(i).toFixed(1) + " " + y(p.v).toFixed(1); }).join(" ");
+    s.appendChild(svg("path", { d: dpath, "class": "balance-line" }));
+    var last = points[points.length - 1];
+    s.appendChild(svg("circle", { cx: x(points.length - 1), cy: y(last.v), r: 4,
+      "class": last.v > 0 ? "balance-dot is-up" : last.v < 0 ? "balance-dot is-down" : "balance-dot" }));
+    [[0, "start"], [points.length - 1, "end"]].forEach(function (e) {
+      var t = svg("text", { x: e[1] === "start" ? 2 : W - 2, y: H - 3, "text-anchor": e[1], "class": "chart-label" });
+      t.textContent = points[e[0]].d;
+      s.appendChild(t);
+    });
+    return s;
+  }
+
+  function duelCard(duel, them) {
+    var wrap = el("section", "group");
+    wrap.appendChild(el("h2", "group-title", "История дуэли"));
+    var card = el("div", "card duel");
+    var top = el("div", "pair-top");
+    top.appendChild(el("span", "eyebrow", "Кто вёл: выше нуля — ты"));
+    if (duel.points_share !== null) top.appendChild(el("span", "eyebrow-meta", "твоих очков " + duel.points_share + "%"));
+    card.appendChild(top);
+    card.appendChild(balanceSvg(duel.balance));
+    var tiles = el("div", "tiles duel-tiles");
+    [["Твоя лучшая серия", duel.best_streak_me, "win"], ["Лучшая серия соперника", duel.best_streak_them, "loss"]].forEach(function (t) {
+      var tile = el("div", "tile tile-" + t[2]);
+      tile.appendChild(el("div", "tile-label", t[0]));
+      tile.appendChild(num("tile-value", String(t[1])));
+      tiles.appendChild(tile);
+    });
+    card.appendChild(tiles);
+    if (duel.months.length > 1) {
+      var mo = el("div", "duel-months");
+      duel.months.forEach(function (m) {
+        var col = el("div", "duel-month");
+        var bar = el("div", "duel-bar");
+        var total = Math.max(1, m.me + m.them);
+        var me = el("i", "duel-me"); me.style.height = (m.me / total * 100) + "%";
+        var th = el("i", "duel-them"); th.style.height = (m.them / total * 100) + "%";
+        bar.appendChild(th);
+        bar.appendChild(me);
+        col.appendChild(bar);
+        col.appendChild(el("span", "duel-score", m.me + ":" + m.them));
+        col.appendChild(el("span", "duel-label", m.m));
+        mo.appendChild(col);
+      });
+      card.appendChild(mo);
+    }
+    wrap.appendChild(card);
+    var best = el("ul", "feed-list");
+    var bm = duel.best_match;
+    var li = clickable(el("li", "feed-card feed-match"), "match/" + bm.id);
+    var body = el("div", "body");
+    body.appendChild(el("div", "eyebrow", "Лучший матч пары · " + bm.date));
+    body.appendChild(versusLine(bm));
+    var sc = el("div", "feed-score");
+    sc.appendChild(setChips(bm.sets, bm.winner));
+    body.appendChild(sc);
+    li.appendChild(body);
+    best.appendChild(li);
+    wrap.appendChild(best);
+    return wrap;
+  }
+
   function renderVersus(c, d) {
     var card = el("div", "card versus");
     var row = el("div", "versus-row");
@@ -1512,6 +1705,7 @@
     }
 
     if (d.empty) { emptyState(c, d.empty); return; }
+    if (d.duel) c.appendChild(duelCard(d.duel, d.them.name));
     var m = section("Итог встреч");
     d.metrics.forEach(function (it) { m.list.appendChild(itemRow(it)); });
     c.appendChild(m);
@@ -2135,6 +2329,11 @@
     });
     card.appendChild(lg);
     c.appendChild(card);
+    if (d.boot && d.boot.length) {
+      var boot = section("Запуск приложения");
+      d.boot.forEach(function (it) { boot.list.appendChild(itemRow(it)); });
+      c.appendChild(boot);
+    }
     [["Приложение", d.app], ["Бот", d.bot]].forEach(function (x) {
       if (!x[1].length) return;
       var sec = section(x[0]);
@@ -2145,8 +2344,40 @@
   }
 
   // ── Экран матча (v2.168.0) ─────────────────────────────────────────────────
+  // Характер матча для анимации (v2.177.0): только у ярких матчей, по данным
+  // партий — камбэк, разгром, дьюсы, боссфайт. Обычный матч — без эффектов.
+  function matchMood(d) {
+    if (!d.winner || !d.sets.length) return "";
+    var w = d.winner, l = w === "a" ? "b" : "a";
+    var lostFirst = d.sets[0][l] > d.sets[0][w];
+    var allWon = d.sets.every(function (s) { return s[w] > s[l]; });
+    var margin = d.sets.reduce(function (sum, s) { return sum + (s[w] - s[l]); }, 0) / d.sets.length;
+    var deuces = d.sets.filter(function (s) { return Math.max(s.a, s.b) > 11; }).length;
+    if (d.boss) return "boss";
+    if (lostFirst && d.sets.length >= 3) return "comeback";
+    if (allWon && margin >= 6) return "blowout";
+    if (deuces >= 2) return "deuce";
+    return "";
+  }
+
+  var MOOD_LABELS = { boss: "Боссфайт", comeback: "Камбэк", blowout: "Разгром", deuce: "Дьюсы" };
+
+  function matchCardBlocks(d) {
+    var aSets = d.sets.filter(function (x) { return x.a > x.b; }).length;
+    var blocks = [titleBlock(d.a.name + " — " + d.b.name, d.date),
+      statsBlock([[d.a.name, String(aSets), d.winner === "a" ? CARD.win : CARD.text],
+        [d.b.name, String(d.sets.length - aSets), d.winner === "b" ? CARD.win : CARD.text]])];
+    blocks.push(rowsBlock("Партии", d.sets.map(function (s, i) {
+      return [(i + 1) + "-я партия", s.a + ":" + s.b, s.a > s.b ? CARD.text : CARD.hint];
+    })));
+    if (d.a.delta) blocks.push(lineBlock("Рейтинг: " + d.a.name + " " + d.a.delta + ", " + d.b.name + " " + d.b.delta));
+    return blocks;
+  }
+
   function renderMatch(c, d) {
-    var card = el("div", "card versus");
+    var mood = matchMood(d);
+    var card = el("div", "card versus" + (mood ? " mood-" + mood : ""));
+    if (mood) card.appendChild(el("div", "mood-stamp", MOOD_LABELS[mood]));
     var row = el("div", "versus-row");
     function side(p, mine) {
       var s = clickable(el("div", "versus-side" + (d.winner === mine ? " is-winner" : "")), "player/" + p.id);
@@ -2202,8 +2433,241 @@
       note: d.h2h.total
     }));
     c.appendChild(h);
+    var share = el("div", "share-row");
+    share.appendChild(shareButton("match", function () { return matchCardBlocks(d); }));
+    c.appendChild(share);
   }
 
+
+  // ── Летопись и счета клуба (v2.177.0) ──────────────────────────────────────
+  function renderChronicle(c, d) {
+    c.appendChild(header("Летопись клуба", d.subtitle || ""));
+    if (d.empty) { emptyState(c, d.empty); return; }
+    d.months.forEach(function (mo) {
+      var wrap = el("section", "group");
+      wrap.appendChild(el("h2", "group-title", mo.title));
+      var list = el("ul", "chronicle");
+      mo.items.forEach(function (it, i) {
+        var target = it.match ? "match/" + it.match.id : it.player ? "player/" + it.player.id : null;
+        var li = target ? clickable(el("li", "chronicle-item"), target) : el("li", "chronicle-item");
+        li.style.animationDelay = Math.min(i, 10) * 30 + "ms";
+        var dot = el("div", "chronicle-dot chronicle-" + it.kind);
+        dot.appendChild(icon(it.icon));
+        li.appendChild(dot);
+        var b = el("div", "body");
+        b.appendChild(el("div", "name", it.title));
+        var sub = it.sub || (it.match ? it.match.a.name + " — " + it.match.b.name + " · " + it.match.sets.join(" ") : "");
+        b.appendChild(el("div", "sub", [it.date, sub].filter(Boolean).join(" · ")));
+        li.appendChild(b);
+        list.appendChild(li);
+      });
+      wrap.appendChild(list);
+      c.appendChild(wrap);
+    });
+  }
+
+  function renderScores(c, d) {
+    c.appendChild(header("Счета клуба", d.subtitle || ""));
+    if (d.empty) { emptyState(c, d.empty); return; }
+    var top = el("section", "group");
+    top.appendChild(el("h2", "group-title", "Самые частые счета партий"));
+    var card = el("div", "card scores-top");
+    var max = Math.max.apply(null, d.top.map(function (t) { return t.count; }));
+    d.top.forEach(function (t, i) {
+      var row = el("div", "score-row stagger");
+      row.style.animationDelay = (i * 60) + "ms";
+      row.appendChild(el("span", "score-big scoreboard", t.score));
+      var bar = el("div", "score-bar");
+      var fill = el("i");
+      fill.style.width = Math.round(t.count / max * 100) + "%";
+      bar.appendChild(fill);
+      row.appendChild(bar);
+      row.appendChild(el("span", "score-count", t.count + " · " + t.share + "%"));
+      card.appendChild(row);
+    });
+    top.appendChild(card);
+    c.appendChild(top);
+    var tiles = el("div", "tiles");
+    d.facts.forEach(function (f) {
+      var tile = el("div", "tile");
+      tile.appendChild(el("div", "tile-label", f.label));
+      tile.appendChild(el("div", "tile-value scoreboard", f.value));
+      tile.appendChild(el("div", "tile-sub", f.sub));
+      tiles.appendChild(tile);
+    });
+    c.appendChild(tiles);
+    if (d.match_scores.length) {
+      var ms = section("Счета матчей по партиям");
+      d.match_scores.forEach(function (m) {
+        var li = el("li", "row row-pair");
+        li.appendChild(el("div", "label scoreboard", m.score));
+        li.appendChild(el("div", "value", String(m.count)));
+        ms.list.appendChild(li);
+      });
+      c.appendChild(ms);
+    }
+  }
+
+  // ── «Твой месяц» (v2.177.0) ────────────────────────────────────────────────
+  // История месяца карточками, как сторис: нажатие справа — дальше, слева —
+  // назад, полоски сверху показывают, где ты. Открывается только самим игроком.
+  function storyCard(card) {
+    var box = el("div", "story-card story-" + card.kind);
+    box.appendChild(el("div", "story-title", card.title));
+    if (card.player) {
+      var who = el("div", "story-who");
+      who.appendChild(avatar(card.player, "lg"));
+      who.appendChild(el("div", "story-name", card.player.name));
+      box.appendChild(who);
+    }
+    if (card.match) box.appendChild(versusLine(card.match));
+    if (card.big) {
+      var big = el("div", "story-big scoreboard" + (card.up === true ? " tone-win" : card.up === false ? " tone-loss" : ""));
+      big.textContent = card.big;
+      box.appendChild(big);
+    }
+    if (card.big_label) box.appendChild(el("div", "story-label", card.big_label));
+    if (card.series && card.series.length > 1) box.appendChild(storySpark(card.series));
+    if (card.match) {
+      var chips = setChips(card.match.sets, card.match.winner);
+      chips.classList.add("story-chips");
+      box.appendChild(chips);
+    }
+    (card.lines || []).forEach(function (line) { box.appendChild(el("div", "story-line", line)); });
+    if (card.items) {
+      var grid = el("div", "story-badges");
+      card.items.forEach(function (a) {
+        var it = el("div", "story-badge");
+        var badge = el("div", "badge badge-sm " + (a.tier ? "badge-" + a.tier : "badge-earned"));
+        badge.appendChild(useIcon(a.icon));
+        it.appendChild(badge);
+        it.appendChild(el("span", "", a.name));
+        grid.appendChild(it);
+      });
+      box.appendChild(grid);
+    }
+    return box;
+  }
+
+  function storySpark(values) {
+    var W = 280, H = 70;
+    var lo = Math.min.apply(null, values), hi = Math.max.apply(null, values);
+    if (hi === lo) hi += 1;
+    var s = svg("svg", { "class": "story-spark", viewBox: "0 0 " + W + " " + H });
+    var d = values.map(function (v, i) {
+      return (i ? "L" : "M") + (4 + (W - 8) * i / (values.length - 1)).toFixed(1) + " " + (6 + (H - 12) * (1 - (v - lo) / (hi - lo))).toFixed(1);
+    }).join(" ");
+    s.appendChild(svg("path", { d: d }));
+    return s;
+  }
+
+  function renderMonth(c, d) {
+    c.appendChild(header(d.title, ""));
+    var nav = el("div", "day-nav");
+    function arrow(target, name, label) {
+      var b = el("button", "day-arrow");
+      b.type = "button";
+      b.setAttribute("aria-label", label);
+      b.appendChild(icon(name));
+      if (!target) b.disabled = true;
+      else b.addEventListener("click", function () { haptic("select"); location.replace("#/month/" + target); });
+      return b;
+    }
+    nav.appendChild(arrow(d.prev, "chevron-left", "Предыдущий месяц"));
+    nav.appendChild(el("div", "day-label", d.label || d.ym));
+    nav.appendChild(arrow(d.next, "chevron-right", "Следующий месяц"));
+    c.appendChild(nav);
+    if (d.empty) { emptyState(c, d.empty); return; }
+
+    var stage = el("div", "story");
+    var bars = el("div", "story-bars");
+    d.cards.forEach(function () { var b = el("i"); b.appendChild(el("b")); bars.appendChild(b); });
+    stage.appendChild(bars);
+    var slot = el("div", "story-slot");
+    stage.appendChild(slot);
+    var hint = el("div", "story-hint", "Нажми справа — дальше, слева — назад");
+    stage.appendChild(hint);
+    c.appendChild(stage);
+    var index = 0;
+    function show(i) {
+      index = Math.max(0, Math.min(d.cards.length - 1, i));
+      slot.textContent = "";
+      slot.appendChild(storyCard(d.cards[index]));
+      [].forEach.call(bars.children, function (b, k) { b.className = k < index ? "is-done" : k === index ? "is-now" : ""; });
+    }
+    stage.addEventListener("click", function (e) {
+      var rect = stage.getBoundingClientRect();
+      haptic("select");
+      show(e.clientX - rect.left < rect.width / 3 ? index - 1 : index + 1);
+      hint.classList.add("is-hidden");
+    });
+    show(0);
+  }
+
+  // ── Жесты (v2.177.0) ───────────────────────────────────────────────────────
+  // Свайп влево/вправо по разделам профиля и «потяни вниз — обновить». Жест
+  // засчитывается, только если движение явно горизонтальное (или вертикальное
+  // от самого верха страницы), иначе это обычная прокрутка.
+  var SWIPE_MIN = 70, PULL_MIN = 80;
+
+  function nextTab(route, dir) {
+    var m = route.match(PLAYER_ROUTE);
+    if (!m) return null;
+    var keys = PROFILE_TABS.map(function (t) { return t[0]; });
+    var i = keys.indexOf(m[2] || "") + dir;
+    if (i < 0 || i >= keys.length) return null;
+    return "player/" + m[1] + (keys[i] ? "/" + keys[i] : "");
+  }
+
+  // Потянуть вниз: только если Telegram не закроет приложение этим же жестом
+  // (свайпы закрытия отключены с клиента 7.7, v2.171.0) или вне Telegram
+  function pullAllowed() {
+    if (!tg) return true;
+    try { return !!(tg.isVersionAtLeast && tg.isVersionAtLeast("7.7")); } catch (e) { return false; }
+  }
+
+  var touch = null;
+  var pullMark = null;
+
+  document.addEventListener("touchstart", function (e) {
+    if (e.touches.length !== 1 || document.querySelector(".sheet-wrap")) { touch = null; return; }
+    var t = e.touches[0];
+    var inChips = e.target.closest && e.target.closest(".chips, .filters, .segmented, svg, .story");
+    touch = { x: t.clientX, y: t.clientY, top: window.scrollY <= 0, swipe: !inChips };
+  }, { passive: true });
+
+  document.addEventListener("touchmove", function (e) {
+    if (!touch || !touch.top || !pullAllowed()) return;
+    var dy = e.touches[0].clientY - touch.y;
+    var dx = Math.abs(e.touches[0].clientX - touch.x);
+    if (dy > 24 && dy > dx * 2) {
+      if (!pullMark) { pullMark = el("div", "pull-mark"); document.body.appendChild(pullMark); }
+      var p = Math.min(1, dy / PULL_MIN);
+      pullMark.style.opacity = String(p);
+      pullMark.style.transform = "translate(-50%, " + Math.min(dy * 0.5, 50) + "px) rotate(" + Math.round(p * 270) + "deg)";
+      pullMark.classList.toggle("is-ready", p >= 1);
+    }
+  }, { passive: true });
+
+  document.addEventListener("touchend", function (e) {
+    var start = touch;
+    touch = null;
+    var mark = pullMark;
+    pullMark = null;
+    if (mark) mark.remove();
+    if (!start) return;
+    var t = e.changedTouches[0];
+    var dx = t.clientX - start.x, dy = t.clientY - start.y;
+    if (start.top && pullAllowed() && dy > PULL_MIN && dy > Math.abs(dx) * 2) {
+      haptic("impact");
+      refresh();
+      return;
+    }
+    if (start.swipe && Math.abs(dx) > SWIPE_MIN && Math.abs(dx) > Math.abs(dy) * 2) {
+      var target = nextTab(currentRoute(), dx < 0 ? 1 : -1);
+      if (target) { haptic("select"); location.replace("#/" + target); }
+    }
+  }, { passive: true });
   // ── Маршруты ───────────────────────────────────────────────────────────────
   // [шаблон адреса, вкладка снизу, загрузка данных, отрисовка]
   function one(path) { return function () { return api(path); }; }
@@ -2228,7 +2692,12 @@
     [/^match\/(\d+)$/, null, function (m) { return api("match/" + m[1]); }, function (c, d) { renderMatch(c, d); }, "match"],
     [/^when(?:\/(me))?$/, "home", function (m) { return api("when?who=" + (m[1] || "club")); },
       function (c, d, m) { renderWhen(c, d, m[1] || "club"); }, "when"],
-    [/^usage$/, "home", one("usage"), renderUsage, "usage"]
+    [/^usage$/, "home", one("usage"), renderUsage, "usage"],
+    // v2.177.0: летопись, счета клуба, «Твой месяц»
+    [/^chronicle$/, "home", one("chronicle"), renderChronicle, "chronicle"],
+    [/^scores$/, "home", one("scores"), renderScores, "scores"],
+    [/^month(?:\/(\d{6}))?$/, "me", function (m) { return api("month" + (m[1] ? "?ym=" + m[1] : "")); },
+      function (c, d) { renderMonth(c, d); }, "month"]
   ];
 
   var TABS = [["home", "", "Клуб", "home"], ["rating", "rating", "Рейтинг", "rating"], ["me", "me", "Я", "user"]];

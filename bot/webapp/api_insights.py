@@ -12,7 +12,7 @@ from statistics import median
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import AchievementEarned, DigestSnapshot, Match, MatchStatus, Player, UsageEvent
+from bot.db.models import AchievementEarned, AppBoot, DigestSnapshot, Match, MatchStatus, Player, UsageEvent
 from bot.services.usage import action_label
 from bot.services.year_vote import YEAR_VOTE_CLOSE_AT, _full_year_bounds_utc, compute_results
 from bot.utils import (
@@ -188,7 +188,31 @@ async def usage_payload(session: AsyncSession) -> dict:
 
     bot_events = [e for e in events if not e.action.startswith(APP_PREFIX)]
     return {**base, "empty": "", "tiles": tiles, "daily": daily,
-            "bot": top(bot_events), "app": top(app_events)}
+            "bot": top(bot_events), "app": top(app_events), "boot": await boot_summary(session)}
+
+
+BOOT_DAYS = 7
+
+
+async def boot_summary(session: AsyncSession) -> list[dict]:
+    """Запуск приложения за BOOT_DAYS дней (v2.177.0): медиана всего и по клиентам."""
+    rows = (await session.execute(
+        select(AppBoot.ms, AppBoot.platform).where(AppBoot.created_at >= _now() - timedelta(days=BOOT_DAYS))
+    )).all()
+    if not rows:
+        return []
+
+    def line(label: str, values: list[int]) -> dict:
+        return {"label": label, "value": f"{median(values) / 1000:.1f} с".replace(".", ","),
+                "note": _ru_plural(len(values), "запуск", "запуска", "запусков")}
+
+    out = [line(f"Все клиенты, {BOOT_DAYS} дней", [r.ms for r in rows])]
+    by_platform: dict[str, list[int]] = {}
+    for r in rows:
+        by_platform.setdefault(r.platform or "неизвестно", []).append(r.ms)
+    for platform, values in sorted(by_platform.items(), key=lambda kv: -len(kv[1])):
+        out.append(line(platform, values))
+    return out
 
 
 # ── Итоги года в приложении ───────────────────────────────────────────────────
