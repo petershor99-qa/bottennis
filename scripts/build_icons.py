@@ -107,7 +107,7 @@ UI_ICONS = [
     "home", "chart-bar", "user", "crown", "calendar", "list", "flag", "flame",
     "target", "chart-histogram", "users", "swords", "chevron-right", "mood-empty",
     "ball-tennis", "info-circle", "x", "heart", "thumb-up", "mood-happy", "clock",
-    "chart-pie", "flask",
+    "chart-pie", "flask", "poo",
 ]
 
 

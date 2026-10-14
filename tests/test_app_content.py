@@ -174,9 +174,10 @@ async def _club(db):
 
 async def test_feed_events(db):
     a, b, c, epic, plain_m = await _club(db)
-    feed = await api_club.feed_events(db)
+    feed = await api_club.feed_events(db, days=7)
     types = [e["type"] for e in feed]
     assert types.count("match") == 2                       # старый матч вне окна
+    assert [e["type"] for e in await api_club.feed_events(db)].count("match") == 3  # окно по умолчанию — 30 дней
     assert "achievement" in types and "record" in types and "throne" in types
     names = [e.get("name") for e in feed if e["type"] == "achievement"]
     assert names == ["Хет-трик"]                           # скрытая не раскрыта

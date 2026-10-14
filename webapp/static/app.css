@@ -421,8 +421,6 @@ html, body {
 /* ── Релиз 3а (v2.168.0): лента, итоги, экран матча, график ─────────── */
 .feed-day { list-style: none; padding: 12px 16px 4px; font-size: 13px; font-weight: 700; color: var(--hint);
   text-transform: uppercase; letter-spacing: 0.04em; }
-.feed-row { align-items: flex-start; animation: fade .35s ease-out both; }
-.feed-row .vs-line { flex-wrap: wrap; }
 .feed-report { margin-top: 8px; font-style: italic; }
 .feed-time { font-size: 12px; padding-top: 3px; }
 .badge-sm { width: 36px; height: 36px; border-radius: 11px; flex: 0 0 36px; }
@@ -462,7 +460,7 @@ html, body {
 .chart-dot-them { fill: var(--them); }
 
 @media (prefers-reduced-motion: reduce) {
-  .grow, .stagger, .set-bar, .feed-row, .summary-pill { animation: none; }
+  .grow, .stagger, .set-bar, .summary-pill { animation: none; }
 }
 /* Переключатели с большим числом вкладок (итоги: 5 периодов) — прокрутка, а не вылет за экран */
 .segmented-flat { overflow-x: auto; scrollbar-width: none; }
@@ -512,4 +510,24 @@ html, body {
 .legend-tight { margin: 8px 0 0; }
 @media (prefers-reduced-motion: reduce) {
   .when-cell { animation: none; }
+}
+
+/* ── v2.171.0: меню клуба плиткой, лента карточками ───────────────────── */
+.club-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.club-tile { background: var(--card); border-radius: 14px; padding: 12px 10px; display: flex; flex-direction: column; gap: 6px; min-height: 84px; }
+.club-tile .ico { width: 22px; height: 22px; }
+.club-tile-title { font-size: 13px; font-weight: 600; line-height: 1.25; }
+.club-tile-value { font-size: 12px; color: var(--hint); margin-top: auto; }
+.feed-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.feed-list .feed-day { position: sticky; top: 0; z-index: 2; padding: 10px 12px 6px; margin: 4px -4px 0;
+  background: var(--bg); }
+.feed-card { background: var(--card); border-radius: 14px; padding: 12px 14px; display: flex; gap: 12px; align-items: flex-start;
+  animation: fade .35s ease-out both; }
+.feed-card .body { flex: 1; min-width: 0; }
+.feed-card .vs-line { flex-wrap: wrap; }
+.feed-score { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.feed-delta { font-size: 13px; font-weight: 700; white-space: nowrap; }
+.feed-card .feed-time { font-size: 12px; padding-top: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .feed-card { animation: none; }
 }
