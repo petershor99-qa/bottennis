@@ -57,6 +57,7 @@ from bot.utils import (
     safe_send,
     try_transfer_champion,
 )
+from bot.webapp.reactions import most_discussed_line
 
 logger = logging.getLogger(__name__)
 
@@ -888,6 +889,16 @@ async def send_daily_summary(bot: Bot) -> None:
         top = _top_match_block(matches, name_map, "Топ-матч дня")
         if top:
             lines.append(f"\n{top}")
+
+        # Матч с реакциями в приложении (v2.174.0) — только если реакций ≥2;
+        # сбой подсчёта не должен ломать итоги дня
+        try:
+            discussed = await most_discussed_line(session, list(matches), name_map)
+        except Exception:
+            logger.exception("Итоги дня: не удалось посчитать реакции")
+            discussed = None
+        if discussed:
+            lines.append(f"\n{discussed}")
 
         # Все матчи — общий лог клуба (было «Матчи дня», v2.98.0). Нейтрально,
         # счёт в перспективе challenger, победитель жирным.

@@ -47,14 +47,13 @@ async def test_toggle_reaction_adds_and_removes(db):
 async def test_reactions_count_players_separately(db):
     a, b, done, _ = await _pair(db)
     await toggle_reaction(db, done.id, a, "like")
-    await toggle_reaction(db, done.id, b, "like")
     await toggle_reaction(db, done.id, b, "lol")
     mine = (await reactions_for(db, [done.id], a.id))[done.id]
     by_kind = {r["kind"]: r for r in mine}
-    assert by_kind["like"]["count"] == 2 and by_kind["like"]["mine"] is True
+    assert by_kind["like"]["count"] == 1 and by_kind["like"]["mine"] is True
     assert by_kind["lol"]["count"] == 1 and by_kind["lol"]["mine"] is False
     assert [r["kind"] for r in mine] == list(REACTIONS)  # все виды, по порядку
-    assert feed_counts(mine) == [{"icon": "thumb-up", "count": 2}, {"icon": "mood-happy", "count": 1}]
+    assert feed_counts(mine) == [{"icon": "thumb-up", "count": 1}, {"icon": "mood-happy", "count": 1}]
 
 
 async def test_toggle_reaction_rejects_bad_kind_and_unfinished_match(db):

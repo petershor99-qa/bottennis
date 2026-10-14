@@ -230,6 +230,7 @@ html, body {
 .hero { padding-bottom: 8px; }
 .hero-top { display: flex; align-items: center; gap: 14px; }
 .hero-name { font-size: 22px; font-weight: 700; line-height: 1.2; }
+.hero-photo-link { margin-top: 4px; padding: 2px 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 .hero-rating { display: flex; align-items: baseline; gap: 10px; margin: 14px 0 4px; flex-wrap: wrap; }
 .hero-value { font-size: 40px; font-weight: 800; letter-spacing: -0.02em; line-height: 1; }
 .hero-week { font-size: 14px; font-weight: 600; }

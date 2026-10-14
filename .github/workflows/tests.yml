@@ -28,6 +28,10 @@ jobs:
       - name: Check Mini App script syntax
         run: node --check webapp/static/app.js
 
+      # Чистые функции страницы (склонения, имена экранов, разбор чисел) — v2.174.0
+      - name: Mini App logic tests (node --test)
+        run: node --test tests/js/*.test.js
+
   mypy:
     runs-on: ubuntu-latest
     # Советующая проверка, НЕ блокирующая (continue-on-error) — на момент
@@ -104,6 +108,18 @@ jobs:
               exit 1
             fi
             echo "bottennis.service активен."
+            # v2.174.0: приложение (если включено) отвечает страницей с версией скрипта —
+            # ловит падение веб-части при живом боте
+            if grep -qE '^WEBAPP_URL=.+' .env; then
+              PORT=$(grep -E '^WEBAPP_PORT=' .env | cut -d= -f2 | tr -d '"[:space:]')
+              PORT=${PORT:-8081}
+              if ! curl -fsS --retry 5 --retry-delay 2 --retry-connrefused "http://127.0.0.1:${PORT}/" | grep -q 'static/app.js?v='; then
+                echo "::error::Mini App не отвечает на 127.0.0.1:${PORT} после рестарта"
+                journalctl -u bottennis --no-pager -n 30
+                exit 1
+              fi
+              echo "Mini App отвечает."
+            fi
             journalctl -u bottennis --no-pager -n 30
 
   release:

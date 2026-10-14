@@ -32,18 +32,23 @@ _SPACES_RE = re.compile(r"[ \t ]{2,}")
 
 # Кружки формы (🟢 победа, 🔴 поражение, 🟡 ничья) — в приложении это точки
 _FORM_MARKS = {"🟢": "w", "🔴": "l", "🟡": "d"}
-# Эмодзи внутри фразы, которые несут смысл, — заменяются словом, а не удаляются
-_INLINE_WORDS = {"🤝": "ничьи "}
+# Ничьи рядом с числом несут смысл — заменяются словом, а не удаляются:
+# «5–6 🤝1» -> «5–6 ничьи 1», «7–3–1🤝» и «(+2 🤝)» -> «7–3–1 ничьи», «(+2 ничьи)».
+# До v2.174.0 слово клеилось к числу: «7–3–1ничьи».
+_DRAW_BEFORE_NUM_RE = re.compile(r"\s*🤝(?=\d)")
+_DRAW_AFTER_NUM_RE = re.compile(r"(?<=\d)\s*🤝")
+# Счётчики реакций «· 🔥 3» (итоги дня, v2.174.0) — в приложении словами
+_REACTION_WORDS = {"🔥": "огонь", "👍": "класс", "😂": "смешно", "💩": "какашка"}
+_REACTION_COUNT_RE = re.compile(r"(?<=· )(" + "|".join(_REACTION_WORDS) + r") (?=\d)")
 _BAR_CHARS = {"█", "░"}
 
 
 def plain(line: str) -> str:
     """HTML-строка бота -> чистый текст без тегов и эмодзи."""
-    for emoji, word in _INLINE_WORDS.items():
-        # эмодзи в начале строки — просто значок, в середине — слово
-        stripped = line.lstrip()
-        if not stripped.startswith(emoji):
-            line = line.replace(emoji, word)
+    # эмодзи в начале строки — просто значок, рядом с числом — слово
+    if not line.lstrip().startswith("🤝"):
+        line = _DRAW_AFTER_NUM_RE.sub(" ничьи", _DRAW_BEFORE_NUM_RE.sub(" ничьи ", line))
+    line = _REACTION_COUNT_RE.sub(lambda m: _REACTION_WORDS[m.group(1)] + " ", line)
     text = html.unescape(_TAG_RE.sub("", line))
     # Эмодзи убирается вместе с пробелом после него: иначе «Цель: 💯 Рейтинг»
     # давало бы двойной пробел, а его ниже разбор принимает за разделитель « · ».

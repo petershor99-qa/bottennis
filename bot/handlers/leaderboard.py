@@ -605,20 +605,9 @@ async def _collect_club_records(session: AsyncSession) -> dict[str, list[str]] |
             f"{len(longest_bf.sets_data or [])} партий  <i>{score_str}  {date_str}</i>"
         )
 
-    # Самый быстрый матч — от принятия вызова до внесения результата
-    timed = [
-        m for m in all_matches
-        if m.accepted_at and m.completed_at and m.completed_at > m.accepted_at
-    ]
-    if timed:
-        fastest = min(timed, key=lambda m: m.completed_at - m.accepted_at)
-        duration_min = int((fastest.completed_at - fastest.accepted_at).total_seconds() // 60)
-        duration_str = "меньше минуты" if duration_min < 1 else f"{duration_min} мин"
-        ch = name_map.get(fastest.challenger_id, "?")
-        cd = name_map.get(fastest.challenged_id, "?")
-        streak_lines.append(
-            f"🏃 Самый быстрый матч — <b>{h(ch)}</b> vs <b>{h(cd)}</b>: {duration_str}"
-        )
+    # «Самый быстрый матч» убран в v2.174.0: accepted_at — момент вызова, а
+    # вызывают уже после игры, поэтому «длительность» была временем записи
+    # счёта (медиана 24 с), а не матча
 
     # Крупнейший апсет (наибольшая дельта рейтинга). Боссфайты исключены — их
     # дельта безусловно ×2 (BOSS_FIGHT_MULT), поэтому даже предсказуемая победа

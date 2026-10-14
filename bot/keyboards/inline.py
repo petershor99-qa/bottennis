@@ -287,6 +287,7 @@ def short_stats_kb(app_url: str) -> InlineKeyboardMarkup:
     приложении, здесь одна кнопка туда и выходы к рейтингу и в меню."""
     b = InlineKeyboardBuilder()
     b.row(InlineKeyboardButton(text=WEBAPP_MORE_TEXT, web_app=WebAppInfo(url=app_url)))
+    b.row(InlineKeyboardButton(text="📷 Фото в приложении", callback_data="photo_start"))  # v2.174.0
     _peer_and_menu_row(b, "🏆 Рейтинг клуба", "menu_leaderboard")
     return b.as_markup()
 

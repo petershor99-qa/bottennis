@@ -3179,8 +3179,9 @@ async def test_club_records_shows_hottest_day(db):
     assert "3 матча" in text
 
 
-async def test_club_records_shows_fastest_match(db):
-    """Самый быстрый матч — по accepted_at → completed_at."""
+async def test_club_records_has_no_fastest_match(db):
+    """«Самый быстрый матч» убран (v2.174.0): вызов делают после игры, и
+    accepted_at -> completed_at — время записи счёта, а не матча."""
     from tests.conftest import show_all_club_records
 
     p1, p2 = _player(1, "Alice"), _player(2, "Bob")
@@ -3191,7 +3192,7 @@ async def test_club_records_shows_fastest_match(db):
         status=MatchStatus.completed, winner_id=p1.id,
         sets_data=[{"w": 11, "l": 5}], rating_change=10.0,
         accepted_at=datetime(2026, 6, 1, 12, 0, 0),
-        completed_at=datetime(2026, 6, 1, 12, 4, 0),  # 4 минуты
+        completed_at=datetime(2026, 6, 1, 12, 4, 0),
     )
     db.add(m)
     await db.commit()
@@ -3200,25 +3201,8 @@ async def test_club_records_shows_fastest_match(db):
     await show_all_club_records(cb, db)
 
     text = cb.message.edit_text.call_args[0][0]
-    assert "Самый быстрый матч" in text
-    assert "4 мин" in text
-
-
-async def test_fastest_match_skipped_without_accepted_at(db):
-    """Матчи без accepted_at (старые записи) не участвуют в рекорде — не падаем."""
-    from tests.conftest import show_all_club_records
-
-    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
-    db.add_all([p1, p2])
-    await db.flush()
-    db.add(_completed(p1, p2, p1.id, 10.0, datetime(2026, 6, 1, 12, 0, 0)))
-    await db.commit()
-
-    cb = _callback(1, "club_records")
-    await show_all_club_records(cb, db)  # не должно упасть
-
-    text = cb.message.edit_text.call_args[0][0]
     assert "Самый быстрый матч" not in text
+    assert "Самый длинный матч" in text
 
 
 # ── Редизайн «Достижений» (v2.133.0, этап 2 дорожной карты): оглавление +

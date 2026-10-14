@@ -58,6 +58,13 @@ async def _migrate_db() -> None:
         "CREATE INDEX IF NOT EXISTS ix_matches_challenger_id ON matches (challenger_id)",
         "CREATE INDEX IF NOT EXISTS ix_matches_challenged_id ON matches (challenged_id)",
         "CREATE INDEX IF NOT EXISTS ix_matches_status_completed_at ON matches (status, completed_at)",
+        # v2.174.0 — одна реакция игрока на матч: сначала оставить у игрока
+        # последнюю реакцию, потом уникальный индекс (имя как в модели)
+        "DELETE FROM match_reactions WHERE id NOT IN "
+        "(SELECT MAX(id) FROM match_reactions GROUP BY match_id, player_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_match_reaction_player ON match_reactions (match_id, player_id)",
+        # v2.174.0 — своё фото для приложения (file_id из Telegram)
+        "ALTER TABLE players ADD COLUMN photo_file_id TEXT",
     ]
     async with engine.begin() as conn:
         for sql in migrations:

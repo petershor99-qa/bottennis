@@ -32,6 +32,9 @@ class Player(Base):
     # Ключи отключённых игроком автосводок через запятую («day,month»), см.
     # bot/services/digests.py. Пусто — получает все (v2.145.0).
     muted_digests: Mapped[str] = mapped_column(default="", server_default="")
+    # Своё фото для Mini App (v2.174.0, команда /photo): file_id из Telegram.
+    # None — в приложении аватар Telegram или буква.
+    photo_file_id: Mapped[str | None]
     created_at: Mapped[datetime | None] = mapped_column(
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
@@ -168,13 +171,17 @@ class DigestSnapshot(Base):
 
 
 class MatchReaction(Base):
-    """Реакция игрока на матч в Mini App (v2.169.0, эксперимент). Одна строка на
-    (match_id, player_id, kind): повторное нажатие снимает реакцию. Реакции
+    """Реакция игрока на матч в Mini App (v2.169.0, эксперимент). С v2.174.0 одна
+    строка на (match_id, player_id): другая реакция заменяет прежнюю, та же —
+    снимает. Реакции
     видны только в приложении — бот о них никому не пишет. Таблица создаётся
     `create_all`."""
     __tablename__ = "match_reactions"
     __table_args__ = (
-        UniqueConstraint("match_id", "player_id", "kind", name="uq_match_reaction"),
+        # v2.174.0: одна реакция игрока на матч. В старых базах остаётся и прежнее
+        # ограничение (match_id, player_id, kind) — оно шире и не мешает;
+        # индекс для них создаёт _migrate_db() под тем же именем
+        UniqueConstraint("match_id", "player_id", name="uq_match_reaction_player"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
