@@ -540,3 +540,53 @@ html, body {
 .reaction-who-line { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--hint); }
 .reaction-who-line .ico { width: 16px; height: 16px; }
 .feature .reaction-counts { margin-top: 10px; }
+
+/* ── v2.176.0: итоги дня ─────────────────────────────────────────────── */
+.day-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0 12px; }
+.day-label { font-weight: 700; font-size: 17px; text-align: center; flex: 1; }
+.day-arrow { width: 40px; height: 40px; border-radius: 12px; border: 0; background: var(--card); color: var(--text);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.day-arrow:disabled { opacity: 0.3; cursor: default; }
+.day-arrow .ico { width: 22px; height: 22px; }
+.tiles-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.day-board { margin-bottom: 6px; }
+.day-usual { margin: 0 4px 12px; color: var(--hint); font-size: 14px; }
+.day-heroes { display: grid; gap: 10px; }
+.day-hero { display: flex; align-items: center; gap: 12px; margin-bottom: 0; }
+.day-hero .body { flex: 1; min-width: 0; }
+.day-hero-name { font-size: 18px; font-weight: 700; margin: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.day-hero .strip { margin-top: 6px; }
+.day-hero-delta { font-size: 22px; font-weight: 800; white-space: nowrap; }
+.day-hero-up { box-shadow: inset 3px 0 0 var(--win); }
+.day-hero-down { box-shadow: inset 3px 0 0 var(--loss); }
+.move { font-weight: 700; font-size: 14px; min-width: 36px; text-align: right; }
+.move-same, .move-new { color: var(--hint); font-weight: 600; }
+.row.is-dim .name { color: var(--hint); }
+.hour-bars { margin: 2px 0 0; }
+.hour-bar { fill: var(--accent); }
+.hour-bar.is-empty { fill: var(--hint); fill-opacity: 0.25; }
+.group .card + .feed-list { margin-top: 8px; }
+/* v2.176.0: фильтр истории матчей */
+.filters { margin: 16px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.filters .chips { flex-wrap: nowrap; overflow-x: auto; margin: 0; padding-bottom: 2px; scrollbar-width: none; }
+.filters .chips::-webkit-scrollbar { display: none; }
+.filters .chip { flex: 0 0 auto; padding: 5px 12px; }
+/* v2.176.0: реакции на ачивки и рекорды в ленте — компактно */
+.reactions-mini { justify-content: flex-start; gap: 6px; margin: 8px 0 0; }
+.reactions-mini .reaction { min-width: 0; padding: 4px 9px; gap: 4px; font-size: 12px; }
+.reactions-mini .reaction .ico { width: 16px; height: 16px; }
+/* v2.176.0: «Поделиться картинкой» */
+.share-row { margin-top: 20px; }
+.share-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; }
+.share-btn .ico { width: 20px; height: 20px; }
+.hero .share-btn { margin-top: 10px; }
+
+/* ── v2.176.0: широкое окно (Telegram на компьютере) — две колонки ────── */
+.col { min-width: 0; }
+@media (min-width: 760px) {
+  .screen.is-wide { max-width: 1060px; padding-left: 24px; padding-right: 24px; }
+  .is-wide .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+  .is-wide .col-sticky { position: sticky; top: 12px; }
+  .is-wide .col > .group:first-child, .is-wide .col > .segmented:first-child { margin-top: 0; }
+  .screen { max-width: 620px; }
+}

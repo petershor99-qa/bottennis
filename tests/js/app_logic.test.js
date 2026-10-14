@@ -67,3 +67,32 @@ test("isColorDark: тема по цвету фона", () => {
   assert.equal(app.isColorDark(undefined), false);
   assert.equal(app.isColorDark("red"), false);
 });
+
+test("filterMatches: соперник и период по МСК-дате", () => {
+  const ms = [
+    { opponent_id: 2, iso: "2026-10-14", result: "w" },
+    { opponent_id: 3, iso: "2026-10-07", result: "l" },  // за границей 7 дней
+    { opponent_id: 2, iso: "2026-09-01", result: "d" },
+  ];
+  assert.equal(app.filterMatches(ms, 0, 0, "2026-10-14").length, 3);
+  assert.equal(app.filterMatches(ms, 2, 0, "2026-10-14").length, 2);
+  assert.equal(app.filterMatches(ms, 0, 7, "2026-10-14").length, 1);   // 8–14 октября включительно
+  assert.equal(app.filterMatches(ms, 0, 30, "2026-10-14").length, 2);
+  assert.equal(app.filterMatches(ms, 3, 7, "2026-10-14").length, 0);
+});
+
+test("recordLine и compactDate", () => {
+  assert.equal(app.recordLine([{ result: "w" }, { result: "l" }, { result: "w" }]), "3 матча · 2–1");
+  assert.equal(app.recordLine([{ result: "d" }]), "1 матч · 0–0–1");
+  assert.equal(app.compactDate("2026-10-13"), "20261013");
+});
+
+test("toggledReactions: одна реакция игрока", () => {
+  const base = [
+    { kind: "fire", count: 2, mine: true }, { kind: "like", count: 0, mine: false },
+  ];
+  const swapped = app.toggledReactions(base, "like");
+  assert.deepEqual(swapped.map((r) => [r.kind, r.count, r.mine]), [["fire", 1, false], ["like", 1, true]]);
+  const removed = app.toggledReactions(base, "fire");
+  assert.deepEqual(removed.map((r) => [r.kind, r.count, r.mine]), [["fire", 1, false], ["like", 0, false]]);
+});

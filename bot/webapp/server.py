@@ -22,6 +22,7 @@
   GET /api/matches?offset=N                 — все матчи клуба, порциями
   GET /api/throne                           — зал славы
   GET /api/summary/{kind}                   — итоги дня/недели/месяца/квартала/года (v2.168.0)
+  GET /api/day?date=ГГГГ-ММ-ДД              — итоги дня на лету: табло, игрок дня, движение, матч дня… (v2.176.0)
   GET /api/match/{id}                       — экран матча (v2.168.0), с реакциями (v2.169.0)
   GET /api/player/{id}/chart                — график рейтинга по датам (v2.168.0)
   POST /api/match/{id}/react                — поставить/снять реакцию (v2.169.0)
@@ -29,6 +30,8 @@
   GET /api/when?who=club|me                 — «Когда играют»: день недели × час (v2.170.0)
   GET /api/usage                            — «Использование», только администратор (v2.170.0)
   POST /api/track                           — счётчик показанных экранов (v2.166.0)
+  POST /api/share                           — «Поделиться»: картинка игроку в чат с ботом (v2.176.0)
+  POST /api/feed/react                      — реакция на ачивку или рекорд в ленте (v2.176.0)
   POST /api/boot_fail                       — страница не запустилась: причина в лог (v2.175.0)
 Вход во все /api — `Authorization: tma <initData>`.
 
@@ -45,11 +48,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Player
 from bot.utils import get_player
-from bot.webapp import api, api_club, api_insights, reactions
+from bot.webapp import api, api_club, api_day, api_insights, reactions
 from bot.webapp.assets import ASSET_TYPES, Assets, accepts_gzip
 from bot.webapp.auth import WebAppAuthError, init_data_from_header, telegram_id_from_init_data
 from bot.webapp.config import is_admin, is_webapp_allowed, webapp_listen
 from bot.webapp.photos import PhotoCache, photo_etag
+from bot.webapp.share import send_share
 from bot.webapp.usage import SCREEN_RE, UsageWriter, log_boot_failure, log_boot_time
 
 logger = logging.getLogger(__name__)
@@ -157,9 +161,13 @@ async def _feed_page(session, viewer, offset: int) -> dict:
     items = events[offset:offset + api_club.FEED_PAGE]
     feed_matches = [e["id"] for e in items if e.get("type") == "match"]
     by_match = await reactions.reactions_for(session, feed_matches, viewer.id)
+    # v2.176.0: ачивки и рекорды — свои кнопки реакций прямо в ленте
+    by_target = await reactions.feed_reactions_for(session, [e["target"] for e in items if e.get("target")], viewer.id)
     for e in items:
         if e.get("type") == "match":
             e["reactions"] = reactions.feed_counts(by_match.get(e["id"], []))
+        elif e.get("target"):
+            e["reactions"] = by_target.get(e["target"], [])
     return {"items": items, "more": len(events) > offset + len(items)}
 
 
@@ -171,6 +179,11 @@ async def feed(request, session, viewer):
     if not 0 <= offset <= api_club.FEED_LIMIT:
         return None
     return await _feed_page(session, viewer, offset)
+
+
+async def day(request, session, viewer):
+    """Итоги дня на лету (v2.176.0): ?date=ГГГГ-ММ-ДД, без даты — последний игровой день."""
+    return await api_day.day_payload(session, viewer, request.query.get("date") or None)
 
 
 async def summary(request, session, viewer):
@@ -213,6 +226,39 @@ async def react(request, session, viewer):
         return None
     kind = str(body.get("kind", "")) if isinstance(body, dict) else ""
     result = await reactions.toggle_reaction(session, match_id, viewer, kind)
+    return None if result is None else {"reactions": result}
+
+
+async def share(request, session, viewer):
+    """«Поделиться» (v2.176.0): картинка со страницы — игроку в чат с ботом."""
+    bot = request.app.get(BOT_KEY)
+    if bot is None:
+        return None
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if not isinstance(body, dict):
+        return _json_error(400, "Не удалось прочитать картинку.")
+    result = await send_share(bot, viewer.telegram_id, str(body.get("kind", "")), body.get("image", ""))
+    if result == "ok":
+        return {"ok": True}
+    messages = {"bad": (400, "Не удалось прочитать картинку."),
+                "wait": (429, "Чуть позже — картинка только что отправлена."),
+                "fail": (502, "Telegram не принял картинку. Попробуйте ещё раз.")}
+    status, text = messages[result]
+    return _json_error(status, text)
+
+
+async def feed_react(request, session, viewer):
+    """Реакция на ачивку или рекорд в ленте (v2.176.0). Без уведомлений."""
+    try:
+        body = await request.json()
+    except Exception:
+        return None
+    if not isinstance(body, dict):
+        return None
+    result = await reactions.toggle_feed_reaction(session, str(body.get("target", "")), viewer, str(body.get("kind", "")))
     return None if result is None else {"reactions": result}
 
 
@@ -395,7 +441,8 @@ async def compress_json(request: web.Request, handler):
 
 def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
     """bot — экземпляр aiogram.Bot для фото игроков; без него /api/photo отвечает 404."""
-    app = web.Application(middlewares=[revalidate_static, compress_json])
+    # client_max_size: картинка «Поделиться» (v2.176.0) приходит base64 до ~2,7 МБ
+    app = web.Application(middlewares=[revalidate_static, compress_json], client_max_size=3 * 1024 * 1024)
     app[BOT_TOKEN_KEY] = bot_token
     app[SESSION_FACTORY_KEY] = session_factory
     app[BOT_KEY] = bot
@@ -421,6 +468,7 @@ def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
         ("/api/activity/club", club_activity),
         ("/api/records", records),
         ("/api/summary/{kind}", summary),
+        ("/api/day", day),
         ("/api/match/{match_id}", match_screen),
         ("/api/player/{player_id}/chart", chart),
         ("/api/matches", matches),
@@ -433,6 +481,8 @@ def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
         app.router.add_get(path, endpoint(handler))
     app.router.add_post("/api/track", endpoint(track))
     app.router.add_post("/api/boot_fail", endpoint(boot_fail))
+    app.router.add_post("/api/feed/react", endpoint(feed_react))
+    app.router.add_post("/api/share", endpoint(share))
     app.router.add_post("/api/match/{match_id}/react", endpoint(react))
     app.router.add_static("/static/", STATIC_DIR, show_index=False)
     return app

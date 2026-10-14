@@ -99,7 +99,8 @@ async def feed_events(session: AsyncSession, days: int = FEED_DAYS, limit: int =
         if ach is None or player is None or ach.hidden:
             continue  # скрытые не раскрываем и в ленте
         events.append((row.earned_at, {
-            "type": "achievement", "player": _person(player), "name": ach.name, "desc": ach.desc,
+            "type": "achievement", "target": f"ach:{row.id}",
+            "player": _person(player), "name": ach.name, "desc": ach.desc,
             "icon": ACHIEVEMENT_ICONS.get(ach.id, "trophy"), "tier": achievement_tier(ach.id),
         }))
 
@@ -109,7 +110,7 @@ async def feed_events(session: AsyncSession, days: int = FEED_DAYS, limit: int =
         player = players.get(ping.player_id)
         title, fmt = _RECORD_TITLES.get(ping.kind, ("Рекорд клуба", lambda v: f"{v:.1f}"))
         events.append((ping.pinged_at, {
-            "type": "record", "title": title, "value": fmt(ping.value),
+            "type": "record", "target": f"rec:{ping.id}", "title": title, "value": fmt(ping.value),
             "player": _person(player) if player else None,
         }))
 
