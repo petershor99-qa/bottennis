@@ -136,6 +136,11 @@ async def home(request, session, viewer):
     # v2.171.0: первая порция ленты; остальное — /api/feed?offset=N
     page = await _feed_page(session, viewer, 0)
     payload["feed"], payload["feed_more"] = page["items"], page["more"]
+    # v2.173.0: реакции и на карточке «Матч дня» — счётчики, как в ленте
+    featured = payload.get("featured")
+    if featured and featured.get("id"):
+        by_match = await reactions.reactions_for(session, [featured["id"]], viewer.id)
+        featured["reactions"] = reactions.feed_counts(by_match[featured["id"]])
     payload["me"]["today"] = await api_club.today_line(session, viewer)
     payload["links"].insert(0, {"route": "summary/day", "title": "Итоги", "value": "", "icon": "calendar"})
     # v2.170.0: «Когда играют» — всем, «Использование» — только администратору
@@ -193,7 +198,8 @@ async def match_screen(request, session, viewer):
         return None
     payload = await api_club.match_payload(session, match_id)
     if payload is not None:
-        payload["reactions"] = (await reactions.reactions_for(session, [match_id], viewer.id))[match_id]
+        payload["reactions"] = (await reactions.reactions_for(
+            session, [match_id], viewer.id, with_names=True))[match_id]
     return payload
 
 

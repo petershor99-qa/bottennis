@@ -39,7 +39,7 @@ async def test_toggle_reaction_adds_and_removes(db):
     a, b, done, _ = await _pair(db)
     first = await toggle_reaction(db, done.id, a, "fire")
     fire = next(r for r in first if r["kind"] == "fire")
-    assert fire == {"kind": "fire", "icon": "flame", "title": "Огонь", "count": 1, "mine": True}
+    assert fire == {"kind": "fire", "icon": "flame", "title": "Огонь", "count": 1, "mine": True, "who": ["Алиса"]}
     second = await toggle_reaction(db, done.id, a, "fire")
     assert next(r for r in second if r["kind"] == "fire")["count"] == 0
 
