@@ -27,9 +27,13 @@ REACTIONS: dict[str, tuple[str, str]] = {
 }
 
 
-async def reactions_for(session: AsyncSession, match_ids: list[int], viewer_id: int) -> dict[int, list[dict]]:
+async def reactions_for(
+    session: AsyncSession, match_ids: list[int], viewer_id: int, with_names: bool = False,
+) -> dict[int, list[dict]]:
     """Реакции на матчи: {match_id: [{kind, icon, title, count, mine}]} — все
-    виды по порядку, включая нулевые (экран матча показывает их кнопками)."""
+    виды по порядку, включая нулевые (экран матча показывает их кнопками).
+    with_names — ещё и `who`: имена поставивших в порядке реакций (v2.173.0,
+    экран матча; видно только внутри клуба, уведомлений нет)."""
     if not match_ids:
         return {}
     counts: dict[tuple[int, str], int] = {}
@@ -43,14 +47,26 @@ async def reactions_for(session: AsyncSession, match_ids: list[int], viewer_id: 
         select(MatchReaction.match_id, MatchReaction.kind)
         .where(MatchReaction.match_id.in_(match_ids), MatchReaction.player_id == viewer_id)
     )).all())
-    return {
-        mid: [
-            {"kind": kind, "icon": icon, "title": title,
-             "count": counts.get((mid, kind), 0), "mine": (mid, kind) in mine}
-            for kind, (icon, title) in REACTIONS.items()
-        ]
-        for mid in match_ids
-    }
+    names: dict[tuple[int, str], list[str]] = {}
+    if with_names:
+        for match_id, kind, name in (await session.execute(
+            select(MatchReaction.match_id, MatchReaction.kind, Player.display_name)
+            .join(Player, Player.id == MatchReaction.player_id)
+            .where(MatchReaction.match_id.in_(match_ids))
+            .order_by(MatchReaction.created_at, MatchReaction.id)
+        )).all():
+            names.setdefault((match_id, kind), []).append(name)
+    out: dict[int, list[dict]] = {}
+    for mid in match_ids:
+        items = []
+        for kind, (icon, title) in REACTIONS.items():
+            item = {"kind": kind, "icon": icon, "title": title,
+                    "count": counts.get((mid, kind), 0), "mine": (mid, kind) in mine}
+            if with_names:
+                item["who"] = names.get((mid, kind), [])
+            items.append(item)
+        out[mid] = items
+    return out
 
 
 def feed_counts(reactions: list[dict]) -> list[dict]:
@@ -88,4 +104,4 @@ async def toggle_reaction(session: AsyncSession, match_id: int, viewer: Player, 
         # экран покажет прежнее состояние; матчи и рейтинг важнее
         await session.rollback()
         logger.warning("Реакция %s на матч %s не записана: база занята", kind, match_id)
-    return (await reactions_for(session, [match_id], viewer.id))[match_id]
+    return (await reactions_for(session, [match_id], viewer.id, with_names=True))[match_id]

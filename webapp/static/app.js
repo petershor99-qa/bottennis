@@ -550,9 +550,28 @@
     return wrap;
   }
 
+  // Кто поставил (v2.173.0): строка на каждый вид с реакциями — значок и имена
+  function reactionWho(items) {
+    var wrap = el("div", "reaction-who");
+    items.forEach(function (r) {
+      if (!r.who || !r.who.length) return;
+      var line = el("div", "reaction-who-line");
+      line.appendChild(useIcon(r.icon));
+      line.appendChild(el("span", "", r.who.join(", ")));
+      wrap.appendChild(line);
+    });
+    return wrap;
+  }
+
   function reactionBar(matchId, list) {
+    var box = el("div", "reactions-box");
     var bar = el("div", "reactions");
+    var who = el("div");
+    box.appendChild(bar);
+    box.appendChild(who);
     function draw(items) {
+      who.textContent = "";
+      who.appendChild(reactionWho(items));
       bar.textContent = "";
       items.forEach(function (r) {
         var b = el("button", "reaction" + (r.mine ? " is-mine" : ""));
@@ -565,7 +584,7 @@
           haptic("select");
           var next = items.map(function (x) {
             if (x.kind !== r.kind) return x;
-            return { kind: x.kind, icon: x.icon, title: x.title, mine: !x.mine, count: x.count + (x.mine ? -1 : 1) };
+            return { kind: x.kind, icon: x.icon, title: x.title, mine: !x.mine, count: x.count + (x.mine ? -1 : 1), who: x.who };
           });
           draw(next);
           post("match/" + matchId + "/react", { kind: r.kind }).then(function (resp) {
@@ -578,7 +597,7 @@
       });
     }
     draw(list);
-    return bar;
+    return box;
   }
 
   // Подсказка при первом запуске (v2.169.0): одна карточка, закрывается крестиком
@@ -630,6 +649,7 @@
       f.appendChild(versusLine(d.featured));
       f.appendChild(setChips(d.featured.sets, d.featured.winner));
       if (d.featured.reason) f.appendChild(el("p", "feature-reason", d.featured.reason));
+      if (d.featured.reactions && d.featured.reactions.length) f.appendChild(reactionCounts(d.featured.reactions));
       c.appendChild(f);
     }
 
