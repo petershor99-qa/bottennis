@@ -143,12 +143,31 @@ async def seed():
 PREVIEW_HTML = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Превью</title>
 <script>
+// ?tg=late — скрипт Telegram приходит через 3 с, ?tg=none — не приходит вовсе
+// (как у игрока, у которого не открывается telegram.org; v2.175.0). В обоих
+// случаях подпись для входа лежит в адресе запуска, как в настоящем Telegram.
 var dark = location.search.indexOf("dark") >= 0;
-window.Telegram = { WebApp: { colorScheme: dark ? "dark" : "light", initData: %s, themeParams: {},
-  ready(){}, expand(){}, onEvent(){}, setHeaderColor(){}, setBackgroundColor(){},
-  openTelegramLink(u){ window.__openedLink = u; },
-  HapticFeedback: { selectionChanged(){}, impactOccurred(){} },
-  BackButton: { show(){}, hide(){}, onClick(){} } } };
+var mode = (location.search.match(/tg=(late|none)/) || [])[1] || "now";
+var INIT = %s;
+function makeTelegram() {
+  return { WebApp: { colorScheme: dark ? "dark" : "light", initData: INIT, themeParams: {},
+    platform: "tdesktop", version: "7.0",
+    ready(){}, expand(){}, onEvent(){}, setHeaderColor(){}, setBackgroundColor(){},
+    openTelegramLink(u){ window.__openedLink = u; },
+    HapticFeedback: { selectionChanged(){}, impactOccurred(){} },
+    BackButton: { show(){}, hide(){}, onClick(){} } } };
+}
+if (mode === "now") {
+  window.Telegram = makeTelegram();
+} else if (location.hash.indexOf("tgWebAppData") < 0 && location.hash.indexOf("#/") !== 0) {
+  var theme = JSON.stringify({ bg_color: dark ? "#17212b" : "#ffffff" });
+  location.hash = "tgWebAppData=" + encodeURIComponent(INIT) + "&tgWebAppVersion=7.0&tgWebAppPlatform=tdesktop"
+    + "&tgWebAppThemeParams=" + encodeURIComponent(theme);
+}
+if (mode === "late") setTimeout(function () {
+  window.Telegram = makeTelegram();
+  if (window.__clubOnTelegram) window.__clubOnTelegram();
+}, 3000);
 </script>
 <link rel="stylesheet" href="static/app.css"></head>
 <body><main class="screen" id="app"></main><nav class="tabbar" id="tabbar"></nav><script src="static/app.js"></script></body></html>"""

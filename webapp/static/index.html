@@ -13,29 +13,77 @@
   </main>
   <nav class="tabbar" id="tabbar" aria-label="Разделы"></nav>
   <script>
-    // Загрузчик скрипта Telegram (v2.164.2). Раньше он стоял в <head> обычным
-    // блокирующим тегом: если telegram.org отвечал медленно, страница вставала
-    // на ~10% и помогал только перезапуск. Теперь страница отрисовывается сразу,
-    // скрипт подгружается после неё с таймаутом и повторами, и приложение
-    // стартует, как только он пришёл. app.js нельзя запускать раньше: маршрутизация
-    // меняет адрес после «#», а скрипт Telegram читает из него параметры запуска.
+    // Загрузчик (v2.164.2, переделан в v2.175.0). Страница рисуется сразу,
+    // app.js грузится тут же, а скрипт Telegram — параллельно, с таймаутом и
+    // повторами. Раньше app.js ждал скрипт Telegram: если telegram.org у игрока
+    // открывался медленно или не открывался, оставалась «Загрузка…». Теперь
+    // приложение стартует без него (подпись для входа — из адреса запуска) и
+    // подключает его, когда он придёт. Если за WATCHDOG_MS первый экран так и не
+    // показался — сообщение с кнопкой «Обновить» и отчёт на сервер (в лог).
     (function () {
       var URL = "https://telegram.org/js/telegram-web-app.js";
-      var TIMEOUT_MS = 5000, MAX_TRIES = 4;
-      var tries = 0, booted = false;
+      var TIMEOUT_MS = 5000, MAX_TRIES = 4, WATCHDOG_MS = 12000;
+      var tries = 0, telegramLoaded = false, appLoaded = false, appFailed = false, lastError = "";
+      var launchHash = location.hash;
 
-      function boot() {
-        if (booted) return;
-        booted = true;
+      window.addEventListener("error", function (e) {
+        if (e && e.message) lastError = e.message + (e.filename ? " @ " + e.filename.split("/").pop() + ":" + e.lineno : "");
+      });
+
+      function param(name) {
+        var m = new RegExp("[#&?]" + name + "=([^&]*)").exec(launchHash);
+        if (!m) return "";
+        try { return decodeURIComponent(m[1].replace(/\+/g, "%20")); } catch (e) { return m[1]; }
+      }
+
+      function onTelegram() {
+        telegramLoaded = true;
+        if (window.__clubOnTelegram) window.__clubOnTelegram();
+      }
+
+      function attempt() {
+        if (telegramLoaded) return;
+        if (tries >= MAX_TRIES) return;  // приложение работает и без него
+        tries += 1;
+        var mine = tries;
+        var s = document.createElement("script");
+        s.src = URL + (mine > 1 ? "?retry=" + mine : "");
+        // Опоздавший ответ предыдущей попытки тоже годится
+        s.onload = onTelegram;
+        s.onerror = function () { if (!telegramLoaded && tries === mine) setTimeout(attempt, 300); };
+        document.head.appendChild(s);
+        setTimeout(function () { if (!telegramLoaded && tries === mine) attempt(); }, TIMEOUT_MS);
+      }
+
+      function bootApp() {
         var s = document.createElement("script");
         s.src = "static/app.js";
+        s.onload = function () { appLoaded = true; };
+        s.onerror = function () { appFailed = true; };
         document.body.appendChild(s);
       }
 
-      function giveUp() {
+      function report(stage) {
+        var initData = param("tgWebAppData");
+        if (!initData) {
+          try { initData = JSON.parse(sessionStorage.getItem("__telegram__initParams")).tgWebAppData || ""; } catch (e) { initData = ""; }
+        }
+        if (!initData || !window.fetch) return;
+        try {
+          fetch("api/boot_fail", {
+            method: "POST", keepalive: true,
+            headers: { "Authorization": "tma " + initData, "Content-Type": "application/json" },
+            body: JSON.stringify({ stage: stage, error: lastError, tg: telegramLoaded,
+              platform: param("tgWebAppPlatform"), version: param("tgWebAppVersion") })
+          }).catch(function () {});
+        } catch (e) { /* отчёт не должен мешать */ }
+      }
+
+      function watchdog() {
         var node = document.getElementById("boot-state");
-        if (!node || booted) return;
-        node.textContent = "Не удалось загрузить приложение. Проверьте соединение. ";
+        if (!node) return;  // первый экран показан
+        report(appFailed ? "app_js_failed" : appLoaded ? "no_first_screen" : "app_js_pending");
+        node.textContent = "Приложение не запустилось. Проверьте соединение. ";
         var b = document.createElement("button");
         b.type = "button";
         b.className = "button button-quiet";
@@ -44,23 +92,9 @@
         node.parentNode.appendChild(b);
       }
 
-      function attempt() {
-        if (booted) return;
-        if (tries >= MAX_TRIES) { giveUp(); return; }
-        tries += 1;
-        var mine = tries;
-        var s = document.createElement("script");
-        s.src = URL + (mine > 1 ? "?retry=" + mine : "");
-        // Опоздавший ответ предыдущей попытки тоже годится: boot() сработает один раз
-        s.onload = boot;
-        s.onerror = function () { if (!booted && tries === mine) setTimeout(attempt, 300); };
-        document.head.appendChild(s);
-        // Нет ответа за TIMEOUT_MS — следующая попытка (старая может ещё дойти)
-        setTimeout(function () { if (!booted && tries === mine) attempt(); }, TIMEOUT_MS);
-      }
-
-      if (document.readyState === "complete") attempt();
-      else window.addEventListener("load", attempt);
+      bootApp();
+      attempt();
+      setTimeout(watchdog, WATCHDOG_MS);
     })();
   </script>
 </body>
