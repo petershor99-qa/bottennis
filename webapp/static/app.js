@@ -1,3 +1,4 @@
+// Собрано scripts/build_app_js.py из webapp/src/app/*.js — правьте части там.
 // Mini App клуба. v2.160.0 — «Рейтинг клуба»; v2.161.0 — экраны «только
 // чтение»; v2.162.0 — свой интерфейс приложения: вкладки «Клуб / Рейтинг / Я»,
 // главная с подиумом и матчем дня, профиль-табло с разделами на одном экране,
@@ -11,7 +12,9 @@
   if (typeof window === "undefined") {
     module.exports = {
       matchesWord: matchesWord, screenName: screenName, splitNumber: splitNumber, badgeClass: badgeClass,
-      parseLaunchParams: parseLaunchParams, isColorDark: isColorDark
+      parseLaunchParams: parseLaunchParams, isColorDark: isColorDark,
+      filterMatches: filterMatches, recordLine: recordLine, compactDate: compactDate,
+      toggledReactions: toggledReactions
     };
     return;
   }
@@ -164,6 +167,19 @@
     h.appendChild(el("h1", "screen-title", title));
     if (sub) h.appendChild(el("p", "screen-sub", sub));
     return h;
+  }
+
+  // Две колонки на широком окне (v2.176.0, Telegram на компьютере): main —
+  // слева, side — справа; на телефоне они идут друг под другом в том же порядке
+  function twoCols(c, stickyMain) {
+    var cols = el("div", "cols");
+    var main = el("div", "col col-main" + (stickyMain ? " col-sticky" : ""));
+    var side = el("div", "col col-side");
+    cols.appendChild(main);
+    cols.appendChild(side);
+    c.appendChild(cols);
+    if (c === app) app.classList.add("is-wide");
+    return { main: main, side: side };
   }
 
   function section(title) {
@@ -571,11 +587,13 @@
       li.appendChild(badge);
       body.appendChild(el("div", "name", "«" + it.name + "»"));
       body.appendChild(el("div", "sub", it.player.name + " · " + it.desc));
+      if (it.target && it.reactions) body.appendChild(feedReactionBar(it.target, it.reactions));
     } else if (it.type === "record") {
       li = it.player ? clickable(el("li", "feed-card"), "player/" + it.player.id) : el("li", "feed-card");
       li.appendChild(icon("trophy", "ico-lead ico-gold"));
       body.appendChild(el("div", "name", it.title));
       body.appendChild(el("div", "sub", [it.player ? it.player.name : "", it.value].filter(Boolean).join(" · ")));
+      if (it.target && it.reactions) body.appendChild(feedReactionBar(it.target, it.reactions));
     } else {
       li = clickable(el("li", "feed-card"), "player/" + it.player.id);
       li.appendChild(icon("crown", "ico-lead ico-gold"));
@@ -664,6 +682,46 @@
     return wrap;
   }
 
+  // Одна реакция игрока (v2.174.0): та же снимается, другая заменяет прежнюю —
+  // экран меняется сразу, ответ сервера потом уточняет
+  function toggledReactions(items, kind) {
+    return items.map(function (x) {
+      var on = x.kind === kind ? !x.mine : false;
+      var count = x.count + (on ? 1 : 0) - (x.mine ? 1 : 0);
+      return { kind: x.kind, icon: x.icon, title: x.title, mine: on, count: count, who: x.who };
+    });
+  }
+
+  // Реакции на ачивку или рекорд прямо в ленте (v2.176.0): маленькие кнопки,
+  // нажатие не открывает карточку
+  function feedReactionBar(target, list) {
+    var bar = el("div", "reactions reactions-mini");
+    function draw(items) {
+      bar.textContent = "";
+      items.forEach(function (r) {
+        var b = el("button", "reaction" + (r.mine ? " is-mine" : ""));
+        b.type = "button";
+        b.setAttribute("aria-label", r.title);
+        b.setAttribute("aria-pressed", r.mine ? "true" : "false");
+        b.appendChild(useIcon(r.icon));
+        if (r.count) b.appendChild(el("span", "reaction-n", String(r.count)));
+        b.addEventListener("click", function (e) {
+          e.stopPropagation();
+          haptic("select");
+          draw(toggledReactions(items, r.kind));
+          post("feed/react", { target: target, kind: r.kind }).then(function (resp) {
+            draw(resp.reactions);
+            delete apiCache.home;
+          }, function () { draw(items); });
+        });
+        bar.appendChild(b);
+      });
+    }
+    draw(list);
+    bar.addEventListener("keydown", function (e) { e.stopPropagation(); });
+    return bar;
+  }
+
   function reactionBar(matchId, list) {
     var box = el("div", "reactions-box");
     var bar = el("div", "reactions");
@@ -683,10 +741,7 @@
         if (r.count) b.appendChild(el("span", "reaction-n", String(r.count)));
         b.addEventListener("click", function () {
           haptic("select");
-          var next = items.map(function (x) {
-            if (x.kind !== r.kind) return x;
-            return { kind: x.kind, icon: x.icon, title: x.title, mine: !x.mine, count: x.count + (x.mine ? -1 : 1), who: x.who };
-          });
+          var next = toggledReactions(items, r.kind);
           draw(next);
           post("match/" + matchId + "/react", { kind: r.kind }).then(function (resp) {
             draw(resp.reactions);
@@ -727,6 +782,9 @@
     c.appendChild(header("Клуб сегодня", d.today.label));
     if (d.empty) { emptyState(c, d.empty); return; }
     firstRunHint(c);
+    var homeCols = twoCols(c, false);
+    var outer = c;
+    c = homeCols.main;
     c.appendChild(podium(d.podium));
 
     var me = clickable(el("div", "card me-card"), "player/" + d.me.id);
@@ -754,7 +812,8 @@
       c.appendChild(f);
     }
 
-    if (d.feed && d.feed.length) c.appendChild(feedBlock(d.feed, d.feed_more));
+    if (d.feed && d.feed.length) homeCols.side.appendChild(feedBlock(d.feed, d.feed_more));
+    if (!homeCols.side.firstChild) outer.classList.remove("is-wide");
   }
 
   // ── Рейтинг ────────────────────────────────────────────────────────────────
@@ -901,6 +960,7 @@
     if (h.week) line.appendChild(el("span", "hero-week " + (h.week_up ? "tone-win" : "tone-loss"), h.week));
     hero.appendChild(line);
     if (d.chart) hero.appendChild(ratingChart(d.chart));
+    if (h.photo_link && !d.empty) hero.appendChild(shareButton("profile", function () { return profileCardBlocks(d); }));
     c.appendChild(hero);
   }
 
@@ -923,11 +983,12 @@
   var shell = null;
 
   function buildShell(c, d, playerId) {
-    profileHero(c, d, playerId);
+    var cols = twoCols(c, true);
+    profileHero(cols.main, d, playerId);
     var seg = null;
-    if (!d.empty) { seg = segmented(playerId, "", d.counts); c.appendChild(seg); }
+    if (!d.empty) { seg = segmented(playerId, "", d.counts); cols.side.appendChild(seg); }
     var body = el("div", "tab-body");
-    c.appendChild(body);
+    cols.side.appendChild(body);
     shell = { playerId: playerId, data: d, body: body, seg: seg };
   }
 
@@ -1115,11 +1176,103 @@
     return card;
   }
 
+  // Вкладка «Матчи» (v2.176.0): «Против каждого» и история с фильтром по
+  // сопернику и периоду. Тап по строке таблицы — фильтр по этому сопернику.
+  var PERIOD_FILTERS = [[0, "Всё время"], [30, "30 дней"], [7, "7 дней"]];
+
+  function filterMatches(matches, opponentId, days, todayIso) {
+    var since = "";
+    if (days) {
+      var t = new Date(todayIso + "T00:00:00Z");
+      t.setUTCDate(t.getUTCDate() - (days - 1));
+      since = t.toISOString().slice(0, 10);
+    }
+    return matches.filter(function (m) {
+      return (!opponentId || m.opponent_id === opponentId) && (!since || (m.iso || "") >= since);
+    });
+  }
+
+  function recordLine(list) {
+    var w = 0, l = 0, dr = 0;
+    list.forEach(function (m) { if (m.result === "w") w++; else if (m.result === "l") l++; else dr++; });
+    return list.length + " " + pluralWord(list.length, "матч", "матча", "матчей") + " · " + w + "–" + l + (dr ? "–" + dr : "");
+  }
+
+  function pluralWord(n, one, few, many) {
+    var m10 = n % 10, m100 = n % 100;
+    if (m100 >= 11 && m100 <= 14) return many;
+    return m10 === 1 ? one : m10 >= 2 && m10 <= 4 ? few : many;
+  }
+
+  function mskTodayIso() {
+    return new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
+  }
+
   function renderMatchesTab(body, d) {
     if (d.empty) { emptyState(body, d.empty); return; }
-    var s = section();
-    d.matches.forEach(function (m) { s.list.appendChild(matchRow(m)); });
-    body.appendChild(s);
+    var state = { opponent: 0, days: 0 };
+    var listWrap = el("div");
+
+    if (d.versus && d.versus.length) {
+      var vs = section("Против каждого");
+      d.versus.forEach(function (r) {
+        var li = el("li", "row tap versus-row-item");
+        li.setAttribute("role", "button");
+        li.tabIndex = 0;
+        li.appendChild(avatar(r, "sm"));
+        var b = el("div", "body");
+        b.appendChild(el("div", "name", r.name));
+        b.appendChild(el("div", "sub", r.score + " · последняя " + r.last));
+        li.appendChild(b);
+        li.appendChild(el("span", "value" + (r.tone ? " tone-" + r.tone : ""), r.rate));
+        li.addEventListener("click", function () {
+          haptic("select");
+          state.opponent = state.opponent === r.id ? 0 : r.id;
+          draw();
+          listWrap.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+        vs.list.appendChild(li);
+      });
+      body.appendChild(vs);
+    }
+
+    var filters = el("div", "filters");
+    var opp = el("div", "chips");
+    var per = el("div", "chips");
+    filters.appendChild(opp);
+    filters.appendChild(per);
+    body.appendChild(filters);
+    body.appendChild(listWrap);
+
+    function chip(text, active, onPick) {
+      var b = el("button", "chip chip-btn" + (active ? " is-active" : ""), text);
+      b.type = "button";
+      b.addEventListener("click", function () { haptic("select"); onPick(); draw(); });
+      return b;
+    }
+
+    function draw() {
+      opp.textContent = "";
+      opp.appendChild(chip("Все", !state.opponent, function () { state.opponent = 0; }));
+      (d.versus || []).forEach(function (r) {
+        opp.appendChild(chip(r.name, state.opponent === r.id, function () { state.opponent = r.id; }));
+      });
+      per.textContent = "";
+      PERIOD_FILTERS.forEach(function (p) {
+        per.appendChild(chip(p[1], state.days === p[0], function () { state.days = p[0]; }));
+      });
+      var shown = filterMatches(d.matches, state.opponent, state.days, mskTodayIso());
+      listWrap.textContent = "";
+      var s = section();
+      var head = el("div", "group-head");
+      head.appendChild(el("h2", "group-title", "История"));
+      head.appendChild(el("span", "group-count", shown.length ? recordLine(shown) : ""));
+      s.insertBefore(head, s.list);
+      if (!shown.length) s.list.appendChild(el("li", "row sub", "Матчей с таким фильтром нет."));
+      shown.forEach(function (m) { s.list.appendChild(matchRow(m, !!state.opponent)); });
+      listWrap.appendChild(s);
+    }
+    draw();
   }
 
   function badgeClass(a) {
@@ -1473,19 +1626,9 @@
   }
 
   function renderSummary(c, d, kind) {
+    if (kind === "day" && d.day) { renderDay(c, d.day, summaryTabs(d.tabs, kind)); return; }
     c.appendChild(header(d.title || "Итоги", d.date || ""));
-    var seg = el("div", "segmented segmented-flat");
-    d.tabs.forEach(function (t) {
-      var b = el("button", "seg" + (t.kind === kind ? " is-active" : "") + (t.available ? "" : " is-dim"), t.title);
-      b.type = "button";
-      b.addEventListener("click", function () {
-        if (t.kind === kind) return;
-        haptic("select");
-        location.replace("#/summary/" + t.kind);
-      });
-      seg.appendChild(b);
-    });
-    c.appendChild(seg);
+    c.appendChild(summaryTabs(d.tabs, kind));
     if (d.empty) { emptyState(c, d.empty); yearExtras(c, d); return; }
     if (d.played.length) {
       var chips = el("div", "summary-played");
@@ -1518,6 +1661,357 @@
       c.appendChild(sec);
     });
     yearExtras(c, d);
+  }
+
+  // ── «Поделиться» картинкой (v2.176.0) ──────────────────────────────────────
+  // Карточка рисуется на canvas, бот присылает её игроку в чат — оттуда её можно
+  // переслать куда угодно (работает на любом клиенте Telegram).
+  var CARD = { W: 1080, pad: 72, bg1: "#0A0F1F", bg2: "#16204A", text: "#F2F4FA", hint: "#8A93AD",
+    accent: "#5B9BFF", win: "#51CF66", loss: "#FF6B6B", panel: "rgba(255,255,255,0.06)" };
+  var CARD_FONT = "Raleway, -apple-system, 'Segoe UI', Roboto, sans-serif";
+
+  function cardCanvas(blocks) {
+    var h = CARD.pad * 2 + blocks.reduce(function (s, b) { return s + b.h; }, 0) + 70;
+    var cv = document.createElement("canvas");
+    cv.width = CARD.W;
+    cv.height = h;
+    var g = cv.getContext("2d");
+    var grad = g.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, CARD.bg1);
+    grad.addColorStop(1, CARD.bg2);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, CARD.W, h);
+    var y = CARD.pad;
+    blocks.forEach(function (b) { b.draw(g, y); y += b.h; });
+    cardText(g, "Клуб настольного тенниса", CARD.pad, h - CARD.pad + 10, 30, 600, CARD.hint);
+    return cv;
+  }
+
+  function cardText(g, text, x, y, size, weight, color, align) {
+    g.font = (weight || 400) + " " + size + "px " + CARD_FONT;
+    g.fillStyle = color || CARD.text;
+    g.textAlign = align || "left";
+    g.textBaseline = "alphabetic";
+    g.fillText(fitText(g, String(text), CARD.W - CARD.pad * 2), x, y);
+  }
+
+  function fitText(g, text, max) {
+    if (g.measureText(text).width <= max) return text;
+    while (text.length > 1 && g.measureText(text + "…").width > max) text = text.slice(0, -1);
+    return text + "…";
+  }
+
+  function cardPanel(g, x, y, w, h) {
+    g.fillStyle = CARD.panel;
+    if (g.roundRect) { g.beginPath(); g.roundRect(x, y, w, h, 28); g.fill(); }
+    else g.fillRect(x, y, w, h);
+  }
+
+  function signedColor(text) { return String(text).charAt(0) === "+" ? CARD.win : CARD.loss; }
+
+  function titleBlock(title, sub) {
+    return { h: 150, draw: function (g, y) {
+      cardText(g, title, CARD.pad, y + 64, 64, 800);
+      if (sub) cardText(g, sub, CARD.pad, y + 116, 36, 500, CARD.hint);
+    } };
+  }
+
+  function statsBlock(stats) {
+    return { h: 230, draw: function (g, y) {
+      var gap = 24, w = (CARD.W - CARD.pad * 2 - gap * (stats.length - 1)) / stats.length;
+      stats.forEach(function (s, i) {
+        var x = CARD.pad + i * (w + gap);
+        cardPanel(g, x, y, w, 196);
+        cardText(g, s[0], x + 32, y + 60, 30, 600, CARD.hint);
+        cardText(g, s[1], x + 32, y + 150, s[1].length > 6 ? 56 : 72, 800, s[2] || CARD.text);
+      });
+    } };
+  }
+
+  function lineBlock(text, color, size) {
+    return { h: (size || 34) + 30, draw: function (g, y) { cardText(g, text, CARD.pad, y + (size || 34), size || 34, 500, color || CARD.hint); } };
+  }
+
+  function personBlock(label, name, sub, value, color) {
+    return { h: 210, draw: function (g, y) {
+      cardPanel(g, CARD.pad, y, CARD.W - CARD.pad * 2, 180);
+      cardText(g, label, CARD.pad + 36, y + 54, 28, 700, CARD.hint);
+      cardText(g, name, CARD.pad + 36, y + 112, 52, 800);
+      if (sub) cardText(g, sub, CARD.pad + 36, y + 156, 30, 500, CARD.hint);
+      if (value) cardText(g, value, CARD.W - CARD.pad - 36, y + 120, 64, 800, color || signedColor(value), "right");
+    } };
+  }
+
+  function rowsBlock(title, rows) {
+    return { h: 70 + rows.length * 74, draw: function (g, y) {
+      cardText(g, title, CARD.pad, y + 40, 30, 700, CARD.hint);
+      rows.forEach(function (r, i) {
+        var ry = y + 112 + i * 74;
+        cardText(g, r[0], CARD.pad, ry, 40, 600);
+        if (r[1]) cardText(g, r[1], CARD.W - CARD.pad, ry, 40, 800, r[2] || CARD.text, "right");
+      });
+    } };
+  }
+
+  function formBlock(title, marks) {
+    return { h: 150, draw: function (g, y) {
+      cardText(g, title, CARD.pad, y + 40, 30, 700, CARD.hint);
+      var size = 64, gap = 14;
+      marks.forEach(function (m, i) {
+        g.fillStyle = m === "w" ? CARD.win : m === "l" ? CARD.loss : CARD.hint;
+        var x = CARD.pad + i * (size + gap);
+        if (g.roundRect) { g.beginPath(); g.roundRect(x, y + 66, size, size, 14); g.fill(); }
+        else g.fillRect(x, y + 66, size, size);
+      });
+    } };
+  }
+
+  function dayCardBlocks(d) {
+    var blocks = [titleBlock("Итоги дня", d.label),
+      statsBlock([["Матчей", String(d.board.matches)], ["Партий", String(d.board.sets)], ["Очков", String(d.board.points)]])];
+    if (d.board.usual) blocks.push(lineBlock(d.board.usual));
+    if (d.hero) blocks.push(personBlock("Игрок дня", d.hero.name, d.hero.matches + " · " + d.hero.record, d.hero.delta));
+    if (d.slump) blocks.push(personBlock("Кто сдал", d.slump.name, d.slump.matches + " · " + d.slump.record, d.slump.delta));
+    if (d.match_of_day) {
+      var m = d.match_of_day;
+      blocks.push(personBlock("Матч дня", m.a.name + " — " + m.b.name, m.sets.join("  ·  "), "", ""));
+    }
+    if (d.players.length) {
+      blocks.push(rowsBlock("Кто как сыграл", d.players.slice(0, 7).map(function (p) {
+        return [p.name + "  " + p.record, p.delta, signedColor(p.delta)];
+      })));
+    }
+    return blocks;
+  }
+
+  function profileCardBlocks(d) {
+    var h = d.head;
+    var blocks = [titleBlock(h.name, h.subtitle),
+      statsBlock([["Рейтинг", h.rating, CARD.accent]].concat(h.week ? [["За неделю", h.week.split(" ")[0], signedColor(h.week)]] : []))];
+    var tiles = (d.tiles || []).slice(0, 6).map(function (t) { return [t.label, t.value]; });
+    if (tiles.length) blocks.push(rowsBlock("Коротко", tiles));
+    if (d.last10 && d.last10.length) blocks.push(formBlock("Последние матчи", d.last10));
+    return blocks;
+  }
+
+  function shareButton(kind, buildBlocks) {
+    var b = el("button", "button button-quiet share-btn");
+    b.type = "button";
+    b.appendChild(icon("share"));
+    b.appendChild(el("span", "", "Поделиться картинкой"));
+    b.addEventListener("click", function () {
+      haptic("impact");
+      b.disabled = true;
+      var image;
+      try { image = cardCanvas(buildBlocks()).toDataURL("image/png"); }
+      catch (e) { b.disabled = false; sheetOpen(null, "Не получилось", "Не удалось нарисовать картинку.", ""); return; }
+      post("share", { kind: kind, image: image }).then(function () {
+        sheetOpen(null, "Картинка в чате с ботом", "Открой чат с ботом и перешли её, куда хочешь.", "");
+      }, function (err) {
+        sheetOpen(null, "Не получилось", err.message, "");
+      }).then(function () { b.disabled = false; });
+    });
+    return b;
+  }
+
+  // ── Итоги дня (v2.176.0) ───────────────────────────────────────────────────
+  // Считаются на лету за любой игровой день; стрелки листают дни с матчами.
+  function compactDate(iso) { return iso ? iso.replace(/-/g, "") : ""; }
+
+  function dayNav(d) {
+    var nav = el("div", "day-nav");
+    function arrow(target, cls, name, label) {
+      var b = el("button", "day-arrow " + cls);
+      b.type = "button";
+      b.setAttribute("aria-label", label);
+      b.appendChild(icon(name));
+      if (!target) b.disabled = true;
+      else b.addEventListener("click", function () { haptic("select"); location.replace("#/summary/day/" + compactDate(target)); });
+      return b;
+    }
+    nav.appendChild(arrow(d.prev, "day-prev", "chevron-left", "Предыдущий игровой день"));
+    nav.appendChild(el("div", "day-label", d.label));
+    nav.appendChild(arrow(d.next, "day-next", "chevron-right", "Следующий игровой день"));
+    return nav;
+  }
+
+  function dayHero(p, title, tone) {
+    var card = clickable(el("div", "card day-hero day-hero-" + tone), "player/" + p.id);
+    card.appendChild(avatar(p, "lg"));
+    var b = el("div", "body");
+    b.appendChild(el("div", "eyebrow", title));
+    b.appendChild(el("div", "day-hero-name", p.name));
+    b.appendChild(el("div", "sub", p.matches + " · " + p.record));
+    if (p.form.length) b.appendChild(formStrip(p.form, "strip-inline"));
+    card.appendChild(b);
+    card.appendChild(num("day-hero-delta tone-" + (tone === "up" ? "win" : "loss"), p.delta));
+    return card;
+  }
+
+  function hourBars(hours) {
+    var W = 320, H = 70, B = 16, gap = 3;
+    var max = Math.max.apply(null, hours.map(function (x) { return x.n; }).concat([1]));
+    var bw = (W - gap * (hours.length - 1)) / hours.length;
+    var s = svg("svg", { "class": "chart hour-bars", viewBox: "0 0 " + W + " " + H, role: "img" });
+    hours.forEach(function (x, i) {
+      var left = i * (bw + gap), h = x.n ? Math.max(3, (H - B) * x.n / max) : 2;
+      var t = svg("title");
+      t.textContent = x.h + ":00 — " + x.n;
+      var r = svg("rect", { x: left, y: H - B - h, width: bw, height: h, rx: 2, "class": x.n ? "hour-bar" : "hour-bar is-empty" });
+      r.appendChild(t);
+      s.appendChild(r);
+      if (hours.length <= 8 || i % 2 === 0) {
+        var label = svg("text", { x: left + bw / 2, y: H - 3, "text-anchor": "middle", "class": "chart-label" });
+        label.textContent = String(x.h);
+        s.appendChild(label);
+      }
+    });
+    return s;
+  }
+
+  function dayMatchCard(m, title, extra) {
+    var li = clickable(el("li", "feed-card feed-match"), "match/" + m.id);
+    var body = el("div", "body");
+    if (title) body.appendChild(el("div", "eyebrow", title));
+    body.appendChild(versusLine(m));
+    var score = el("div", "feed-score");
+    score.appendChild(setChips(m.sets, m.winner));
+    if (m.delta) score.appendChild(el("span", "feed-delta tone-win", m.delta));
+    body.appendChild(score);
+    if (extra) body.appendChild(el("div", "sub feed-report", extra));
+    if (m.reactions && m.reactions.length) body.appendChild(reactionCounts(m.reactions));
+    li.appendChild(body);
+    if (m.time) li.appendChild(el("div", "meta feed-time", m.time));
+    return li;
+  }
+
+  function renderDay(c, d, tabs) {
+    c.appendChild(header("Итоги", ""));
+    c.appendChild(tabs);
+    c.appendChild(dayNav(d));
+    if (d.empty) { emptyState(c, d.empty); return; }
+    var dayCols = twoCols(c, false);
+    c = dayCols.main;
+
+    var board = el("div", "tiles tiles-3 day-board");
+    [["Матчей", d.board.matches], ["Партий", d.board.sets], ["Очков", d.board.points]].forEach(function (t) {
+      var tile = el("div", "tile");
+      tile.appendChild(el("div", "tile-label", t[0]));
+      tile.appendChild(num("tile-value", String(t[1])));
+      board.appendChild(tile);
+    });
+    c.appendChild(board);
+    if (d.board.usual) c.appendChild(el("p", "day-usual", d.board.usual));
+
+    if (d.hero || d.slump) {
+      var heroes = el("div", "day-heroes");
+      if (d.hero) heroes.appendChild(dayHero(d.hero, "Игрок дня", "up"));
+      if (d.slump) heroes.appendChild(dayHero(d.slump, "Кто сдал", "down"));
+      c.appendChild(heroes);
+    }
+
+    if (d.match_of_day || d.discussed) {
+      var top = el("section", "group");
+      top.appendChild(el("h2", "group-title", "Главное"));
+      var tl = el("ul", "feed-list");
+      if (d.match_of_day) tl.appendChild(dayMatchCard(d.match_of_day, "Матч дня", d.match_of_day.report));
+      if (d.discussed && (!d.match_of_day || d.discussed.id !== d.match_of_day.id)) {
+        tl.appendChild(dayMatchCard(d.discussed, "Матч, который обсуждали", ""));
+      }
+      top.appendChild(tl);
+      c.appendChild(top);
+    }
+
+    c = dayCols.side;
+    if (d.movement.length) {
+      var mv = section("Таблица за день");
+      d.movement.forEach(function (r, i) {
+        var li = clickable(el("li", "row stagger" + (r.played ? "" : " is-dim")), "player/" + r.id);
+        li.style.animationDelay = (i * 40) + "ms";
+        li.appendChild(el("div", "rank-num", String(r.place)));
+        li.appendChild(avatar(r, "sm"));
+        var b = el("div", "body");
+        b.appendChild(el("div", "name", r.name));
+        li.appendChild(b);
+        var ch = r.new ? el("span", "move move-new", "новый") :
+          r.change > 0 ? el("span", "move tone-win", "▲" + r.change) :
+          r.change < 0 ? el("span", "move tone-loss", "▼" + (-r.change)) : el("span", "move move-same", "—");
+        li.appendChild(ch);
+        mv.list.appendChild(li);
+      });
+      c.appendChild(mv);
+    }
+
+    if (d.players.length) {
+      var ps = section("Кто как сыграл");
+      d.players.forEach(function (p) {
+        var li = clickable(el("li", "row"), "player/" + p.id);
+        li.appendChild(avatar(p, "sm"));
+        var b = el("div", "body");
+        b.appendChild(el("div", "name", p.name));
+        b.appendChild(el("div", "sub", p.matches + " · " + p.record));
+        li.appendChild(b);
+        li.appendChild(el("span", "value " + (p.delta.charAt(0) === "+" ? "tone-win" : "tone-loss"), p.delta));
+        ps.list.appendChild(li);
+      });
+      c.appendChild(ps);
+    }
+
+    var when = el("section", "group");
+    when.appendChild(el("h2", "group-title", "По часам"));
+    var chart = el("div", "card");
+    chart.appendChild(hourBars(d.hours));
+    when.appendChild(chart);
+    var all = el("ul", "feed-list");
+    d.timeline.forEach(function (m) { all.appendChild(dayMatchCard(m, "", "")); });
+    when.appendChild(all);
+    c.appendChild(when);
+
+    if (d.achievements.length || d.records.length) {
+      var ach = el("section", "group");
+      ach.appendChild(el("h2", "group-title", "Ачивки и рекорды"));
+      var al = el("ul", "feed-list");
+      d.records.forEach(function (r) {
+        var li = r.player ? clickable(el("li", "feed-card"), "player/" + r.player.id) : el("li", "feed-card");
+        li.appendChild(icon("trophy", "ico-lead ico-gold"));
+        var b = el("div", "body");
+        b.appendChild(el("div", "name", r.title));
+        b.appendChild(el("div", "sub", [r.player ? r.player.name : "", r.value].filter(Boolean).join(" · ")));
+        li.appendChild(b);
+        al.appendChild(li);
+      });
+      d.achievements.forEach(function (a) {
+        var li = clickable(el("li", "feed-card"), "player/" + a.player.id);
+        var badge = el("div", "badge badge-sm " + (a.tier ? "badge-" + a.tier : "badge-earned"));
+        badge.appendChild(useIcon(a.icon));
+        li.appendChild(badge);
+        var b = el("div", "body");
+        b.appendChild(el("div", "name", "«" + a.name + "»"));
+        b.appendChild(el("div", "sub", a.player.name + " · " + a.desc));
+        li.appendChild(b);
+        al.appendChild(li);
+      });
+      ach.appendChild(al);
+      c.appendChild(ach);
+    }
+    var share = el("div", "share-row");
+    share.appendChild(shareButton("day", function () { return dayCardBlocks(d); }));
+    c.appendChild(share);
+  }
+
+  function summaryTabs(tabs, kind) {
+    var seg = el("div", "segmented segmented-flat");
+    tabs.forEach(function (t) {
+      var b = el("button", "seg" + (t.kind === kind ? " is-active" : "") + (t.available ? "" : " is-dim"), t.title);
+      b.type = "button";
+      b.addEventListener("click", function () {
+        if (t.kind === kind) return;
+        haptic("select");
+        location.replace("#/summary/" + t.kind);
+      });
+      seg.appendChild(b);
+    });
+    return seg;
   }
 
   // Итоги года (v2.170.0): «Твой год» и неформальные звания — только просмотр,
@@ -1724,8 +2218,13 @@
     [/^matches$/, "home", one("matches"), renderClubMatches, "matches"],
     [/^activity\/club$/, "home", one("activity/club"), renderClubActivity, "activity"],
     [/^throne$/, "home", one("throne"), renderThrone, "throne"],
-    [/^summary\/(day|week|month|quarter|year)$/, "home", function (m) { return api("summary/" + m[1]); },
-      function (c, d, m) { renderSummary(c, d, m[1]); }, "summary"],
+    // Итоги дня (v2.176.0) — на лету за любой день: summary/day/ГГГГММДД
+    [/^summary\/(day|week|month|quarter|year)(?:\/(\d{8}))?$/, "home", function (m) {
+      if (m[1] !== "day") return api("summary/" + m[1]);
+      var date = m[2] ? m[2].slice(0, 4) + "-" + m[2].slice(4, 6) + "-" + m[2].slice(6) : "";
+      return Promise.all([api("summary/day"), api("day" + (date ? "?date=" + date : ""))])
+        .then(function (r) { return { tabs: r[0].tabs, day: r[1] }; });
+    }, function (c, d, m) { renderSummary(c, d, m[1]); }, "summary"],
     [/^match\/(\d+)$/, null, function (m) { return api("match/" + m[1]); }, function (c, d) { renderMatch(c, d); }, "match"],
     [/^when(?:\/(me))?$/, "home", function (m) { return api("when?who=" + (m[1] || "club")); },
       function (c, d, m) { renderWhen(c, d, m[1] || "club"); }, "when"],
@@ -1788,6 +2287,7 @@
       }
       shell = null;
       app.textContent = "";
+      app.classList.remove("is-wide");
       app.appendChild(skeleton("profile"));
       api("player/" + playerId).then(function (d) {
         if (token !== renderToken) return;
@@ -1815,6 +2315,7 @@
     if (tg && tg.BackButton) { if (isRoot) tg.BackButton.hide(); else tg.BackButton.show(); }
 
     app.textContent = "";
+    app.classList.remove("is-wide");
     app.appendChild(skeleton("list"));
     entry[2](match).then(function (data) {
       if (token !== renderToken) return;

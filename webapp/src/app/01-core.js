@@ -1,0 +1,304 @@
+  // ── Тема, вибрация ─────────────────────────────────────────────────────────
+  // Параметры запуска из адреса: «#tgWebAppData=…&tgWebAppVersion=…» -> объект.
+  // Разбор как у telegram-web-app.js; адрес-маршрут «#/rating» — пустой объект.
+  function parseLaunchParams(hash) {
+    var out = {};
+    hash = String(hash || "").replace(/^#/, "");
+    if (!hash || hash.charAt(0) === "/" || hash.indexOf("=") < 0) return out;
+    var q = hash.indexOf("?");
+    if (q >= 0) hash = hash.slice(q + 1);
+    hash.split("&").forEach(function (pair) {
+      var i = pair.indexOf("=");
+      if (i <= 0) return;
+      out[decodeParam(pair.slice(0, i))] = decodeParam(pair.slice(i + 1));
+    });
+    return out;
+  }
+
+  function decodeParam(s) {
+    try { return decodeURIComponent(s.replace(/\+/g, "%20")); } catch (e) { return s; }
+  }
+
+  // Тёмный ли цвет фона «#RRGGBB» — та же формула, что у Telegram
+  function isColorDark(hex) {
+    var m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ""));
+    if (!m) return false;
+    var r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
+    return Math.sqrt(0.299 * r * r + 0.587 * g * g + 0.114 * b * b) < 120;
+  }
+
+  function launchDark() {
+    try { return isColorDark(JSON.parse(launch.tgWebAppThemeParams || "{}").bg_color); }
+    catch (e) { return false; }
+  }
+
+  function initDataNow() { return (tg && tg.initData) || launch.tgWebAppData || ""; }
+
+  function clientInfo() {
+    return {
+      platform: (tg && tg.platform) || launch.tgWebAppPlatform || "",
+      version: (tg && tg.version) || launch.tgWebAppVersion || ""
+    };
+  }
+
+  // Запрос с ограничением по времени: без него зависший ответ оставлял
+  // «Загрузку…» навсегда (v2.175.0)
+  var FETCH_TIMEOUT_MS = 15000;
+  function timedFetch(url, opts) {
+    var ctrl = window.AbortController ? new AbortController() : null;
+    if (ctrl) opts.signal = ctrl.signal;
+    return new Promise(function (resolve, reject) {
+      var timer = setTimeout(function () {
+        if (ctrl) ctrl.abort();
+        reject(new Error("Сервер не ответил. Попробуйте ещё раз."));
+      }, FETCH_TIMEOUT_MS);
+      fetch(url, opts).then(function (r) { clearTimeout(timer); resolve(r); },
+        function (e) { clearTimeout(timer); reject(e); });
+    });
+  }
+
+  function applyTheme() {
+    var dark = tg ? tg.colorScheme === "dark" : launchDark();
+    root.setAttribute("data-theme", dark ? "dark" : "light");
+    if (!tg) return;
+    try {
+      var bg = dark ? DARK_BG : (tg.themeParams.secondary_bg_color || "#EFEFF4");
+      tg.setHeaderColor(bg);
+      tg.setBackgroundColor(bg);
+      if (tg.setBottomBarColor) tg.setBottomBarColor(bg);
+    } catch (e) { /* старые клиенты Telegram */ }
+  }
+
+  function haptic(kind) {
+    try {
+      if (!tg || !tg.HapticFeedback) return;
+      if (kind === "select") tg.HapticFeedback.selectionChanged();
+      else tg.HapticFeedback.impactOccurred("light");
+    } catch (e) { /* нет вибрации — не страшно */ }
+  }
+
+  // ── Разметка ───────────────────────────────────────────────────────────────
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined && text !== null) node.textContent = text;
+    return node;
+  }
+
+  function svg(tag, attrs) {
+    var node = document.createElementNS(SVG, tag);
+    Object.keys(attrs || {}).forEach(function (k) { node.setAttribute(k, attrs[k]); });
+    return node;
+  }
+
+  // Все значки — из набора static/icons.svg (Tabler Icons, MIT): и ачивки, и
+  // интерфейс (v2.169.0, раньше интерфейс рисовался своими контурами).
+  // Короткие имена интерфейса -> имена в наборе.
+  var ICONS = {
+    home: "home", rating: "chart-bar", user: "user", trophy: "trophy", crown: "crown",
+    calendar: "calendar", list: "list", flag: "flag", flame: "flame", target: "target",
+    bars: "chart-histogram", users: "users", lock: "lock", swords: "swords", chevron: "chevron-right"
+  };
+
+  function icon(name, cls) { return useIcon(ICONS[name] || name, cls); }
+
+  function useIcon(name, cls) {
+    var s = svg("svg", { "class": "ico" + (cls ? " " + cls : ""), viewBox: "0 0 24 24", "aria-hidden": "true" });
+    var u = svg("use", { href: "static/icons.svg#ti-" + name });
+    s.appendChild(u);
+    return s;
+  }
+
+  function go(route) { haptic("impact"); location.hash = "#/" + route; }
+
+  function clickable(node, route) {
+    node.classList.add("tap");
+    node.setAttribute("role", "button");
+    node.tabIndex = 0;
+    node.addEventListener("click", function () { go(route); });
+    node.addEventListener("keydown", function (e) { if (e.key === "Enter") go(route); });
+    return node;
+  }
+
+  function header(title, sub) {
+    var h = el("header", "screen-head");
+    h.appendChild(el("h1", "screen-title", title));
+    if (sub) h.appendChild(el("p", "screen-sub", sub));
+    return h;
+  }
+
+  // Две колонки на широком окне (v2.176.0, Telegram на компьютере): main —
+  // слева, side — справа; на телефоне они идут друг под другом в том же порядке
+  function twoCols(c, stickyMain) {
+    var cols = el("div", "cols");
+    var main = el("div", "col col-main" + (stickyMain ? " col-sticky" : ""));
+    var side = el("div", "col col-side");
+    cols.appendChild(main);
+    cols.appendChild(side);
+    c.appendChild(cols);
+    if (c === app) app.classList.add("is-wide");
+    return { main: main, side: side };
+  }
+
+  function section(title) {
+    var wrap = el("section", "group");
+    if (title) wrap.appendChild(el("h2", "group-title", title));
+    var list = el("ul", "list");
+    wrap.appendChild(list);
+    wrap.list = list;
+    return wrap;
+  }
+
+  function progressBar(fraction) {
+    var bar = el("div", "progress");
+    var fill = el("i");
+    fill.style.width = Math.round(Math.max(0, Math.min(1, fraction)) * 100) + "%";
+    bar.appendChild(fill);
+    return bar;
+  }
+
+  function formStrip(marks, cls) {
+    var wrap = el("div", "strip " + (cls || ""));
+    marks.forEach(function (m) { wrap.appendChild(el("i", "cell cell-" + m)); });
+    return wrap;
+  }
+
+  // Элемент из строк бота: короткая подпись — в две колонки, длинная — стопкой
+  function itemRow(item) {
+    var li = el("li", "row");
+    if (item.form) {
+      li.classList.add("row-pair");
+      li.appendChild(el("div", "label", item.label));
+      li.appendChild(formStrip(item.form, "strip-inline"));
+      return li;
+    }
+    var shortPair = item.label && item.value !== undefined && item.label.length <= 24 && item.value.length <= 28;
+    if (shortPair && item.progress === undefined) {
+      li.classList.add("row-pair");
+      li.appendChild(el("div", "label", item.label));
+      li.appendChild(el("div", "value", item.value));
+      if (item.note) li.appendChild(el("div", "sub sub-wide", item.note));
+      return li;
+    }
+    var body = el("div", "body");
+    if (item.label) {
+      var top = el("div", "pair-top");
+      top.appendChild(el("span", "name", item.label));
+      if (item.progress !== undefined) top.appendChild(el("span", "value", item.value));
+      body.appendChild(top);
+      if (item.progress === undefined) body.appendChild(el("div", "sub", item.value));
+    } else {
+      body.appendChild(el("div", "text", item.text));
+    }
+    if (item.note) body.appendChild(el("div", "sub", item.note));
+    if (item.progress !== undefined) body.appendChild(progressBar(item.progress));
+    li.appendChild(body);
+    return li;
+  }
+
+  // Пустой экран — со значком; ошибка — со значком и кнопкой «Повторить» (v2.169.0)
+  function emptyState(container, text, isError) {
+    var box = el("div", "state" + (isError ? " state-error" : ""));
+    box.appendChild(useIcon(isError ? "info-circle" : "ball-tennis", "state-ico"));
+    box.appendChild(el("p", "state-text", text));
+    if (isError) {
+      var again = el("button", "more", "Повторить");
+      again.type = "button";
+      again.addEventListener("click", function () { haptic("impact"); apiCache = {}; shell = null; render(); });
+      box.appendChild(again);
+    }
+    container.appendChild(box);
+  }
+
+  // ── Память устройства (v2.169.0) ───────────────────────────────────────────
+  // CloudStorage Telegram (общая для всех устройств игрока), без него —
+  // localStorage. undefined — памяти нет: подсказка и подсветка тогда просто
+  // не показываются; null — ключа ещё нет.
+  function cloud() {
+    try { return tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast("6.9") ? tg.CloudStorage : null; }
+    catch (e) { return null; }
+  }
+
+  function storageGet(key, cb) {
+    var cs = cloud();
+    if (cs) {
+      try {
+        cs.getItem(key, function (err, value) { cb(err ? undefined : (value || null)); });
+        return;
+      } catch (e) { /* ниже — localStorage */ }
+    }
+    var value;
+    try { value = window.localStorage.getItem(key); } catch (e) { value = undefined; }
+    cb(value);
+  }
+
+  function storageSet(key, value) {
+    var cs = cloud();
+    try {
+      if (cs) cs.setItem(key, value);
+      else window.localStorage.setItem(key, value);
+    } catch (e) { /* без памяти — без подсказок */ }
+  }
+
+  // ── Фото игроков: буква сразу, фото подменяет её, когда загрузится ─────────
+  var photoCache = {};
+
+  function avatar(person, size) {
+    var a = el("div", "avatar avatar-" + (size || "md"), person.initial);
+    a.style.setProperty("--hue", String((person.id * 47) % 360));
+    loadPhoto(person.id, a);
+    return a;
+  }
+
+  function loadPhoto(id, node) {
+    function apply(url) {
+      if (!url) return;
+      node.style.backgroundImage = "url(" + url + ")";
+      node.classList.add("has-photo");
+      node.textContent = "";
+    }
+    var cached = photoCache[id];
+    if (cached !== undefined) {
+      if (cached && typeof cached.then === "function") return cached.then(function (u) { apply(u); return u; });
+      apply(cached);
+      return Promise.resolve(cached);
+    }
+    var initData = initDataNow();
+    if (!initData) return Promise.resolve(null);
+    var pending = fetch("api/photo/" + id, { headers: { "Authorization": "tma " + initData } })
+      .then(function (r) { return r.ok ? r.blob() : null; })
+      .then(function (b) { var url = b ? URL.createObjectURL(b) : null; photoCache[id] = url; return url; },
+            function () { photoCache[id] = null; return null; });
+    photoCache[id] = pending;
+    return pending.then(function (u) { apply(u); return u; });
+  }
+
+  // ── Анимации ───────────────────────────────────────────────────────────────
+  var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // «1080.1», «60%», «+12.4» -> [до числа, знак минуса, число, после] или null
+  function splitNumber(text) {
+    var m = /^([^\d−-]*)([−-]?)(\d+(?:\.\d+)?)(.*)$/.exec(text);
+    return m ? [m[1], m[2], m[3], m[4]] : null;
+  }
+
+  function countUp(node, text) {
+    // досчитывается число, остальное как есть
+    var parts = splitNumber(text);
+    if (!parts || reduceMotion || app.classList.contains("quiet")) { node.textContent = text; return; }
+    var m = [text].concat(parts);
+    var target = parseFloat(m[3]), decimals = (m[3].split(".")[1] || "").length;
+    var start = null, duration = 650;
+    function frame(ts) {
+      if (start === null) start = ts;
+      var p = Math.min(1, (ts - start) / duration);
+      var eased = 1 - Math.pow(1 - p, 3);
+      node.textContent = m[1] + m[2] + (target * eased).toFixed(decimals) + m[4];
+      if (p < 1) requestAnimationFrame(frame);
+    }
+    node.textContent = m[1] + m[2] + (0).toFixed(decimals) + m[4];
+    requestAnimationFrame(frame);
+  }
+
+  function num(cls, text) { var n = el("div", cls); countUp(n, text); return n; }
+

@@ -192,6 +192,13 @@ class _SilentBot:
         from types import SimpleNamespace
         return SimpleNamespace(username="preview_bot")
 
+    async def send_photo(self, chat_id, photo, caption=None, **kwargs):
+        """«Поделиться» (v2.176.0): картинка сохраняется рядом с временной базой."""
+        path = os.path.join(tempfile.gettempdir(), f"preview_share_{photo.filename}")
+        with open(path, "wb") as f:
+            f.write(photo.data)
+        print("share:", path, caption, flush=True)
+
 
 async def seed_digests():
     """Настоящие сводки дня, недели и месяца — для экрана «Итоги» (снимки)."""

@@ -553,6 +553,7 @@ def _match_row(m: Match, player_id: int) -> dict:
     return {
         "id": m.id,
         "date": _msk_date(m.completed_at),
+        "iso": _msk_date(m.completed_at, "%Y-%m-%d"),  # для фильтра по периоду (v2.176.0)
         "opponent": opponent.display_name,
         "opponent_id": opponent.id,
         "result": "d" if is_draw else ("w" if won else "l"),
@@ -574,8 +575,33 @@ async def history_payload(session: AsyncSession, player: Player) -> dict:
         "title": "История матчей",
         "subtitle": f"{player.display_name} · {_ru_plural(len(matches), 'матч', 'матча', 'матчей')}",
         "matches": [_match_row(m, player.id) for m in matches],
+        "versus": versus_table(matches, player.id),
         "empty": "Пока нет сыгранных матчей." if not matches else "",
     }
+
+
+def versus_table(matches: list[Match], player_id: int) -> list[dict]:
+    """«Против каждого» (v2.176.0): по каждому сопернику победы–поражения–ничьи,
+    доля побед и дата последней встречи. matches — свежие сверху. Порядок — по
+    числу встреч, при равенстве по доле побед."""
+    rows: dict[int, dict] = {}
+    for m in matches:
+        opponent = m.challenged if m.challenger_id == player_id else m.challenger
+        row = rows.get(opponent.id)
+        if row is None:
+            row = rows[opponent.id] = {**_person(opponent), "w": 0, "l": 0, "d": 0,
+                                       "last": _msk_date(m.completed_at)}
+        key = "d" if m.winner_id is None else ("w" if m.winner_id == player_id else "l")
+        row[key] += 1
+    out = []
+    for row in rows.values():
+        total = row["w"] + row["l"] + row["d"]
+        rate = round(row["w"] / total * 100)
+        score = f"{row['w']}–{row['l']}" + (f"–{row['d']}" if row["d"] else "")
+        out.append({**row, "total": total, "rate": f"{rate}%", "score": score,
+                    "tone": "win" if row["w"] > row["l"] else ("loss" if row["l"] > row["w"] else "")})
+    out.sort(key=lambda r: (-r["total"], -r["w"] / r["total"]))
+    return out
 
 
 def _person(p: Player) -> dict:

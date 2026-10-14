@@ -16,7 +16,8 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import Match, MatchReaction, MatchStatus, Player
+from bot.db.models import AchievementEarned, ClubRecordPing, FeedReaction, Match, MatchReaction, MatchStatus, Player
+from bot.services.achievements import ACHIEVEMENTS_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -153,3 +154,63 @@ async def toggle_reaction(session: AsyncSession, match_id: int, viewer: Player, 
         await session.rollback()
         logger.warning("Реакция %s на матч %s не записана: база занята", kind, match_id)
     return (await reactions_for(session, [match_id], viewer.id, with_names=True))[match_id]
+
+
+# ── Реакции на ачивки и рекорды в ленте (v2.176.0) ────────────────────────────
+
+def _items(counts: dict[str, int], mine: str | None) -> list[dict]:
+    return [{"kind": k, "icon": icon, "title": title, "count": counts.get(k, 0), "mine": k == mine}
+            for k, (icon, title) in REACTIONS.items()]
+
+
+async def feed_reactions_for(session: AsyncSession, targets: list[str], viewer_id: int) -> dict[str, list[dict]]:
+    """{target: [{kind, icon, title, count, mine}]} — для событий ленты."""
+    if not targets:
+        return {}
+    counts: dict[str, dict[str, int]] = {}
+    mine: dict[str, str] = {}
+    for target, kind, player_id in (await session.execute(
+        select(FeedReaction.target, FeedReaction.kind, FeedReaction.player_id)
+        .where(FeedReaction.target.in_(targets))
+    )).all():
+        counts.setdefault(target, {})[kind] = counts.get(target, {}).get(kind, 0) + 1
+        if player_id == viewer_id:
+            mine[target] = kind
+    return {t: _items(counts.get(t, {}), mine.get(t)) for t in targets}
+
+
+async def _target_exists(session: AsyncSession, target: str) -> bool:
+    prefix, _, raw_id = target.partition(":")
+    if not raw_id.isdigit():
+        return False
+    if prefix == "ach":
+        row = await session.get(AchievementEarned, int(raw_id))
+        ach = ACHIEVEMENTS_MAP.get(row.achievement_id) if row else None
+        return ach is not None and not ach.hidden  # скрытые в ленте не показываются
+    if prefix == "rec":
+        return await session.get(ClubRecordPing, int(raw_id)) is not None
+    return False
+
+
+async def toggle_feed_reaction(session: AsyncSession, target: str, viewer: Player, kind: str) -> list[dict] | None:
+    """Как toggle_reaction, но для ачивки или рекорда в ленте. None — нет такого
+    события или вида реакции."""
+    if kind not in REACTIONS or len(target) > 40 or not await _target_exists(session, target):
+        return None
+    try:
+        current = (await session.execute(
+            select(FeedReaction.kind).where(FeedReaction.target == target, FeedReaction.player_id == viewer.id)
+        )).scalars().all()
+        await session.execute(
+            delete(FeedReaction).where(FeedReaction.target == target, FeedReaction.player_id == viewer.id)
+        )
+        if kind not in current:
+            session.add(FeedReaction(target=target, player_id=viewer.id, kind=kind))
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        logger.info("Реакция %s на %s уже стоит (двойной тап)", kind, target)
+    except OperationalError:
+        await session.rollback()
+        logger.warning("Реакция %s на %s не записана: база занята", kind, target)
+    return (await feed_reactions_for(session, [target], viewer.id))[target]

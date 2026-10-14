@@ -28,6 +28,10 @@ jobs:
       - name: Check Mini App script syntax
         run: node --check webapp/static/app.js
 
+      # app.js собран из частей webapp/src/app (v2.176.0) — не забыли пересобрать
+      - name: Mini App script is built from parts
+        run: python scripts/build_app_js.py --check
+
       # Чистые функции страницы (склонения, имена экранов, разбор чисел) — v2.174.0
       - name: Mini App logic tests (node --test)
         run: node --test tests/js/*.test.js
