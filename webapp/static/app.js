@@ -96,17 +96,6 @@
     return wrap;
   }
 
-  function navRow(title, value, route, iconName) {
-    var li = clickable(el("li", "row row-nav"), route);
-    if (iconName) li.appendChild(icon(iconName, "ico-lead"));
-    var body = el("div", "body");
-    body.appendChild(el("div", "name", title));
-    li.appendChild(body);
-    if (value) li.appendChild(el("div", "meta", value));
-    li.appendChild(icon("chevron", "chev"));
-    return li;
-  }
-
   function progressBar(fraction) {
     var bar = el("div", "progress");
     var fill = el("i");
@@ -460,45 +449,91 @@
   }
 
   // Лента клуба (v2.168.0): матчи (у ярких — репортаж), ачивки, рекорды, трон
-  function feedBlock(items) {
-    var wrap = section("Лента клуба");
-    var lastDay = null;
-    items.forEach(function (it, i) {
-      if (it.day !== lastDay) {
-        lastDay = it.day;
-        wrap.list.appendChild(el("li", "feed-day", it.day));
-      }
-      var li;
-      var body = el("div", "body");
-      if (it.type === "match") {
-        li = clickable(el("li", "row feed-row"), "match/" + it.id);
-        body.appendChild(versusLine(it));
-        body.appendChild(setChips(it.sets, it.winner));
-        if (it.report) body.appendChild(el("div", "sub feed-report", it.report));
-        if (it.reactions && it.reactions.length) body.appendChild(reactionCounts(it.reactions));
-      } else if (it.type === "achievement") {
-        li = clickable(el("li", "row feed-row"), "player/" + it.player.id);
-        var badge = el("div", "badge badge-sm " + (it.tier ? "badge-" + it.tier : "badge-earned"));
-        badge.appendChild(useIcon(it.icon));
-        li.appendChild(badge);
-        body.appendChild(el("div", "name", "«" + it.name + "»"));
-        body.appendChild(el("div", "sub", it.player.name + " · " + it.desc));
-      } else if (it.type === "record") {
-        li = it.player ? clickable(el("li", "row feed-row"), "player/" + it.player.id) : el("li", "row feed-row");
-        li.appendChild(icon("trophy", "ico-lead ico-gold"));
-        body.appendChild(el("div", "name", it.title));
-        body.appendChild(el("div", "sub", [it.player ? it.player.name : "", it.value].filter(Boolean).join(" · ")));
-      } else {
-        li = clickable(el("li", "row feed-row"), "player/" + it.player.id);
-        li.appendChild(icon("crown", "ico-lead ico-gold"));
-        body.appendChild(el("div", "name", it.player.name + " — на троне"));
-        body.appendChild(el("div", "sub", "Новый чемпион клуба"));
-      }
-      li.style.animationDelay = Math.min(i, 12) * 40 + "ms";
-      li.appendChild(body);
-      li.appendChild(el("div", "meta feed-time", it.time));
-      wrap.list.appendChild(li);
+  // Лента клуба (v2.171.0): каждое событие — отдельная карточка, заголовок дня
+  // прилипает к верху при прокрутке, «Показать ещё» догружает порции по 15.
+  function feedItem(it, i) {
+    var li;
+    var body = el("div", "body");
+    if (it.type === "match") {
+      li = clickable(el("li", "feed-card feed-match"), "match/" + it.id);
+      body.appendChild(versusLine(it));
+      var score = el("div", "feed-score");
+      score.appendChild(setChips(it.sets, it.winner));
+      if (it.delta) score.appendChild(el("span", "feed-delta tone-win", it.delta));
+      body.appendChild(score);
+      if (it.report) body.appendChild(el("div", "sub feed-report", it.report));
+      if (it.reactions && it.reactions.length) body.appendChild(reactionCounts(it.reactions));
+    } else if (it.type === "achievement") {
+      li = clickable(el("li", "feed-card"), "player/" + it.player.id);
+      var badge = el("div", "badge badge-sm " + (it.tier ? "badge-" + it.tier : "badge-earned"));
+      badge.appendChild(useIcon(it.icon));
+      li.appendChild(badge);
+      body.appendChild(el("div", "name", "«" + it.name + "»"));
+      body.appendChild(el("div", "sub", it.player.name + " · " + it.desc));
+    } else if (it.type === "record") {
+      li = it.player ? clickable(el("li", "feed-card"), "player/" + it.player.id) : el("li", "feed-card");
+      li.appendChild(icon("trophy", "ico-lead ico-gold"));
+      body.appendChild(el("div", "name", it.title));
+      body.appendChild(el("div", "sub", [it.player ? it.player.name : "", it.value].filter(Boolean).join(" · ")));
+    } else {
+      li = clickable(el("li", "feed-card"), "player/" + it.player.id);
+      li.appendChild(icon("crown", "ico-lead ico-gold"));
+      body.appendChild(el("div", "name", it.player.name + " — на троне"));
+      body.appendChild(el("div", "sub", "Новый чемпион клуба"));
+    }
+    li.style.animationDelay = Math.min(i, 12) * 40 + "ms";
+    li.appendChild(body);
+    li.appendChild(el("div", "meta feed-time", it.time));
+    return li;
+  }
+
+  function feedBlock(items, more) {
+    var wrap = el("section", "group");
+    wrap.appendChild(el("h2", "group-title", "Лента клуба"));
+    var list = el("ul", "feed-list");
+    wrap.appendChild(list);
+    var state = { lastDay: null, offset: 0 };
+    function add(batch) {
+      batch.forEach(function (it, i) {
+        if (it.day !== state.lastDay) {
+          state.lastDay = it.day;
+          list.appendChild(el("li", "feed-day", it.day));
+        }
+        list.appendChild(feedItem(it, i));
+      });
+      state.offset += batch.length;
+    }
+    add(items);
+    if (more) {
+      var btn = el("button", "more", "Показать ещё");
+      btn.type = "button";
+      btn.addEventListener("click", function () {
+        haptic("select");
+        btn.disabled = true;
+        api("feed?offset=" + state.offset).then(function (page) {
+          add(page.items);
+          if (page.more) btn.disabled = false;
+          else btn.remove();
+        }, function () { btn.disabled = false; });
+      });
+      wrap.appendChild(btn);
+    }
+    return wrap;
+  }
+
+  // Меню клуба плиткой (v2.171.0): выше ленты, чтобы до него не листать
+  function clubTiles(links) {
+    var wrap = el("section", "group");
+    wrap.appendChild(el("h2", "group-title", "Клуб"));
+    var grid = el("div", "club-tiles");
+    links.forEach(function (l) {
+      var t = clickable(el("div", "club-tile"), l.route);
+      t.appendChild(icon(l.icon || "chevron", "ico-lead"));
+      t.appendChild(el("div", "club-tile-title", l.title));
+      if (l.value) t.appendChild(el("div", "club-tile-value", l.value));
+      grid.appendChild(t);
     });
+    wrap.appendChild(grid);
     return wrap;
   }
 
@@ -584,6 +619,8 @@
     me.appendChild(num("me-rating", d.me.rating));
     c.appendChild(me);
 
+    if (d.links.length) c.appendChild(clubTiles(d.links));
+
     if (d.featured) {
       var f = d.featured.id ? clickable(el("div", "card feature"), "match/" + d.featured.id) : el("div", "card feature");
       var top = el("div", "pair-top");
@@ -596,13 +633,7 @@
       c.appendChild(f);
     }
 
-    if (d.feed && d.feed.length) c.appendChild(feedBlock(d.feed));
-
-    if (d.links.length) {
-      var links = section("Клуб");
-      d.links.forEach(function (l) { links.list.appendChild(navRow(l.title, l.value, l.route, l.icon)); });
-      c.appendChild(links);
-    }
+    if (d.feed && d.feed.length) c.appendChild(feedBlock(d.feed, d.feed_more));
   }
 
   // ── Рейтинг ────────────────────────────────────────────────────────────────
@@ -1710,6 +1741,9 @@
   if (tg) {
     tg.ready();
     tg.expand();
+    // Свайп вниз при прокрутке не закрывает приложение (Telegram 7.7+, v2.171.0)
+    try { if (tg.isVersionAtLeast && tg.isVersionAtLeast("7.7") && tg.disableVerticalSwipes) tg.disableVerticalSwipes(); }
+    catch (e) { /* старый клиент — как раньше */ }
     tg.onEvent("themeChanged", function () { applyTheme(); shell = null; render(true); });
     if (tg.BackButton) tg.BackButton.onClick(function () { history.back(); });
     // Свернули/развернули приложение (Telegram 8.0+) — то же, что смена видимости

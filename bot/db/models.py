@@ -180,7 +180,7 @@ class MatchReaction(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     match_id: Mapped[int] = mapped_column(ForeignKey("matches.id"), index=True)
     player_id: Mapped[int] = mapped_column(ForeignKey("players.id"))
-    kind: Mapped[str]  # fire | like | lol — набор в bot/webapp/reactions.py
+    kind: Mapped[str]  # fire | like | lol | poo — набор в bot/webapp/reactions.py
     created_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
     )

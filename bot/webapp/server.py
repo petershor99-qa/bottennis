@@ -25,6 +25,7 @@
   GET /api/match/{id}                       — экран матча (v2.168.0), с реакциями (v2.169.0)
   GET /api/player/{id}/chart                — график рейтинга по датам (v2.168.0)
   POST /api/match/{id}/react                — поставить/снять реакцию (v2.169.0)
+  GET /api/feed?offset=N                    — лента клуба порциями (v2.171.0)
   GET /api/when?who=club|me                 — «Когда играют»: день недели × час (v2.170.0)
   GET /api/usage                            — «Использование», только администратор (v2.170.0)
   POST /api/track                           — счётчик показанных экранов (v2.166.0)
@@ -122,13 +123,9 @@ async def home(request, session, viewer):
         return payload
     # v2.168.0: лента клуба вместо отдельных «свежих рекордов» и «ещё сегодня»,
     # «Ты сегодня» в карточке игрока, вход в «Итоги»
-    payload["feed"] = await api_club.feed_events(session)
-    # v2.169.0: реакции на матчи в ленте — только счётчики
-    feed_matches = [e["id"] for e in payload["feed"] if e.get("type") == "match"]
-    by_match = await reactions.reactions_for(session, feed_matches, viewer.id)
-    for e in payload["feed"]:
-        if e.get("type") == "match":
-            e["reactions"] = reactions.feed_counts(by_match.get(e["id"], []))
+    # v2.171.0: первая порция ленты; остальное — /api/feed?offset=N
+    page = await _feed_page(session, viewer, 0)
+    payload["feed"], payload["feed_more"] = page["items"], page["more"]
     payload["me"]["today"] = await api_club.today_line(session, viewer)
     payload["links"].insert(0, {"route": "summary/day", "title": "Итоги", "value": "", "icon": "calendar"})
     # v2.170.0: «Когда играют» — всем, «Использование» — только администратору
@@ -136,6 +133,28 @@ async def home(request, session, viewer):
     if is_admin(viewer.telegram_id):
         payload["links"].append({"route": "usage", "title": "Использование", "value": "", "icon": "chart-pie"})
     return payload
+
+
+async def _feed_page(session, viewer, offset: int) -> dict:
+    """Порция ленты клуба с реакциями (v2.169.0 — только счётчики)."""
+    events = await api_club.feed_events(session)
+    items = events[offset:offset + api_club.FEED_PAGE]
+    feed_matches = [e["id"] for e in items if e.get("type") == "match"]
+    by_match = await reactions.reactions_for(session, feed_matches, viewer.id)
+    for e in items:
+        if e.get("type") == "match":
+            e["reactions"] = reactions.feed_counts(by_match.get(e["id"], []))
+    return {"items": items, "more": len(events) > offset + len(items)}
+
+
+async def feed(request, session, viewer):
+    try:
+        offset = int(request.query.get("offset", "0"))
+    except ValueError:
+        return None
+    if not 0 <= offset <= api_club.FEED_LIMIT:
+        return None
+    return await _feed_page(session, viewer, offset)
 
 
 async def summary(request, session, viewer):
@@ -346,6 +365,7 @@ def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
         ("/api/matches", matches),
         ("/api/throne", throne),
         ("/api/when", when),
+        ("/api/feed", feed),
         ("/api/usage", usage),
     ]
     for path, handler in routes:
