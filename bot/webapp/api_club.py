@@ -34,8 +34,11 @@ from bot.webapp.achievement_icons import ACHIEVEMENT_ICONS
 from bot.webapp.api import _RECORD_TITLES, _club_match, _msk_date, _person, _signed, achievement_tier
 from bot.webapp.text import groups, plain
 
-FEED_DAYS = 7
-FEED_LIMIT = 40
+# Лента за 30 дней (v2.171.0, было 7): главная показывает первую порцию,
+# остальное — по «Показать ещё» через /api/feed?offset=N
+FEED_DAYS = 30
+FEED_LIMIT = 300
+FEED_PAGE = 15
 SUMMARY_KINDS = [("day", "День"), ("week", "Неделя"), ("month", "Месяц"), ("quarter", "Квартал"), ("year", "Год")]
 
 
