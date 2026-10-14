@@ -9,7 +9,7 @@
   GET /static/...                           — стили, скрипт, шрифт
   GET /api/home                             — главная «Клуб сегодня»
   GET /api/leaderboard                      — рейтинг клуба
-  GET /api/photo/{id}                       — фото игрока из Telegram (или 404)
+  GET /api/photo/{id}                       — своё фото игрока или аватар из Telegram (или 404)
   GET /api/player/{id}                      — профиль (свой или чужой)
   GET /api/player/{id}/stats/{key}          — раздел статистики (как в боте)
   GET /api/player/{id}/achievements[/{n}]   — достижения: категории / одна категория
@@ -48,7 +48,7 @@ from bot.webapp import api, api_club, api_insights, reactions
 from bot.webapp.assets import ASSET_TYPES, Assets, accepts_gzip
 from bot.webapp.auth import WebAppAuthError, init_data_from_header, telegram_id_from_init_data
 from bot.webapp.config import is_admin, is_webapp_allowed, webapp_listen
-from bot.webapp.photos import PhotoCache
+from bot.webapp.photos import PhotoCache, photo_etag
 from bot.webapp.usage import SCREEN_RE, UsageWriter, log_boot_time
 
 logger = logging.getLogger(__name__)
@@ -230,12 +230,16 @@ async def photo(request, session, viewer):
     bot = request.app.get(BOT_KEY)
     if target is None or bot is None:
         return None
-    data = await request.app[PHOTOS_KEY].get(bot, target.telegram_id)
+    data = await request.app[PHOTOS_KEY].get(bot, target.telegram_id, target.photo_file_id)
     if data is None:
         return None
-    return web.Response(body=data, content_type="image/jpeg", headers={
-        "X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=3600",
-    })
+    # v2.174.0: фото можно сменить через бота — браузер каждый раз сверяет версию
+    # (ETag), ответ 304 без тела; раньше он час держал старое фото
+    etag = photo_etag(data)
+    headers = {"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-cache", "ETag": etag}
+    if request.headers.get("If-None-Match") == etag:
+        return web.Response(status=304, headers=headers)
+    return web.Response(body=data, content_type="image/jpeg", headers=headers)
 
 
 async def track(request, session, viewer):
@@ -261,7 +265,20 @@ async def leaderboard(request, session, viewer):
 
 async def player(request, session, viewer):
     target = await _target(request, session)
-    return await api.player_payload(session, target, viewer) if target else None
+    if target is None:
+        return None
+    payload = await api.player_payload(session, target, viewer)
+    # v2.174.0: в своём профиле — ссылка в бота поставить или сменить фото
+    bot = request.app.get(BOT_KEY)
+    if target.id == viewer.id and bot is not None:
+        try:
+            username = (await bot.me()).username
+        except Exception:
+            logger.warning("Mini App: не удалось узнать имя бота для ссылки на фото", exc_info=True)
+            username = None
+        if username:
+            payload["head"]["photo_link"] = f"https://t.me/{username}?start=photo"
+    return payload
 
 
 async def player_stats(request, session, viewer):

@@ -7,6 +7,12 @@
 (function () {
   "use strict";
 
+  // В Node (тесты tests/js, v2.174.0) — только чистые функции, без DOM и Telegram
+  if (typeof window === "undefined") {
+    module.exports = { matchesWord: matchesWord, screenName: screenName, splitNumber: splitNumber, badgeClass: badgeClass };
+    return;
+  }
+
   var tg = window.Telegram && window.Telegram.WebApp;
   var root = document.documentElement;
   var app = document.getElementById("app");
@@ -206,27 +212,34 @@
     }
     var cached = photoCache[id];
     if (cached !== undefined) {
-      if (cached && typeof cached.then === "function") cached.then(apply);
-      else apply(cached);
-      return;
+      if (cached && typeof cached.then === "function") return cached.then(function (u) { apply(u); return u; });
+      apply(cached);
+      return Promise.resolve(cached);
     }
     var initData = tg && tg.initData;
-    if (!initData) return;
+    if (!initData) return Promise.resolve(null);
     var pending = fetch("api/photo/" + id, { headers: { "Authorization": "tma " + initData } })
       .then(function (r) { return r.ok ? r.blob() : null; })
       .then(function (b) { var url = b ? URL.createObjectURL(b) : null; photoCache[id] = url; return url; },
             function () { photoCache[id] = null; return null; });
     photoCache[id] = pending;
-    pending.then(apply);
+    return pending.then(function (u) { apply(u); return u; });
   }
 
   // ── Анимации ───────────────────────────────────────────────────────────────
   var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  function countUp(node, text) {
-    // «1080.1», «60%», «+12.4» — досчитывается число, остальное как есть
+  // «1080.1», «60%», «+12.4» -> [до числа, знак минуса, число, после] или null
+  function splitNumber(text) {
     var m = /^([^\d−-]*)([−-]?)(\d+(?:\.\d+)?)(.*)$/.exec(text);
-    if (!m || reduceMotion || app.classList.contains("quiet")) { node.textContent = text; return; }
+    return m ? [m[1], m[2], m[3], m[4]] : null;
+  }
+
+  function countUp(node, text) {
+    // досчитывается число, остальное как есть
+    var parts = splitNumber(text);
+    if (!parts || reduceMotion || app.classList.contains("quiet")) { node.textContent = text; return; }
+    var m = [text].concat(parts);
     var target = parseFloat(m[3]), decimals = (m[3].split(".")[1] || "").length;
     var start = null, duration = 650;
     function frame(ts) {
@@ -284,14 +297,18 @@
   // Счётчик экранов (v2.166.0): какой экран показан — в ту же статистику, что
   // и у бота. Первый экран приносит время загрузки (в лог сервера, не в базу).
   var firstTrack = true;
+  // Имя экрана для счётчика: свой профиль — «me», чужой — «player», id отрезаются
+  function screenName(route, viewer) {
+    return route
+      .replace(/^player\/(\d+)/, function (_, id) { return id === String(viewer) ? "me" : "player"; })
+      .replace(/\/\d+/g, "")
+      .replace(/\//g, "_") || "home";
+  }
+
   function track(route) {
     var initData = tg && tg.initData;
     if (!initData) return;
-    var screen = route
-      .replace(/^player\/(\d+)/, function (_, id) { return id === String(viewerId) ? "me" : "player"; })
-      .replace(/\/\d+/g, "")
-      .replace(/\//g, "_") || "home";
-    var body = { screen: screen };
+    var body = { screen: screenName(route, viewerId) };
     if (firstTrack && window.performance) { body.boot_ms = Math.round(performance.now()); firstTrack = false; }
     try {
       fetch("api/track", {
@@ -792,6 +809,7 @@
     var who = el("div", "body");
     who.appendChild(el("div", "hero-name", h.name));
     who.appendChild(el("div", "sub", h.subtitle));
+    if (h.photo_link) who.appendChild(photoLink(h.photo_link, playerId));
     top.appendChild(who);
     hero.appendChild(top);
     var line = el("div", "hero-rating");
@@ -800,6 +818,20 @@
     hero.appendChild(line);
     if (d.chart) hero.appendChild(ratingChart(d.chart));
     c.appendChild(hero);
+  }
+
+  // Своё фото ставится в боте (v2.174.0): ссылка открывает чат с ботом.
+  // «Сменить», если фото уже есть (своё или из Telegram), иначе «Поставить».
+  function photoLink(url, playerId) {
+    var b = el("button", "hero-photo-link", "Поставить фото");
+    b.type = "button";
+    loadPhoto(+playerId, document.createElement("div")).then(function (u) { if (u) b.textContent = "Сменить фото"; });
+    b.addEventListener("click", function () {
+      track("photo_link");
+      if (tg && tg.openTelegramLink) tg.openTelegramLink(url);
+      else window.open(url, "_blank");
+    });
+    return b;
   }
 
   // Каркас профиля (шапка с графиком, переключатель разделов) строится один раз
@@ -1737,6 +1769,7 @@
   function refresh() {
     var route = currentRoute(), y = window.scrollY;
     apiCache = {};
+    delete photoCache[viewerId];  // фото могли сменить в боте, пока приложение было свёрнуто
     Promise.all(routeJobs(route)).then(function () {
       if (currentRoute() !== route || document.querySelector(".sheet-wrap")) return;
       shell = null;

@@ -146,6 +146,7 @@ PREVIEW_HTML = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
 var dark = location.search.indexOf("dark") >= 0;
 window.Telegram = { WebApp: { colorScheme: dark ? "dark" : "light", initData: %s, themeParams: {},
   ready(){}, expand(){}, onEvent(){}, setHeaderColor(){}, setBackgroundColor(){},
+  openTelegramLink(u){ window.__openedLink = u; },
   HapticFeedback: { selectionChanged(){}, impactOccurred(){} },
   BackButton: { show(){}, hide(){}, onClick(){} } } };
 </script>
@@ -158,10 +159,19 @@ async def preview(request):
 
 
 class _SilentBot:
-    """Подставной бот: рассылки сводок проходят целиком, но никуда не уходят."""
+    """Подставной бот: рассылки сводок проходят целиком, но никуда не уходят;
+    фото у игроков нет (буквы), имя бота — для ссылки «Поставить фото» (v2.174.0)."""
 
     async def send_message(self, *args, **kwargs):
         return None
+
+    async def get_user_profile_photos(self, *args, **kwargs):
+        from types import SimpleNamespace
+        return SimpleNamespace(photos=[])
+
+    async def me(self):
+        from types import SimpleNamespace
+        return SimpleNamespace(username="preview_bot")
 
 
 async def seed_digests():
@@ -178,7 +188,7 @@ async def seed_digests():
 async def main():
     await seed()
     await seed_digests()
-    app = create_app(TOKEN, async_session)
+    app = create_app(TOKEN, async_session, _SilentBot())
     app.router.add_get("/preview", preview)
     runner = web.AppRunner(app)
     await runner.setup()
