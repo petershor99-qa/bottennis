@@ -531,3 +531,11 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   .feed-card { animation: none; }
 }
+
+/* ── v2.173.0: кто поставил реакцию ──────────────────────────────────── */
+.reactions-box { margin: 4px 0 16px; }
+.reactions-box .reactions { margin: 0; }
+.reaction-who { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; align-items: center; }
+.reaction-who-line { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--hint); }
+.reaction-who-line .ico { width: 16px; height: 16px; }
+.feature .reaction-counts { margin-top: 10px; }
