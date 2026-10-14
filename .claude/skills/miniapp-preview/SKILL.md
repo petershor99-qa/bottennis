@@ -23,8 +23,11 @@ PYTHONIOENCODING=utf-8 py -3.13 scripts/preview_miniapp.py
 
 Wait for the line `ready http://127.0.0.1:8770/preview`. Port busy — pass
 another one as the first argument (`… preview_miniapp.py 8771`). Python
-changes need a restart; static files (`webapp/static/*`) are served from disk,
-a page reload is enough.
+changes need a restart; static files (`webapp/static/*`) are served from disk.
+Since v2.176.0 the page source lives in parts `webapp/src/app/*.js` — after
+editing a part run `py -3.13 scripts/build_app_js.py` (it rewrites
+`webapp/static/app.js`), then reload. For an automated pass (Playwright,
+screenshot baselines) use the `app-check` skill.
 
 ## 2. Walk the screens
 

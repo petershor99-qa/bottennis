@@ -13,7 +13,7 @@
       matchesWord: matchesWord, screenName: screenName, splitNumber: splitNumber, badgeClass: badgeClass,
       parseLaunchParams: parseLaunchParams, isColorDark: isColorDark,
       filterMatches: filterMatches, recordLine: recordLine, compactDate: compactDate,
-      toggledReactions: toggledReactions
+      toggledReactions: toggledReactions, matchMood: matchMood
     };
     return;
   }

@@ -11,6 +11,80 @@
     return li;
   }
 
+  // История дуэли (v2.177.0): кто вёл по ходу встреч (баланс побед), лучшие
+  // серии, лучший матч пары и последние месяцы
+  function balanceSvg(points) {
+    var W = 320, H = 110, T = 10, B = 18;
+    var vals = points.map(function (p) { return p.v; });
+    var lo = Math.min.apply(null, vals.concat([0])), hi = Math.max.apply(null, vals.concat([0]));
+    if (hi === lo) { hi += 1; lo -= 1; }
+    function x(i) { return points.length < 2 ? W / 2 : 4 + (W - 8) * i / (points.length - 1); }
+    function y(v) { return T + (H - T - B) * (1 - (v - lo) / (hi - lo)); }
+    var s = svg("svg", { "class": "chart balance", viewBox: "0 0 " + W + " " + H, role: "img" });
+    s.appendChild(svg("line", { x1: 0, x2: W, y1: y(0), y2: y(0), "class": "balance-zero" }));
+    var dpath = points.map(function (p, i) { return (i ? "L" : "M") + x(i).toFixed(1) + " " + y(p.v).toFixed(1); }).join(" ");
+    s.appendChild(svg("path", { d: dpath, "class": "balance-line" }));
+    var last = points[points.length - 1];
+    s.appendChild(svg("circle", { cx: x(points.length - 1), cy: y(last.v), r: 4,
+      "class": last.v > 0 ? "balance-dot is-up" : last.v < 0 ? "balance-dot is-down" : "balance-dot" }));
+    [[0, "start"], [points.length - 1, "end"]].forEach(function (e) {
+      var t = svg("text", { x: e[1] === "start" ? 2 : W - 2, y: H - 3, "text-anchor": e[1], "class": "chart-label" });
+      t.textContent = points[e[0]].d;
+      s.appendChild(t);
+    });
+    return s;
+  }
+
+  function duelCard(duel, them) {
+    var wrap = el("section", "group");
+    wrap.appendChild(el("h2", "group-title", "История дуэли"));
+    var card = el("div", "card duel");
+    var top = el("div", "pair-top");
+    top.appendChild(el("span", "eyebrow", "Кто вёл: выше нуля — ты"));
+    if (duel.points_share !== null) top.appendChild(el("span", "eyebrow-meta", "твоих очков " + duel.points_share + "%"));
+    card.appendChild(top);
+    card.appendChild(balanceSvg(duel.balance));
+    var tiles = el("div", "tiles duel-tiles");
+    [["Твоя лучшая серия", duel.best_streak_me, "win"], ["Лучшая серия соперника", duel.best_streak_them, "loss"]].forEach(function (t) {
+      var tile = el("div", "tile tile-" + t[2]);
+      tile.appendChild(el("div", "tile-label", t[0]));
+      tile.appendChild(num("tile-value", String(t[1])));
+      tiles.appendChild(tile);
+    });
+    card.appendChild(tiles);
+    if (duel.months.length > 1) {
+      var mo = el("div", "duel-months");
+      duel.months.forEach(function (m) {
+        var col = el("div", "duel-month");
+        var bar = el("div", "duel-bar");
+        var total = Math.max(1, m.me + m.them);
+        var me = el("i", "duel-me"); me.style.height = (m.me / total * 100) + "%";
+        var th = el("i", "duel-them"); th.style.height = (m.them / total * 100) + "%";
+        bar.appendChild(th);
+        bar.appendChild(me);
+        col.appendChild(bar);
+        col.appendChild(el("span", "duel-score", m.me + ":" + m.them));
+        col.appendChild(el("span", "duel-label", m.m));
+        mo.appendChild(col);
+      });
+      card.appendChild(mo);
+    }
+    wrap.appendChild(card);
+    var best = el("ul", "feed-list");
+    var bm = duel.best_match;
+    var li = clickable(el("li", "feed-card feed-match"), "match/" + bm.id);
+    var body = el("div", "body");
+    body.appendChild(el("div", "eyebrow", "Лучший матч пары · " + bm.date));
+    body.appendChild(versusLine(bm));
+    var sc = el("div", "feed-score");
+    sc.appendChild(setChips(bm.sets, bm.winner));
+    body.appendChild(sc);
+    li.appendChild(body);
+    best.appendChild(li);
+    wrap.appendChild(best);
+    return wrap;
+  }
+
   function renderVersus(c, d) {
     var card = el("div", "card versus");
     var row = el("div", "versus-row");
@@ -78,6 +152,7 @@
     }
 
     if (d.empty) { emptyState(c, d.empty); return; }
+    if (d.duel) c.appendChild(duelCard(d.duel, d.them.name));
     var m = section("Итог встреч");
     d.metrics.forEach(function (it) { m.list.appendChild(itemRow(it)); });
     c.appendChild(m);

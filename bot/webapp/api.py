@@ -298,7 +298,7 @@ async def player_payload(session: AsyncSession, player: Player, viewer: Player) 
             "empty": "Ещё не сыграно ни одного матча." if not personal else "Ты ещё не сыграл ни одного матча.",
         }
 
-    s = _compute_player_stats(player, matches)
+    s = stats_cached(player, matches)
     week = _week_delta(matches, player.id)
     if week is not None:
         head["week"] = f"{_signed(week)} за неделю"
@@ -360,9 +360,11 @@ async def player_payload(session: AsyncSession, player: Player, viewer: Player) 
             titled.append({"title": plain(title), "items": items})
 
     earned = set(get_achievements(player))
-    radar_ok = len(matches) >= MIN_MATCHES_FOR_RADAR and _build_style_radar(s) is not None
+    radar = _build_style_radar(s) if len(matches) >= MIN_MATCHES_FOR_RADAR else None
+    radar_ok = radar is not None
     return {
         "head": head,
+        "card": _card(radar, s),
         "tiles": tiles,
         "last10": last10,
         "goals": goals,
@@ -376,6 +378,37 @@ async def player_payload(session: AsyncSession, player: Player, viewer: Player) 
         "versus": None if personal else f"Ты против {player.display_name}",
         "empty": "",
     }
+
+
+# Кэш статистики игрока (v2.177.0): профиль, радар и разделы пересчитывали всю
+# карьеру на каждый запрос. Ключ меняется с любым новым матчем или рейтингом,
+# поэтому кэш не устаревает; размер ограничен.
+STATS_CACHE_MAX = 64
+_stats_cache: dict[tuple, dict] = {}
+
+
+def stats_cached(player: Player, matches: list) -> dict:
+    last = max((m.id for m in matches), default=0)
+    key = (player.id, len(matches), last, round(player.rating, 1), round(player.peak_rating or 0.0, 1))
+    hit = _stats_cache.get(key)
+    if hit is None:
+        if len(_stats_cache) >= STATS_CACHE_MAX:
+            _stats_cache.pop(next(iter(_stats_cache)))
+        hit = _stats_cache[key] = _compute_player_stats(player, matches)
+    return hit
+
+
+# Характеристики карточки игрока (v2.177.0) — оси радара стиля коротко
+CARD_SHORT = {"Винрейт": "ВИН", "Клатч": "КЛЧ", "Дожимание": "ДОЖ", "Камбэки": "КМБ",
+              "Доминирование": "ДОМ", "Стабильность": "СТБ"}
+
+
+def _card(radar: dict | None, s: dict) -> dict | None:
+    if not radar:
+        return None
+    return {"stats": [{"short": CARD_SHORT.get(name, name[:3].upper()), "name": name, "value": round(value)}
+                      for name, value in radar.items()],
+            "archetype": _style_archetype(radar, s)}
 
 
 def _title_progress(rating: float) -> float:
@@ -401,7 +434,7 @@ async def player_stats_section_payload(session: AsyncSession, player: Player, vi
     matches = await get_career_matches(session, player.id, with_opponents=True)
     if not matches:
         return None
-    s = _compute_player_stats(player, matches)
+    s = stats_cached(player, matches)
     lines = _section_lines(key, player, s, matches, include_growth=personal)
     return {"title": plain(titles[key]), "subtitle": player.display_name, "groups": groups(lines)}
 
@@ -490,7 +523,7 @@ async def radar_payload(session: AsyncSession, player: Player) -> dict:
     if len(matches) < MIN_MATCHES_FOR_RADAR:
         return {"title": "Радар стиля", "subtitle": player.display_name,
                 "empty": f"Нужно минимум {MIN_MATCHES_FOR_RADAR} матчей для радара стиля."}
-    s = _compute_player_stats(player, matches)
+    s = stats_cached(player, matches)
     radar = _build_style_radar(s)
     if radar is None:
         return {"title": "Радар стиля", "subtitle": player.display_name,
@@ -628,7 +661,7 @@ async def _axes_pair(session: AsyncSession, viewer: Player, opponent: Player) ->
         matches = await get_career_matches(session, p.id, with_opponents=True)
         if len(matches) < MIN_MATCHES_FOR_RADAR:
             return []
-        radar = _build_style_radar(_compute_player_stats(p, matches))
+        radar = _build_style_radar(stats_cached(p, matches))
         if radar is None:
             return []
         radars.append(radar)
@@ -673,7 +706,9 @@ async def h2h_payload(session: AsyncSession, viewer: Player, opponent: Player) -
         metrics.append({"label": "Лучшая победа", "value": f"+{s['best_win']} pts"})
     if s["first_date"]:
         metrics.append({"label": "Первая встреча", "value": s["first_date"].strftime("%d.%m.%y")})
-    return {**base, "metrics": metrics, "matches": [_match_row(m, viewer.id) for m in matches], "empty": ""}
+    from bot.webapp.api_chronicle import duel_history  # v2.177.0; здесь — чтобы не было цикла импортов
+    return {**base, "metrics": metrics, "matches": [_match_row(m, viewer.id) for m in matches],
+            "duel": duel_history(matches, viewer.id), "empty": ""}
 
 
 CLUB_MATCHES_PAGE = 30

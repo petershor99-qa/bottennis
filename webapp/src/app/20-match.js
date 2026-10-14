@@ -1,6 +1,38 @@
   // ── Экран матча (v2.168.0) ─────────────────────────────────────────────────
+  // Характер матча для анимации (v2.177.0): только у ярких матчей, по данным
+  // партий — камбэк, разгром, дьюсы, боссфайт. Обычный матч — без эффектов.
+  function matchMood(d) {
+    if (!d.winner || !d.sets.length) return "";
+    var w = d.winner, l = w === "a" ? "b" : "a";
+    var lostFirst = d.sets[0][l] > d.sets[0][w];
+    var allWon = d.sets.every(function (s) { return s[w] > s[l]; });
+    var margin = d.sets.reduce(function (sum, s) { return sum + (s[w] - s[l]); }, 0) / d.sets.length;
+    var deuces = d.sets.filter(function (s) { return Math.max(s.a, s.b) > 11; }).length;
+    if (d.boss) return "boss";
+    if (lostFirst && d.sets.length >= 3) return "comeback";
+    if (allWon && margin >= 6) return "blowout";
+    if (deuces >= 2) return "deuce";
+    return "";
+  }
+
+  var MOOD_LABELS = { boss: "Боссфайт", comeback: "Камбэк", blowout: "Разгром", deuce: "Дьюсы" };
+
+  function matchCardBlocks(d) {
+    var aSets = d.sets.filter(function (x) { return x.a > x.b; }).length;
+    var blocks = [titleBlock(d.a.name + " — " + d.b.name, d.date),
+      statsBlock([[d.a.name, String(aSets), d.winner === "a" ? CARD.win : CARD.text],
+        [d.b.name, String(d.sets.length - aSets), d.winner === "b" ? CARD.win : CARD.text]])];
+    blocks.push(rowsBlock("Партии", d.sets.map(function (s, i) {
+      return [(i + 1) + "-я партия", s.a + ":" + s.b, s.a > s.b ? CARD.text : CARD.hint];
+    })));
+    if (d.a.delta) blocks.push(lineBlock("Рейтинг: " + d.a.name + " " + d.a.delta + ", " + d.b.name + " " + d.b.delta));
+    return blocks;
+  }
+
   function renderMatch(c, d) {
-    var card = el("div", "card versus");
+    var mood = matchMood(d);
+    var card = el("div", "card versus" + (mood ? " mood-" + mood : ""));
+    if (mood) card.appendChild(el("div", "mood-stamp", MOOD_LABELS[mood]));
     var row = el("div", "versus-row");
     function side(p, mine) {
       var s = clickable(el("div", "versus-side" + (d.winner === mine ? " is-winner" : "")), "player/" + p.id);
@@ -56,5 +88,8 @@
       note: d.h2h.total
     }));
     c.appendChild(h);
+    var share = el("div", "share-row");
+    share.appendChild(shareButton("match", function () { return matchCardBlocks(d); }));
+    c.appendChild(share);
   }
 

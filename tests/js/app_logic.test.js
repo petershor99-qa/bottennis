@@ -96,3 +96,13 @@ test("toggledReactions: одна реакция игрока", () => {
   const removed = app.toggledReactions(base, "fire");
   assert.deepEqual(removed.map((r) => [r.kind, r.count, r.mine]), [["fire", 1, false], ["like", 0, false]]);
 });
+
+test("matchMood: характер матча по партиям", () => {
+  const m = (sets, winner, boss) => ({ sets: sets.map(([a, b]) => ({ a, b })), winner, boss: !!boss });
+  assert.equal(app.matchMood(m([[5, 11], [11, 9], [11, 8]], "a")), "comeback");
+  assert.equal(app.matchMood(m([[11, 3], [11, 4]], "a")), "blowout");
+  assert.equal(app.matchMood(m([[12, 10], [13, 11]], "a")), "deuce");
+  assert.equal(app.matchMood(m([[11, 9], [11, 9]], "a")), "");
+  assert.equal(app.matchMood(m([[11, 9]], "b", true)), "boss");
+  assert.equal(app.matchMood(m([[11, 9], [9, 11]], "")), "");   // ничья — без эффектов
+});

@@ -22,7 +22,9 @@
 
   function profileHero(c, d, playerId) {
     var h = d.head;
-    var hero = el("div", "card hero");
+    // Карточка игрока (v2.177.0): полоса «стола» сверху, характеристики из радара
+    var hero = el("div", "card hero player-card");
+    hero.appendChild(el("div", "table-band"));
     var top = el("div", "hero-top");
     top.appendChild(avatar({ id: +playerId, initial: h.initial }, "xl"));
     var who = el("div", "body");
@@ -35,9 +37,24 @@
     line.appendChild(num("hero-value", h.rating));
     if (h.week) line.appendChild(el("span", "hero-week " + (h.week_up ? "tone-win" : "tone-loss"), h.week));
     hero.appendChild(line);
+    if (d.card) hero.appendChild(cardStats(d.card, playerId));
     if (d.chart) hero.appendChild(ratingChart(d.chart));
     if (h.photo_link && !d.empty) hero.appendChild(shareButton("profile", function () { return profileCardBlocks(d); }));
     c.appendChild(hero);
+  }
+
+  function cardStats(card, playerId) {
+    var wrap = clickable(el("div", "card-stats"), "player/" + playerId + "/style");
+    card.stats.forEach(function (s, i) {
+      var cell = el("div", "card-stat stagger");
+      cell.style.animationDelay = (i * 50) + "ms";
+      cell.title = s.name;
+      cell.appendChild(el("span", "card-stat-value scoreboard", String(s.value)));
+      cell.appendChild(el("span", "card-stat-name", s.short));
+      wrap.appendChild(cell);
+    });
+    if (card.archetype) wrap.appendChild(el("div", "card-archetype", card.archetype));
+    return wrap;
   }
 
   // Своё фото ставится в боте (v2.174.0): ссылка открывает чат с ботом.
@@ -127,6 +144,21 @@
 
     c.appendChild(trendCard(playerId));
 
+    // Прогноз на чужом профиле (v2.177.0): шанс сразу, без перехода в «Ты против …»
+    if (d.forecast) {
+      var fc = clickable(el("div", "card forecast"), "h2h/" + playerId);
+      var ft = el("div", "pair-top");
+      ft.appendChild(el("span", "eyebrow", "Твой шанс против него"));
+      ft.appendChild(num("forecast-num", d.forecast.chance + "%"));
+      fc.appendChild(ft);
+      fc.appendChild(progressBar(d.forecast.chance / 100));
+      var wl = el("div", "forecast-split");
+      wl.appendChild(el("span", "tone-win", "Победа " + d.forecast.win));
+      wl.appendChild(el("span", "tone-loss", "Поражение " + d.forecast.lose));
+      fc.appendChild(wl);
+      c.appendChild(fc);
+    }
+
     if (d.versus) {
       var btn = el("button", "button");
       btn.type = "button";
@@ -135,6 +167,16 @@
       btn.addEventListener("click", function () { go("h2h/" + playerId); });
       c.appendChild(btn);
     }
+
+    if (String(playerId) === String(viewerId)) {
+      var mb = el("button", "button button-quiet month-btn");
+      mb.type = "button";
+      mb.appendChild(icon("sparkles", "ico-btn"));
+      mb.appendChild(document.createTextNode("Твой месяц"));
+      mb.addEventListener("click", function () { go("month"); });
+      c.appendChild(mb);
+    }
+    if (d.personal) personalBlocks(c, d.personal, playerId);
 
     if (d.goals.length) {
       var g = section("Цели");
@@ -146,6 +188,52 @@
       b.items.forEach(function (it) { s.list.appendChild(itemRow(it)); });
       c.appendChild(s);
     });
+  }
+
+  // Личные рекорды, коронный счёт, главный соперник (v2.177.0)
+  function personalBlocks(c, p, playerId) {
+    if (p.rival) {
+      var own = String(playerId) === String(viewerId);
+      var r = p.rival;
+      var card = clickable(el("div", "card rival"), own ? "h2h/" + r.id : "player/" + r.id);
+      card.appendChild(avatar(r, "md"));
+      var b = el("div", "body");
+      b.appendChild(el("div", "eyebrow", "Главный соперник"));
+      b.appendChild(el("div", "name", r.name));
+      b.appendChild(el("div", "sub", r.meetings + " · последняя " + r.last));
+      card.appendChild(b);
+      card.appendChild(num("rival-score" + (r.tone ? " tone-" + r.tone : ""), r.score));
+      c.appendChild(card);
+    }
+    if (p.bests.length) {
+      var s = section("Личные рекорды");
+      p.bests.forEach(function (it) {
+        var li = el("li", "row row-pair");
+        var lb = el("div", "label", it.label);
+        li.appendChild(lb);
+        li.appendChild(el("div", "value", it.value));
+        if (it.date) li.appendChild(el("div", "sub sub-wide", "с " + it.date));
+        s.list.appendChild(li);
+      });
+      c.appendChild(s);
+    }
+    if (p.signature) {
+      var sg = p.signature;
+      var tiles = el("div", "tiles signature");
+      if (sg.score) {
+        var t1 = el("div", "tile");
+        t1.appendChild(el("div", "tile-label", "Коронный счёт"));
+        t1.appendChild(el("div", "tile-value scoreboard", sg.score));
+        t1.appendChild(el("div", "tile-sub", sg.times));
+        tiles.appendChild(t1);
+      }
+      var t2 = el("div", "tile");
+      t2.appendChild(el("div", "tile-label", "Партии на дьюсе"));
+      t2.appendChild(num("tile-value", sg.deuce));
+      t2.appendChild(el("div", "tile-sub", "из " + sg.sets));
+      tiles.appendChild(t2);
+      c.appendChild(tiles);
+    }
   }
 
   // График рейтинга с периодами и сравнением (v2.168.0): ось — даты, поэтому
