@@ -23,6 +23,11 @@ jobs:
       - name: Lint (ruff)
         run: ruff check .
 
+      # Синтаксис страницы Mini App (v2.172.0): ошибку в app.js раньше ловило
+      # только ручное превью. Node на ubuntu-latest уже есть.
+      - name: Check Mini App script syntax
+        run: node --check webapp/static/app.js
+
   mypy:
     runs-on: ubuntu-latest
     # Советующая проверка, НЕ блокирующая (continue-on-error) — на момент

@@ -1762,5 +1762,20 @@
     }
   } catch (e) { /* старый браузер — откроется главная */ }
 
-  api("me").then(function (d) { viewerId = d.id; }, function () { viewerId = null; }).then(render);
+  // Пока игрок смотрит первый экран, подгружаем «Рейтинг» и свой профиль —
+  // переход по нижнему меню открывается сразу (v2.172.0). Кэш ответов — минута.
+  function prefetchTabs() {
+    if (viewerId === null) return;
+    setTimeout(function () {
+      ["leaderboard", "player/" + viewerId, "player/" + viewerId + "/chart"].forEach(function (path) {
+        api(path).catch(function () { /* не вышло — экран загрузит сам */ });
+      });
+    }, 1200);
+  }
+
+  // Старт без лишнего ожидания (v2.172.0): данные первого экрана запрашиваются
+  // сразу, параллельно с /api/me, — render() возьмёт их из кэша ответов
+  try { routeJobs(currentRoute()); } catch (e) { /* первый экран загрузит сам */ }
+  api("me").then(function (d) { viewerId = d.id; }, function () { viewerId = null; })
+    .then(function () { render(); prefetchTabs(); });
 })();

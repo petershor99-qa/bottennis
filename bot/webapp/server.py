@@ -45,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.db.models import Player
 from bot.utils import get_player
 from bot.webapp import api, api_club, api_insights, reactions
+from bot.webapp.assets import ASSET_TYPES, Assets, accepts_gzip
 from bot.webapp.auth import WebAppAuthError, init_data_from_header, telegram_id_from_init_data
 from bot.webapp.config import is_admin, is_webapp_allowed, webapp_listen
 from bot.webapp.photos import PhotoCache
@@ -60,6 +61,9 @@ BOT_KEY: web.AppKey = web.AppKey("bot")
 PHOTOS_KEY: web.AppKey[PhotoCache] = web.AppKey("photos", PhotoCache)
 USAGE_KEY: web.AppKey[UsageWriter] = web.AppKey("usage", UsageWriter)
 TRACK_REQUEST_KEY = "bottennis_track"  # что записать в счётчик после ответа
+ASSETS_KEY: web.AppKey[Assets] = web.AppKey("assets", Assets)
+# Ответы API крупнее этого сжимаются gzip (v2.172.0); мелкие — дороже сжимать
+COMPRESS_MIN_BYTES = 1024
 
 _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -74,8 +78,14 @@ def _json_error(status: int, message: str) -> web.Response:
     return web.json_response({"error": message}, status=status, headers=_SECURITY_HEADERS)
 
 
-async def index(request: web.Request) -> web.FileResponse:
-    return web.FileResponse(STATIC_DIR / "index.html", headers=_SECURITY_HEADERS)
+async def index(request: web.Request) -> web.Response:
+    """Страница со ссылками на текущие версии app.js и app.css (v2.172.0)."""
+    return web.Response(body=request.app[ASSETS_KEY].index_html(), content_type="text/html",
+                        charset="utf-8", headers=_SECURITY_HEADERS)
+
+
+async def static_asset(request: web.Request) -> web.Response:
+    return request.app[ASSETS_KEY].response(request, request.match_info["name"])
 
 
 def endpoint(handler: Handler) -> Callable[[web.Request], Awaitable[web.Response]]:
@@ -330,20 +340,38 @@ async def revalidate_static(request: web.Request, handler):
     новый API со старой страницей. С `no-cache` запрос уходит на сервер, а
     неизменённый файл отдаётся ответом 304 без тела."""
     response = await handler(request)
-    if request.path.startswith("/static/"):
-        response.headers["Cache-Control"] = "no-cache"
+    if request.path.startswith("/static/fonts/"):
+        # Шрифт не меняется от релиза к релизу — месяц без перепроверки (v2.172.0)
+        response.headers["Cache-Control"] = "public, max-age=2592000"
+    elif request.path.startswith("/static/"):
+        # app.js/app.css/icons.svg ставят заголовок сами (с версией — immutable)
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
+
+
+@web.middleware
+async def compress_json(request: web.Request, handler):
+    """Сжатие крупных ответов API gzip (v2.172.0): ачивки — 23 КБ, главная — 10 КБ."""
+    response = await handler(request)
+    if (isinstance(response, web.Response) and response.content_type == "application/json"
+            and response.body is not None and len(response.body) >= COMPRESS_MIN_BYTES
+            and accepts_gzip(request)):
+        response.enable_compression(web.ContentCoding.gzip)
     return response
 
 
 def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
     """bot — экземпляр aiogram.Bot для фото игроков; без него /api/photo отвечает 404."""
-    app = web.Application(middlewares=[revalidate_static])
+    app = web.Application(middlewares=[revalidate_static, compress_json])
     app[BOT_TOKEN_KEY] = bot_token
     app[SESSION_FACTORY_KEY] = session_factory
     app[BOT_KEY] = bot
     app[PHOTOS_KEY] = PhotoCache()
     app[USAGE_KEY] = UsageWriter(session_factory)
+    app[ASSETS_KEY] = Assets(STATIC_DIR)
     app.router.add_get("/", index)
+    names = "|".join(n.replace(".", r"\.") for n in ASSET_TYPES)
+    app.router.add_get("/static/{name:" + names + "}", static_asset)
     routes = [
         ("/api/home", home),
         ("/api/me", me),
