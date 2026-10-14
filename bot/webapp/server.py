@@ -29,6 +29,7 @@
   GET /api/when?who=club|me                 — «Когда играют»: день недели × час (v2.170.0)
   GET /api/usage                            — «Использование», только администратор (v2.170.0)
   POST /api/track                           — счётчик показанных экранов (v2.166.0)
+  POST /api/boot_fail                       — страница не запустилась: причина в лог (v2.175.0)
 Вход во все /api — `Authorization: tma <initData>`.
 
 Снаружи сервер закрыт: слушает 127.0.0.1, HTTPS даёт прокси (Caddy), см.
@@ -49,7 +50,7 @@ from bot.webapp.assets import ASSET_TYPES, Assets, accepts_gzip
 from bot.webapp.auth import WebAppAuthError, init_data_from_header, telegram_id_from_init_data
 from bot.webapp.config import is_admin, is_webapp_allowed, webapp_listen
 from bot.webapp.photos import PhotoCache, photo_etag
-from bot.webapp.usage import SCREEN_RE, UsageWriter, log_boot_time
+from bot.webapp.usage import SCREEN_RE, UsageWriter, log_boot_failure, log_boot_time
 
 logger = logging.getLogger(__name__)
 
@@ -108,9 +109,9 @@ def endpoint(handler: Handler) -> Callable[[web.Request], Awaitable[web.Response
         # соединении (SQLite в памяти в тестах) закрытие сессии откатило бы её.
         pending = request.get(TRACK_REQUEST_KEY)
         if pending is not None:
-            telegram_id_, screen_, boot_ms_ = pending
+            telegram_id_, screen_, boot_ms_, info_ = pending
             if request.app[USAGE_KEY].record(telegram_id_, screen_):
-                log_boot_time(screen_, boot_ms_)
+                log_boot_time(screen_, boot_ms_, info_)
         if payload is None:
             return _json_error(404, "Не найдено.")
         if isinstance(payload, web.StreamResponse):
@@ -252,8 +253,17 @@ async def track(request, session, viewer):
     screen = str(body.get("screen", "")) if isinstance(body, dict) else ""
     if not SCREEN_RE.match(screen):
         return {"ok": False}
-    request[TRACK_REQUEST_KEY] = (viewer.telegram_id, screen, body.get("boot_ms"))
+    request[TRACK_REQUEST_KEY] = (viewer.telegram_id, screen, body.get("boot_ms"), body)
     return {"ok": True}
+
+
+async def boot_fail(request, session, viewer):
+    """Страница не дошла до первого экрана (v2.175.0): причина — в лог сервиса."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return {"ok": log_boot_failure(viewer.telegram_id, body)}
 
 
 async def leaderboard(request, session, viewer):
@@ -422,6 +432,7 @@ def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
     for path, handler in routes:
         app.router.add_get(path, endpoint(handler))
     app.router.add_post("/api/track", endpoint(track))
+    app.router.add_post("/api/boot_fail", endpoint(boot_fail))
     app.router.add_post("/api/match/{match_id}/react", endpoint(react))
     app.router.add_static("/static/", STATIC_DIR, show_index=False)
     return app
