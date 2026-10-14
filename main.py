@@ -25,6 +25,7 @@ from bot.handlers.history import router as history_router
 from bot.handlers.leaderboard import router as leaderboard_router
 from bot.handlers.match_result import router as match_result_router
 from bot.handlers.notifications import router as notifications_router
+from bot.handlers.photo import router as photo_router
 from bot.handlers.profile import router as profile_router
 from bot.handlers.start import router as start_router
 from bot.handlers.year_vote import router as year_vote_router
@@ -111,6 +112,7 @@ async def main() -> None:
     dp.include_router(profile_router)
     dp.include_router(history_router)
     dp.include_router(challenge_router)
+    dp.include_router(photo_router)
     dp.include_router(match_result_router)
     dp.include_router(year_vote_router)
     dp.include_router(notifications_router)

@@ -45,6 +45,12 @@ async def cmd_start(message: Message, command: CommandObject, session: AsyncSess
     await state.clear()
     player = await get_player(session, msg_user(message).id)
 
+    if player and (command.args or "").strip() == "photo":
+        # v2.174.0: ссылка «Поставить фото» из профиля в приложении
+        from bot.handlers.photo import ask_photo
+        await ask_photo(message, player, state)
+        return
+
     if player:
         if player.last_menu_message_id:
             try:
@@ -220,6 +226,7 @@ def _help_section_text(key: str) -> str | None:
             "/cancel — отменить текущее действие\n"
             "/help — эта справка\n"
             "/name — сменить имя в боте (например: /name Пётр)\n"
+            "/photo — своё фото для профиля в приложении\n"
             "/feedback — отправить идею или баг напрямую разработчику"
         )
     return None

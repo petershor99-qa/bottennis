@@ -81,9 +81,10 @@ async def test_short_stats_screen_with_app(db, app_on):
     first = _buttons(kb)[0]
     assert first.text == WEBAPP_MORE_TEXT
     assert first.web_app.url == f"https://club.example/?r=player%2F{me.id}"
-    # глубоких кнопок (радар, история, ачивки…) в коротком режиме нет
+    # глубоких кнопок (радар, история, ачивки…) в коротком режиме нет;
+    # «Фото в приложении» — с v2.174.0
     callbacks = {b.callback_data for b in _buttons(kb) if b.callback_data}
-    assert callbacks == {"menu_leaderboard", "back_to_menu"}
+    assert callbacks == {"photo_start", "menu_leaderboard", "back_to_menu"}
 
 
 async def test_full_stats_screen_without_app(db, app_off):
