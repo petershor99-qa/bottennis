@@ -252,7 +252,11 @@ async def test_index_and_static_are_served(client):
     assert page.status == 200
     assert 'id="tabbar"' in await page.text()
     for path in ("/static/app.css", "/static/app.js", "/static/fonts/Raleway-Variable.woff2", "/static/fonts/OFL.txt"):
-        assert (await client.get(path)).status == 200
+        resp = await client.get(path)
+        assert resp.status == 200
+        # Ответ дочитываем: на Windows недочитанный крупный app.js (>128 КБ)
+        # держал соединение, и следующий запрос за шрифтом зависал (v2.177.0)
+        assert await resp.read()
 
 
 async def test_api_does_not_write_to_db(client, db_factory):
@@ -304,6 +308,7 @@ async def test_static_files_are_revalidated(client):
         assert resp.status == 200
         assert resp.headers["Cache-Control"] == "no-cache"
         assert resp.headers.get("ETag")
+        await resp.read()  # дочитать: см. test_index_and_static_are_served
         again = await client.get(path, headers={"If-None-Match": resp.headers["ETag"]})
         assert again.status == 304
 

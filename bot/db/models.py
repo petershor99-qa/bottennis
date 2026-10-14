@@ -170,6 +170,20 @@ class DigestSnapshot(Base):
     )
 
 
+class AppBoot(Base):
+    """Время загрузки Mini App до первого экрана (v2.177.0): раньше было только
+    в журнале сервиса, теперь медиана по клиентам видна в «Использовании».
+    Без связи с игроком — только клиент Telegram. Таблица создаётся `create_all`."""
+    __tablename__ = "app_boots"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    ms: Mapped[int]
+    platform: Mapped[str] = mapped_column(default="")
+    created_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), index=True,
+    )
+
+
 class FeedReaction(Base):
     """Реакция игрока на событие ленты, кроме матча (v2.176.0): ачивка
     (`target` = "ach:<id строки AchievementEarned>") или рекорд клуба

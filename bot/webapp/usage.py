@@ -17,7 +17,7 @@ import logging
 import re
 import time
 
-from bot.db.models import UsageEvent
+from bot.db.models import AppBoot, UsageEvent
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,20 @@ class UsageWriter:
         self._pending.add(task)
         task.add_done_callback(self._pending.discard)
         return True
+
+    def record_boot(self, ms: int, platform: str) -> None:
+        """Время запуска — в таблицу app_boots (v2.177.0), фоном, как и события."""
+        task = asyncio.create_task(self._write_boot(ms, platform))
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
+
+    async def _write_boot(self, ms: int, platform: str) -> None:
+        try:
+            async with self._factory() as session:
+                session.add(AppBoot(ms=ms, platform=platform))
+                await session.commit()
+        except Exception:
+            logger.warning("Mini App: не удалось записать время запуска", exc_info=True)
 
     async def drain(self) -> None:
         while self._pending:
@@ -74,13 +88,13 @@ def _client(value) -> str:
     return text if CLIENT_RE.match(text) else "?"
 
 
-def log_boot_time(screen: str, boot_ms, info: dict | None = None) -> None:
+def log_boot_time(screen: str, boot_ms, info: dict | None = None) -> tuple[int, str] | None:
     """Время первого экрана. info — что ещё прислала страница (v2.175.0):
     platform, version (клиент Telegram), tg_ms — когда пришёл скрипт Telegram
     (None — не пришёл, приложение стартовало без него)."""
     ms = _ms(boot_ms)
     if not ms:
-        return
+        return None
     info = info if isinstance(info, dict) else {}
     tg_ms = _ms(info.get("tg_ms"))
     logger.info(
@@ -88,6 +102,31 @@ def log_boot_time(screen: str, boot_ms, info: dict | None = None) -> None:
         ms, screen, _client(info.get("platform")), _client(info.get("version")),
         f"{tg_ms} мс" if tg_ms is not None else "не пришёл",
     )
+    platform = _client(info.get("platform"))
+    return ms, ("" if platform == "?" else platform)
+
+
+CLIENT_ERRORS_PER_MINUTE = 5
+_client_errors: dict[int, list[float]] = {}
+
+
+def log_client_error(telegram_id: int, body) -> bool:
+    """Ошибка JS на устройстве игрока (v2.177.0) — в журнал сервиса, не чаще
+    CLIENT_ERRORS_PER_MINUTE в минуту на игрока. Только лог, без уведомлений."""
+    now = time.monotonic()
+    recent = [t for t in _client_errors.get(telegram_id, []) if now - t < 60]
+    if len(recent) >= CLIENT_ERRORS_PER_MINUTE:
+        _client_errors[telegram_id] = recent
+        return False
+    _client_errors[telegram_id] = recent + [now]
+    body = body if isinstance(body, dict) else {}
+    message = " ".join(str(body.get("message", "")).split())[:BOOT_FAIL_TEXT_MAX]
+    where = " ".join(str(body.get("where", "")).split())[:120]
+    route = str(body.get("route", ""))[:60]
+    logger.warning("Mini App: ошибка JS у игрока %s (клиент %s %s), экран «%s»: %s @ %s",
+                   telegram_id, _client(body.get("platform")), _client(body.get("version")),
+                   route, message or "?", where or "?")
+    return True
 
 
 _last_failure: dict[int, float] = {}

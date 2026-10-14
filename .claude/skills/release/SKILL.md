@@ -60,9 +60,14 @@ the output. If something fails, fix the cause; never bypass it (`--no-verify`,
 ```bash
 py -3.13 -m pytest -q
 ruff check .
+py -3.13 scripts/build_app_js.py --check     # app.js собран из webapp/src/app (v2.176.0)
+node --test tests/js/*.test.js
 ```
 
-Both must be clean before anything below happens. If either is red, stop and fix —
+If the release touches the Mini App (`webapp/`, `bot/webapp/`), also run the
+`app-check` skill (browser tests and screenshot baselines) before the PR.
+
+All must be clean before anything below happens. If either is red, stop and fix —
 don't open a PR on red, don't tell the user it's ready. Note the passing test count
 from pytest's `N passed` line; you'll need it for the docs sync.
 

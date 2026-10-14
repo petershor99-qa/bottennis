@@ -110,6 +110,8 @@ UI_ICONS = [
     "chart-pie", "flask", "poo",
     # v2.176.0: листание итогов дня, «Поделиться», фильтр истории
     "chevron-left", "share", "filter",
+    # v2.177.0: «Твой месяц», летопись, счета клуба
+    "sparkles", "book", "list-numbers",
 ]
 
 

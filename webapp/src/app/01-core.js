@@ -197,9 +197,23 @@
   }
 
   // Пустой экран — со значком; ошибка — со значком и кнопкой «Повторить» (v2.169.0)
+  // Пустой экран (v2.177.0): свой рисунок — ракетка и мяч над сеткой — вместо
+  // стандартного значка; у ошибки — прежний значок
+  function tableArt() {
+    var s = svg("svg", { "class": "table-art", viewBox: "0 0 120 72", "aria-hidden": "true" });
+    s.appendChild(svg("path", { d: "M8 58 H112", "class": "art-table" }));
+    s.appendChild(svg("path", { d: "M60 40 V58", "class": "art-net" }));
+    s.appendChild(svg("path", { d: "M54 40 H66", "class": "art-net" }));
+    s.appendChild(svg("circle", { cx: 34, cy: 30, r: 13, "class": "art-racket" }));
+    s.appendChild(svg("path", { d: "M42 39 L50 50", "class": "art-handle" }));
+    s.appendChild(svg("circle", { cx: 84, cy: 22, r: 5, "class": "art-ball" }));
+    s.appendChild(svg("path", { d: "M84 30 Q86 44 92 54", "class": "art-trail" }));
+    return s;
+  }
+
   function emptyState(container, text, isError) {
     var box = el("div", "state" + (isError ? " state-error" : ""));
-    box.appendChild(useIcon(isError ? "info-circle" : "ball-tennis", "state-ico"));
+    box.appendChild(isError ? useIcon("info-circle", "state-ico") : tableArt());
     box.appendChild(el("p", "state-text", text));
     if (isError) {
       var again = el("button", "more", "Повторить");

@@ -24,6 +24,23 @@
     return p;
   }
 
+  // Ошибки JS на устройстве (v2.177.0): после запуска — в журнал сервера, не
+  // больше трёх за сессию. Только запись в лог, без уведомлений.
+  var reportedErrors = 0;
+  window.addEventListener("error", function (e) {
+    if (reportedErrors >= 3 || !initDataNow() || !e || !e.message) return;
+    reportedErrors += 1;
+    var info = clientInfo();
+    try {
+      fetch("api/client_error", {
+        method: "POST", keepalive: true,
+        headers: { "Authorization": "tma " + initDataNow(), "Content-Type": "application/json" },
+        body: JSON.stringify({ message: e.message, where: (e.filename || "").split("/").pop() + ":" + e.lineno,
+          route: currentRoute(), platform: info.platform, version: info.version })
+      }).catch(function () {});
+    } catch (err) { /* отчёт не должен мешать */ }
+  });
+
   function post(path, body) {
     var initData = initDataNow();
     if (!initData) return Promise.reject(new Error("Откройте приложение из бота."));
