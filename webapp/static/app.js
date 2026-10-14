@@ -9,11 +9,26 @@
 
   // В Node (тесты tests/js, v2.174.0) — только чистые функции, без DOM и Telegram
   if (typeof window === "undefined") {
-    module.exports = { matchesWord: matchesWord, screenName: screenName, splitNumber: splitNumber, badgeClass: badgeClass };
+    module.exports = {
+      matchesWord: matchesWord, screenName: screenName, splitNumber: splitNumber, badgeClass: badgeClass,
+      parseLaunchParams: parseLaunchParams, isColorDark: isColorDark
+    };
     return;
   }
 
+  // Скрипт Telegram может прийти позже страницы или не прийти вовсе (медленный
+  // или закрытый telegram.org) — с v2.175.0 приложение не ждёт его: подпись для
+  // входа и тему берёт из адреса запуска (#tgWebAppData=…), а кнопку «Назад»,
+  // вибрацию и тему Telegram подключает, когда скрипт придёт (attachTelegram).
   var tg = window.Telegram && window.Telegram.WebApp;
+  var launch = parseLaunchParams(location.hash);
+  if (launch.tgWebAppData) {
+    // Скрипт Telegram, пришедший после смены адреса, возьмёт параметры отсюда
+    try { window.sessionStorage.setItem("__telegram__initParams", JSON.stringify(launch)); } catch (e) { /* нет памяти */ }
+  } else {
+    try { launch = JSON.parse(window.sessionStorage.getItem("__telegram__initParams")) || {}; } catch (e) { launch = {}; }
+  }
+  var telegramAt = null;  // через сколько мс после старта пришёл скрипт Telegram
   var root = document.documentElement;
   var app = document.getElementById("app");
   var tabbar = document.getElementById("tabbar");
@@ -23,8 +38,66 @@
   var viewerId = null;
 
   // ── Тема, вибрация ─────────────────────────────────────────────────────────
+  // Параметры запуска из адреса: «#tgWebAppData=…&tgWebAppVersion=…» -> объект.
+  // Разбор как у telegram-web-app.js; адрес-маршрут «#/rating» — пустой объект.
+  function parseLaunchParams(hash) {
+    var out = {};
+    hash = String(hash || "").replace(/^#/, "");
+    if (!hash || hash.charAt(0) === "/" || hash.indexOf("=") < 0) return out;
+    var q = hash.indexOf("?");
+    if (q >= 0) hash = hash.slice(q + 1);
+    hash.split("&").forEach(function (pair) {
+      var i = pair.indexOf("=");
+      if (i <= 0) return;
+      out[decodeParam(pair.slice(0, i))] = decodeParam(pair.slice(i + 1));
+    });
+    return out;
+  }
+
+  function decodeParam(s) {
+    try { return decodeURIComponent(s.replace(/\+/g, "%20")); } catch (e) { return s; }
+  }
+
+  // Тёмный ли цвет фона «#RRGGBB» — та же формула, что у Telegram
+  function isColorDark(hex) {
+    var m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ""));
+    if (!m) return false;
+    var r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
+    return Math.sqrt(0.299 * r * r + 0.587 * g * g + 0.114 * b * b) < 120;
+  }
+
+  function launchDark() {
+    try { return isColorDark(JSON.parse(launch.tgWebAppThemeParams || "{}").bg_color); }
+    catch (e) { return false; }
+  }
+
+  function initDataNow() { return (tg && tg.initData) || launch.tgWebAppData || ""; }
+
+  function clientInfo() {
+    return {
+      platform: (tg && tg.platform) || launch.tgWebAppPlatform || "",
+      version: (tg && tg.version) || launch.tgWebAppVersion || ""
+    };
+  }
+
+  // Запрос с ограничением по времени: без него зависший ответ оставлял
+  // «Загрузку…» навсегда (v2.175.0)
+  var FETCH_TIMEOUT_MS = 15000;
+  function timedFetch(url, opts) {
+    var ctrl = window.AbortController ? new AbortController() : null;
+    if (ctrl) opts.signal = ctrl.signal;
+    return new Promise(function (resolve, reject) {
+      var timer = setTimeout(function () {
+        if (ctrl) ctrl.abort();
+        reject(new Error("Сервер не ответил. Попробуйте ещё раз."));
+      }, FETCH_TIMEOUT_MS);
+      fetch(url, opts).then(function (r) { clearTimeout(timer); resolve(r); },
+        function (e) { clearTimeout(timer); reject(e); });
+    });
+  }
+
   function applyTheme() {
-    var dark = tg && tg.colorScheme === "dark";
+    var dark = tg ? tg.colorScheme === "dark" : launchDark();
     root.setAttribute("data-theme", dark ? "dark" : "light");
     if (!tg) return;
     try {
@@ -216,7 +289,7 @@
       apply(cached);
       return Promise.resolve(cached);
     }
-    var initData = tg && tg.initData;
+    var initData = initDataNow();
     if (!initData) return Promise.resolve(null);
     var pending = fetch("api/photo/" + id, { headers: { "Authorization": "tma " + initData } })
       .then(function (r) { return r.ok ? r.blob() : null; })
@@ -263,26 +336,28 @@
   var apiCache = {};
 
   function api(path) {
-    var initData = tg && tg.initData;
+    var initData = initDataNow();
     if (!initData) return Promise.reject(new Error("Откройте приложение из бота."));
     var hit = apiCache[path];
     if (hit && Date.now() - hit.t < CACHE_TTL_MS) return hit.p;
-    var p = fetch("api/" + path, { headers: { "Authorization": "tma " + initData } })
+    var p = timedFetch("api/" + path, { headers: { "Authorization": "tma " + initData } })
       .then(function (resp) {
         return resp.json().then(function (body) {
           if (!resp.ok) throw new Error(body.error || "Не удалось загрузить данные.");
           return body;
         });
-      }, function () { throw new Error("Нет связи с сервером. Попробуйте ещё раз."); });
+      }, function (e) {
+        throw e && /не ответил/.test(e.message) ? e : new Error("Нет связи с сервером. Попробуйте ещё раз.");
+      });
     apiCache[path] = { t: Date.now(), p: p };
     p.catch(function () { delete apiCache[path]; });
     return p;
   }
 
   function post(path, body) {
-    var initData = tg && tg.initData;
+    var initData = initDataNow();
     if (!initData) return Promise.reject(new Error("Откройте приложение из бота."));
-    return fetch("api/" + path, {
+    return timedFetch("api/" + path, {
       method: "POST",
       headers: { "Authorization": "tma " + initData, "Content-Type": "application/json" },
       body: JSON.stringify(body)
@@ -306,10 +381,19 @@
   }
 
   function track(route) {
-    var initData = tg && tg.initData;
+    var initData = initDataNow();
     if (!initData) return;
     var body = { screen: screenName(route, viewerId) };
-    if (firstTrack && window.performance) { body.boot_ms = Math.round(performance.now()); firstTrack = false; }
+    if (firstTrack && window.performance) {
+      // v2.175.0: и клиент Telegram, и когда пришёл его скрипт — в лог сервера
+      var info = clientInfo();
+      body.boot_ms = Math.round(performance.now());
+      body.platform = info.platform;
+      body.version = info.version;
+      body.tg_ms = telegramAt;
+      firstTrack = false;
+      window.__clubBooted = true;
+    }
     try {
       fetch("api/track", {
         method: "POST", keepalive: true,
@@ -1790,27 +1874,46 @@
 
   document.addEventListener("visibilitychange", function () { if (document.hidden) onHidden(); else onShown(); });
 
+  // Скрипт Telegram пришёл (сразу или позже страницы) — подключить его
+  function attachTelegram() {
+    var w = window.Telegram && window.Telegram.WebApp;
+    if (!w || w === attachTelegram.done) return;
+    attachTelegram.done = w;
+    tg = w;
+    if (window.performance) telegramAt = Math.round(performance.now());
+    applyTheme();
+    try {
+      tg.ready();
+      tg.expand();
+      // Свайп вниз при прокрутке не закрывает приложение (Telegram 7.7+, v2.171.0)
+      if (tg.isVersionAtLeast && tg.isVersionAtLeast("7.7") && tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+      tg.onEvent("themeChanged", function () { applyTheme(); shell = null; render(true); });
+      if (tg.BackButton) {
+        tg.BackButton.onClick(function () { history.back(); });
+        if (renderedRoute !== null && renderedRoute !== "" && renderedRoute !== "rating" &&
+            renderedRoute !== "player/" + viewerId) tg.BackButton.show();
+      }
+      // Свернули/развернули приложение (Telegram 8.0+) — то же, что смена видимости
+      tg.onEvent("deactivated", onHidden);
+      tg.onEvent("activated", onShown);
+    } catch (e) { /* старый клиент — работаем без этих возможностей */ }
+  }
+
   applyTheme();
-  if (tg) {
-    tg.ready();
-    tg.expand();
-    // Свайп вниз при прокрутке не закрывает приложение (Telegram 7.7+, v2.171.0)
-    try { if (tg.isVersionAtLeast && tg.isVersionAtLeast("7.7") && tg.disableVerticalSwipes) tg.disableVerticalSwipes(); }
-    catch (e) { /* старый клиент — как раньше */ }
-    tg.onEvent("themeChanged", function () { applyTheme(); shell = null; render(true); });
-    if (tg.BackButton) tg.BackButton.onClick(function () { history.back(); });
-    // Свернули/развернули приложение (Telegram 8.0+) — то же, что смена видимости
-    tg.onEvent("deactivated", onHidden);
-    tg.onEvent("activated", onShown);
+  attachTelegram();
+  window.__clubOnTelegram = attachTelegram;
+  // Адрес запуска с параметрами Telegram — сразу на главную (или экран из ?r=),
+  // чтобы маршруты не путались с ними; параметры уже сохранены выше
+  if (location.hash && location.hash.indexOf("#/") !== 0 && launch.tgWebAppData) {
+    try { history.replaceState(null, "", location.pathname + location.search + "#/"); } catch (e) { /* старый браузер */ }
   }
   window.addEventListener("hashchange", function () { render(); });
   // Переход из бота сразу на нужный экран (v2.167.0): ?r=player/5, ?r=rating&from=3.
-  // Скрипт Telegram к этому моменту уже прочитал свои параметры из адреса.
   try {
     var params = new URLSearchParams(location.search);
     var startRoute = params.get("r");
     if (params.has("from")) pendingRise = parseInt(params.get("from"), 10) || null;
-    if (startRoute !== null && /^[a-z0-9_\/]{0,60}$/.test(startRoute) && location.hash.indexOf("#/") !== 0) {
+    if (startRoute !== null && /^[a-z0-9_\/]{0,60}$/.test(startRoute) && (location.hash === "#/" || location.hash.indexOf("#/") !== 0)) {
       history.replaceState(null, "", location.pathname + location.search + "#/" + startRoute);
     }
   } catch (e) { /* старый браузер — откроется главная */ }

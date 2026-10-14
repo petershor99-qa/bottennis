@@ -44,3 +44,26 @@ test("badgeClass: уровень ачивки и закрытые", () => {
   assert.equal(app.badgeClass({ earned: true, tier: "gold" }), "badge-gold");
   assert.equal(app.badgeClass({ earned: true }), "badge-earned");
 });
+
+test("parseLaunchParams: параметры запуска Telegram из адреса", () => {
+  const data = "query_id=AA&user=%7B%22id%22%3A1%7D&hash=abc";
+  const p = app.parseLaunchParams("#tgWebAppData=" + encodeURIComponent(data) +
+    "&tgWebAppVersion=7.10&tgWebAppPlatform=tdesktop");
+  assert.equal(p.tgWebAppData, data);
+  assert.equal(p.tgWebAppVersion, "7.10");
+  assert.equal(p.tgWebAppPlatform, "tdesktop");
+  // маршрут приложения и пустой адрес — не параметры запуска
+  assert.deepEqual(app.parseLaunchParams("#/player/3"), {});
+  assert.deepEqual(app.parseLaunchParams(""), {});
+  // «+» — пробел, как у telegram-web-app.js; битая кодировка не роняет разбор
+  assert.equal(app.parseLaunchParams("#a=b+c&bad=%E0%A4%A").a, "b c");
+  assert.equal(app.parseLaunchParams("#bad=%E0%A4%A").bad, "%E0%A4%A");
+});
+
+test("isColorDark: тема по цвету фона", () => {
+  assert.equal(app.isColorDark("#17212b"), true);
+  assert.equal(app.isColorDark("#ffffff"), false);
+  assert.equal(app.isColorDark("17212B"), true);
+  assert.equal(app.isColorDark(undefined), false);
+  assert.equal(app.isColorDark("red"), false);
+});
