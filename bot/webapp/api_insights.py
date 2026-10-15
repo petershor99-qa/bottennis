@@ -192,26 +192,41 @@ async def usage_payload(session: AsyncSession) -> dict:
 
 
 BOOT_DAYS = 7
+SLOW_BOOT_MS = 3000  # «медленный» запуск в «Использовании» (v2.180.0)
 
 
 async def boot_summary(session: AsyncSession) -> list[dict]:
     """Запуск приложения за BOOT_DAYS дней (v2.177.0): медиана всего и по клиентам."""
     rows = (await session.execute(
-        select(AppBoot.ms, AppBoot.platform).where(AppBoot.created_at >= _now() - timedelta(days=BOOT_DAYS))
+        select(AppBoot.ms, AppBoot.platform, AppBoot.failed)
+        .where(AppBoot.created_at >= _now() - timedelta(days=BOOT_DAYS))
     )).all()
     if not rows:
         return []
 
-    def line(label: str, values: list[int]) -> dict:
-        return {"label": label, "value": f"{median(values) / 1000:.1f} с".replace(".", ","),
-                "note": _ru_plural(len(values), "запуск", "запуска", "запусков")}
+    def seconds(ms: float) -> str:
+        return f"{ms / 1000:.1f} с".replace(".", ",")
 
-    out = [line(f"Все клиенты, {BOOT_DAYS} дней", [r.ms for r in rows])]
-    by_platform: dict[str, list[int]] = {}
+    def line(label: str, group: list) -> dict:
+        # v2.180.0: кроме медианы — 90-й процентиль, доля медленных и неудачные запуски
+        values = sorted(r.ms for r in group if not r.failed)
+        fails = sum(1 for r in group if r.failed)
+        parts = [_ru_plural(len(values), "запуск", "запуска", "запусков")]
+        if values:
+            parts.append(f"90% — до {seconds(values[int(0.9 * (len(values) - 1))])}")
+            slow = sum(1 for v in values if v > SLOW_BOOT_MS)
+            if slow:
+                parts.append(f"дольше {SLOW_BOOT_MS // 1000} с — {round(slow * 100 / len(values))}%")
+        if fails:
+            parts.append(f"не запустилось — {fails}")
+        return {"label": label, "value": seconds(median(values)) if values else "—", "note": " · ".join(parts)}
+
+    out = [line(f"Все клиенты, {BOOT_DAYS} дней", list(rows))]
+    by_platform: dict[str, list] = {}
     for r in rows:
-        by_platform.setdefault(r.platform or "неизвестно", []).append(r.ms)
-    for platform, values in sorted(by_platform.items(), key=lambda kv: -len(kv[1])):
-        out.append(line(platform, values))
+        by_platform.setdefault(r.platform or "неизвестно", []).append(r)
+    for platform, group in sorted(by_platform.items(), key=lambda kv: -len(kv[1])):
+        out.append(line(platform, group))
     return out
 
 

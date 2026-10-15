@@ -48,8 +48,9 @@
     card.stats.forEach(function (s, i) {
       var cell = el("div", "card-stat stagger");
       cell.style.animationDelay = (i * 50) + "ms";
-      cell.title = s.name;
-      cell.appendChild(el("span", "card-stat-value scoreboard", String(s.value)));
+      cell.title = s.name + (s.tier_hint ? ": " + s.tier_hint : "");
+      // Цвет — относительно клуба (v2.180.0): серый — мало данных, золото — лучший
+      cell.appendChild(el("span", "card-stat-value scoreboard" + (s.tier ? " tier tier-" + s.tier : ""), String(s.value)));
       cell.appendChild(el("span", "card-stat-name", s.short));
       wrap.appendChild(cell);
     });
@@ -585,7 +586,15 @@
       body.appendChild(card);
       var axes = section("Оси стиля");
       radar.axes.forEach(function (ax) {
-        axes.list.appendChild(itemRow({ label: ax.name, value: ax.value + "%", note: ax.hint, progress: ax.value / 100 }));
+        var row = itemRow({ label: ax.name, value: ax.value + "%", note: ax.hint, progress: ax.value / 100 });
+        // v2.180.0: цвет и пояснение «на фоне клуба»
+        if (ax.tier) {
+          var v = row.querySelector(".value");
+          if (v) v.className += " tier tier-" + ax.tier;
+          var body = row.querySelector(".body");
+          if (body && ax.tier_hint) body.insertBefore(el("div", "tier-note tier-" + ax.tier, ax.tier_hint), body.children[1] || null);
+        }
+        axes.list.appendChild(row);
       });
       body.appendChild(axes);
       if (radar.narrative) body.appendChild(el("p", "footnote", radar.narrative));

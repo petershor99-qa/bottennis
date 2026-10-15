@@ -59,7 +59,7 @@ from bot.webapp.challenge_open import open_challenge
 from bot.webapp.config import is_admin, is_webapp_allowed, webapp_listen
 from bot.webapp.photos import PhotoCache, photo_etag
 from bot.webapp.share import send_share
-from bot.webapp.usage import SCREEN_RE, UsageWriter, log_boot_failure, log_boot_time, log_client_error
+from bot.webapp.usage import SCREEN_RE, UsageWriter, client_name, log_boot_failure, log_boot_time, log_client_error
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,7 @@ BOT_KEY: web.AppKey = web.AppKey("bot")
 PHOTOS_KEY: web.AppKey[PhotoCache] = web.AppKey("photos", PhotoCache)
 USAGE_KEY: web.AppKey[UsageWriter] = web.AppKey("usage", UsageWriter)
 TRACK_REQUEST_KEY = "bottennis_track"  # что записать в счётчик после ответа
+BOOT_FAIL_REQUEST_KEY = "bottennis_boot_fail"  # неудачный запуск — в app_boots после ответа (v2.180.0)
 ASSETS_KEY: web.AppKey[Assets] = web.AppKey("assets", Assets)
 # Ответы API крупнее этого сжимаются gzip (v2.172.0); мелкие — дороже сжимать
 COMPRESS_MIN_BYTES = 1024
@@ -123,6 +124,9 @@ def endpoint(handler: Handler) -> Callable[[web.Request], Awaitable[web.Response
                 boot = log_boot_time(screen_, boot_ms_, info_)
                 if boot:
                     request.app[USAGE_KEY].record_boot(*boot)
+        failed_platform = request.get(BOOT_FAIL_REQUEST_KEY)
+        if failed_platform is not None:
+            request.app[USAGE_KEY].record_boot(0, failed_platform, failed=True)
         if payload is None:
             return _json_error(404, "Не найдено.")
         if isinstance(payload, web.StreamResponse):
@@ -365,7 +369,12 @@ async def boot_fail(request, session, viewer):
         body = await request.json()
     except Exception:
         body = {}
-    return {"ok": log_boot_failure(viewer.telegram_id, body)}
+    logged = log_boot_failure(viewer.telegram_id, body)
+    if logged:
+        # v2.180.0: и в app_boots — «Использование» показывает число неудачных запусков
+        platform = body.get("platform") if isinstance(body, dict) else None
+        request[BOOT_FAIL_REQUEST_KEY] = "" if platform is None else client_name(platform)
+    return {"ok": logged}
 
 
 async def leaderboard(request, session, viewer):

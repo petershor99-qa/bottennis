@@ -50,6 +50,7 @@ from bot.utils import (
     pluralize_wins,
     rank_title,
 )
+from bot.webapp import style_tiers
 from bot.webapp.achievement_icons import ACHIEVEMENT_ICONS
 from bot.webapp.text import groups, plain
 
@@ -362,9 +363,15 @@ async def player_payload(session: AsyncSession, player: Player, viewer: Player) 
     earned = set(get_achievements(player))
     radar = _build_style_radar(s) if len(matches) >= MIN_MATCHES_FOR_RADAR else None
     radar_ok = radar is not None
+    card = _card(radar, s)
+    if card and radar:
+        # v2.180.0: цвет показателя — относительно клуба (bot/webapp/style_tiers.py)
+        ref = await style_tiers.club_reference(session)
+        for stat in card["stats"]:
+            stat["tier"], stat["tier_hint"] = style_tiers.tier(stat["name"], radar[stat["name"]], s, player.id, ref)
     return {
         "head": head,
-        "card": _card(radar, s),
+        "card": card,
         "tiles": tiles,
         "last10": last10,
         "goals": goals,
@@ -531,10 +538,15 @@ async def radar_payload(session: AsyncSession, player: Player) -> dict:
     archetype = _style_archetype(radar, s)
     hint = _closest_archetype_hint(radar, s) if archetype == NEUTRAL_ARCHETYPE else None
     narrative = _build_style_narrative(radar, s)
+    ref = await style_tiers.club_reference(session)   # v2.180.0: цвет оси относительно клуба
+    axes = []
+    for name, val in radar.items():
+        t, t_hint = style_tiers.tier(name, val, s, player.id, ref)
+        axes.append({"name": name, "value": round(val), "hint": AXIS_GLOSSARY[name], "tier": t, "tier_hint": t_hint})
     return {
         "title": "Радар стиля",
         "subtitle": player.display_name,
-        "axes": [{"name": name, "value": round(val), "hint": AXIS_GLOSSARY[name]} for name, val in radar.items()],
+        "axes": axes,
         "archetype": archetype or "",
         "description": (_archetype_description(archetype) or "") if archetype else "",
         "hint": plain(hint) if hint else "",

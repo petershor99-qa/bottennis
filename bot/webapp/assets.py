@@ -84,6 +84,7 @@ class Assets:
         css, js = self.get("app.css").version, self.get("app.js").version
         html = html.replace('href="static/app.css"', f'href="static/app.css?v={css}"')
         html = html.replace('s.src = "static/app.js"', f's.src = "static/app.js?v={js}"')
+        html = html.replace('href="static/app.js"', f'href="static/app.js?v={js}"')  # preload — тот же адрес
         tg = self.get("telegram-web-app.js").version
         html = html.replace('src="static/telegram-web-app.js"', f'src="static/telegram-web-app.js?v={tg}"')
         return html.encode("utf-8")
