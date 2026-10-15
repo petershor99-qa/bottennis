@@ -20,6 +20,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
 import pytest_asyncio
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
@@ -125,3 +126,13 @@ async def show_all_club_records(cb, session) -> None:
         for key, title in RECORD_CATEGORIES if groups[key]
     )
     await cb.message.edit_text(text)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_payload_cache():
+    """Кэш ответов приложения (v2.189.0) — по версии данных клуба; в разных тестах
+    разные базы могут совпасть по версии, поэтому перед каждым тестом — пустой."""
+    from bot.webapp import payload_cache, style_tiers
+    payload_cache.clear()
+    style_tiers._reference.clear()
+    yield

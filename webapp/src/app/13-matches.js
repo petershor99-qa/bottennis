@@ -158,7 +158,7 @@
     d.metrics.forEach(function (it) { m.list.appendChild(itemRow(it)); });
     c.appendChild(m);
     var s = section("Все встречи");
-    d.matches.forEach(function (x) { s.list.appendChild(matchRow(x, true)); });
+    appendInChunks(s.list, d.matches, function (x) { return matchRow(x, true); });
     c.appendChild(s);
   }
 
