@@ -162,13 +162,15 @@ test("chipSets: счёт из ленты для характера матча (v
   assert.equal(app.matchMood({ winner: "a", boss: false, sets }), "comeback");
 });
 
-test("replayTiming: партии по очереди укладываются в 4 секунды (v2.186.0)", () => {
+test("replayTiming: партии по очереди — около 2 секунд на матч (v2.187.0, было до 4)", () => {
   for (const n of [2, 3, 5, 7]) {
     const t = app.replayTiming(n);
-    assert.ok(t.per <= 800 && t.per >= 250);
-    assert.ok(250 + n * (t.per + t.gap) <= 4300, `n=${n}`);
+    assert.ok(t.per <= 350 && t.per >= 200);
+    assert.ok(t.start + n * (t.per + t.gap) <= 2300, `n=${n}`);
   }
-  assert.equal(app.replayTiming(2).per, 800);
+  assert.equal(app.replayTiming(2).per, 350);
+  const three = app.replayTiming(3);
+  assert.ok(three.start + 3 * (three.per + three.gap) <= 1400);   // обычный матч до двух побед — ~1,3 с
 });
 
 test("isPhoneClient: во весь экран сразу только на телефоне (v2.186.0)", () => {
