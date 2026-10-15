@@ -178,6 +178,7 @@ async def home(request, session, viewer):
     # v2.170.0: «Когда играют» — всем, «Использование» — только администратору
     payload["links"].append({"route": "when", "title": "Когда играют", "value": "", "icon": "clock"})
     payload["links"].append({"route": "pairs", "title": "Кто с кем", "value": "", "icon": "users"})  # v2.183.0
+    payload["links"].append({"route": "race", "title": "Гонка рейтинга", "value": "", "icon": "flag"})  # v2.184.0
     if is_admin(viewer.telegram_id):
         payload["links"].append({"route": "usage", "title": "Использование", "value": "", "icon": "chart-pie"})
     return payload
@@ -289,6 +290,10 @@ async def share(request, session, viewer):
                 "fail": (502, "Telegram не принял картинку. Попробуйте ещё раз.")}
     status, text = messages[result]
     return _json_error(status, text)
+
+
+async def race(request, session, viewer):
+    return await api_insights.race_payload(session)
 
 
 async def pairs(request, session, viewer):
@@ -577,6 +582,7 @@ def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
         ("/api/usage", usage),
         ("/api/since", since),
         ("/api/pairs", pairs),
+        ("/api/race", race),
     ]
     for path, handler in routes:
         app.router.add_get(path, endpoint(handler))
