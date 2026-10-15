@@ -16,7 +16,8 @@
   выгоды.
 """
 import os
-from datetime import datetime
+import sys
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -102,6 +103,56 @@ def _completed(
         status=MatchStatus.completed, winner_id=winner_id,
         sets_data=[{"w": 11, "l": 5}], rating_change=rc, completed_at=when,
     )
+
+
+class _FrozenMeta(type(datetime)):
+    """isinstance(x, datetime) в замороженном модуле — по настоящему datetime:
+    из БД и из арифметики приходят обычные datetime, не подкласс."""
+
+    def __instancecheck__(cls, obj):
+        return isinstance(obj, datetime)
+
+    def __subclasscheck__(cls, sub):
+        return issubclass(sub, datetime)
+
+
+def freeze_clock(monkeypatch, at: datetime) -> None:
+    """Останавливает часы кода под тестом на `at` (naive-UTC, как в БД).
+
+    Подменяет имя `datetime` во всех загруженных модулях bot.*: datetime.now()
+    там отдаёт `at`, конструктор и прочие методы — обычные. Нужно тестам, чьи
+    данные привязаны к «сегодня по МСК» (NOW/TODAY считаются при импорте модуля):
+    если прогон пересёк полночь МСК между импортом и тестом (CI 15.10, старт
+    в 23:59 МСК), код под тестом считал «сегодня» уже следующий день, а данные
+    теста оставались во «вчера». Остановленные часы делают такие тесты
+    независимыми от времени запуска; поведение продакшна не меняется.
+
+    Проверка подписи initData (bot.webapp.auth) остаётся на настоящих часах:
+    тест подписывает её по time.time(), и с остановленными часами запрос
+    «из будущего» получил бы 401.
+    """
+    aware = at.replace(tzinfo=timezone.utc)
+
+    class FrozenDateTime(datetime, metaclass=_FrozenMeta):
+        def __new__(cls, *args, **kwargs):
+            return datetime(*args, **kwargs)
+
+        @classmethod
+        def now(cls, tz=None):
+            return aware.astimezone(tz) if tz is not None else at
+
+        @classmethod
+        def utcnow(cls):
+            return at
+
+    for name, module in list(sys.modules.items()):
+        if name in _REAL_CLOCK_MODULES or not (name == "bot" or name.startswith("bot.")):
+            continue
+        if getattr(module, "datetime", None) is datetime:
+            monkeypatch.setattr(module, "datetime", FrozenDateTime)
+
+
+_REAL_CLOCK_MODULES = {"bot.webapp.auth"}
 
 
 async def show_all_club_records(cb, session) -> None:
