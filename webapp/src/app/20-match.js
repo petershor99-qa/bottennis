@@ -25,6 +25,84 @@
     });
   }
 
+  // Партии по очереди (v2.186.0): при первом открытии матча на этом устройстве
+  // партии «играются» одна за другой — полосы растут, очки набираются, счёт по
+  // партиям растёт. Вся запись не дольше REPLAY_TOTAL_MS; нажатие — сразу итог.
+  // Повторно, при «уменьшить движение» и при тихом обновлении — сразу итог.
+  // (числа — внутри replayTiming: в Node, где она проверяется, переменные модуля не заданы)
+  var REPLAY_KEY = "match_replay_seen_v1";
+
+  function replayTiming(n) {
+    var total = 4000, setMs = 800, gap = 180;
+    var per = Math.min(setMs, Math.floor(total / Math.max(1, n)) - gap);
+    return { per: Math.max(250, per), gap: gap };
+  }
+
+  function replaySeen(id) {
+    var list = [];
+    try { list = JSON.parse(window.localStorage.getItem(REPLAY_KEY) || "[]"); } catch (e) { return true; }
+    if (!Array.isArray(list)) list = [];
+    if (list.indexOf(id) >= 0) return true;
+    list.push(id);
+    try { window.localStorage.setItem(REPLAY_KEY, JSON.stringify(list.slice(-200))); } catch (e) { return true; }
+    return false;
+  }
+
+  function replaySets(card, rows, aNum, bNum, d) {
+    var t = replayTiming(d.sets.length);
+    var won = { a: 0, b: 0 }, timers = [], finished = false;
+    card.classList.add("replaying");
+    aNum.textContent = "0";
+    bNum.textContent = "0";
+    rows.forEach(function (r) {
+      r.li.classList.add("is-waiting");
+      r.parts.forEach(function (p) { p.bar.style.animation = "none"; p.bar.style.width = "0"; p.pts.textContent = "0"; });
+    });
+    function settle(i) {
+      rows[i].li.classList.remove("is-playing");
+      var s = d.sets[i];
+      won[s.a > s.b ? "a" : "b"] += 1;
+      aNum.textContent = String(won.a);
+      bNum.textContent = String(won.b);
+    }
+    function finish() {
+      if (finished) return;
+      finished = true;
+      timers.forEach(clearTimeout);
+      document.removeEventListener("click", skip, true);
+      rows.forEach(function (r) {
+        r.li.classList.remove("is-waiting", "is-playing");
+        r.parts.forEach(function (p) { p.bar.style.transition = "none"; p.bar.style.width = p.width; p.pts.textContent = p.final; });
+      });
+      var aSets = d.sets.filter(function (x) { return x.a > x.b; }).length;
+      aNum.textContent = String(aSets);
+      bNum.textContent = String(d.sets.length - aSets);
+      card.classList.remove("replaying");
+    }
+    function skip() { finish(); }
+    document.addEventListener("click", skip, true);
+    rows.forEach(function (r, i) {
+      timers.push(setTimeout(function () {
+        if (finished || !card.isConnected) { finish(); return; }
+        r.li.classList.remove("is-waiting");
+        r.li.classList.add("is-playing");   // кто взял партию — видно в её конце
+        var start = null;
+        r.parts.forEach(function (p) {
+          p.bar.style.transition = "width " + t.per + "ms linear, background-color .3s";
+          p.bar.style.width = p.width;
+        });
+        (function frame(ts) {
+          if (finished) return;
+          if (start === null) start = ts;
+          var k = Math.min(1, (ts - start) / t.per);
+          r.parts.forEach(function (p) { p.pts.textContent = String(Math.round(p.value * k)); });
+          if (k < 1) requestAnimationFrame(frame);
+          else { settle(i); haptic("select"); if (i === rows.length - 1) finish(); }
+        })(performance.now());
+      }, 250 + i * (t.per + t.gap)));
+    });
+  }
+
   function matchCardBlocks(d) {
     var aSets = d.sets.filter(function (x) { return x.a > x.b; }).length;
     var blocks = [titleBlock(d.a.name + " — " + d.b.name, d.date),
@@ -52,10 +130,15 @@
     }
     var aSets = d.sets.filter(function (x) { return x.a > x.b; }).length;
     var bSets = d.sets.length - aSets;
+    var replay = d.sets.length > 1 && d.id && !reduceMotion && !app.classList.contains("quiet") && !replaySeen(d.id);
     var score = el("div", "versus-score");
-    score.appendChild(num("versus-num" + (d.winner === "a" ? " tone-win" : ""), String(aSets)));
+    var aNum = replay ? el("div", "versus-num" + (d.winner === "a" ? " tone-win" : ""), "0")
+      : num("versus-num" + (d.winner === "a" ? " tone-win" : ""), String(aSets));
+    var bNum = replay ? el("div", "versus-num" + (d.winner === "b" ? " tone-win" : ""), "0")
+      : num("versus-num" + (d.winner === "b" ? " tone-win" : ""), String(bSets));
+    score.appendChild(aNum);
     score.appendChild(el("span", "versus-colon", ":"));
-    score.appendChild(num("versus-num" + (d.winner === "b" ? " tone-win" : ""), String(bSets)));
+    score.appendChild(bNum);
     row.appendChild(side(d.a, "a"));
     row.appendChild(score);
     row.appendChild(side(d.b, "b"));
@@ -64,9 +147,11 @@
     c.appendChild(card);
 
     var sets = section("Партии");
+    var rows = [];
     d.sets.forEach(function (st, i) {
-      var li = el("li", "row set-row stagger");
+      var li = el("li", "row set-row" + (replay ? "" : " stagger"));
       li.style.animationDelay = (i * 80) + "ms";
+      var parts = [];
       li.appendChild(el("div", "set-n", String(i + 1)));
       var bars = el("div", "set-bars");
       var max = Math.max(st.a, st.b, 11);
@@ -75,13 +160,17 @@
         var bar = el("i", "set-bar set-bar-" + x[0] + (x[2] ? " is-won" : ""));
         bar.style.width = Math.round(x[1] / max * 100) + "%";
         line.appendChild(bar);
-        line.appendChild(el("span", "set-pts" + (x[2] ? " is-won" : ""), String(x[1])));
+        var pts = el("span", "set-pts" + (x[2] ? " is-won" : ""), String(x[1]));
+        line.appendChild(pts);
         bars.appendChild(line);
+        parts.push({ bar: bar, pts: pts, width: bar.style.width, value: x[1], final: String(x[1]) });
       });
       li.appendChild(bars);
       sets.list.appendChild(li);
+      rows.push({ li: li, parts: parts });
     });
     c.appendChild(sets);
+    if (replay) replaySets(card, rows, aNum, bNum, d);
 
     if (d.reason || d.report) {
       var story = el("div", "card");

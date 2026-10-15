@@ -13,7 +13,7 @@
       matchesWord: matchesWord, screenName: screenName, splitNumber: splitNumber, badgeClass: badgeClass,
       parseLaunchParams: parseLaunchParams, isColorDark: isColorDark,
       filterMatches: filterMatches, recordLine: recordLine, compactDate: compactDate,
-      toggledReactions: toggledReactions, matchMood: matchMood, tapGuard: tapGuard, chipSets: chipSets,
+      toggledReactions: toggledReactions, matchMood: matchMood, tapGuard: tapGuard, chipSets: chipSets, isPhoneClient: isPhoneClient, replayTiming: replayTiming, ballHeight: ballHeight,
       nextNav: nextNav, sparkPoints: sparkPoints, odometerDigits: odometerDigits, raceOrder: raceOrder
     };
     return;

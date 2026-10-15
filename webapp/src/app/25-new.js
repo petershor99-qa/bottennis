@@ -117,5 +117,46 @@
 
   function syncFullscreenClass() {
     root.classList.toggle("is-fullscreen", !!(tg && tg.isFullscreen));
+    if (fsButton) {
+      var on = !!(tg && tg.isFullscreen);
+      fsButton.textContent = "";
+      fsButton.appendChild(icon(on ? "minimize" : "maximize", "ico-btn"));
+      fsButton.setAttribute("aria-label", on ? "Обычный размер" : "Во весь экран");
+      fsButton.title = on ? "Обычный размер" : "Во весь экран";
+    }
+  }
+
+  // Во весь экран всегда (v2.186.0): на телефоне — сразу при запуске (Telegram
+  // 8.0+; кнопки Telegram «закрыть» и «⋮» остаются поверх, под них — отступ
+  // safe area). На компьютере окно приложения Telegram не даёт «чуть увеличить»,
+  // только на весь монитор — поэтому там кнопка в углу, выбор запоминается на
+  // этом устройстве (localStorage, не CloudStorage: на телефоне свой режим).
+  var FS_KEY = "fullscreen_desktop_v1";
+  var fsButton = null;
+
+  function isPhoneClient(platform) { return platform === "android" || platform === "ios"; }
+
+  function desktopWantsFullscreen() {
+    try { return window.localStorage.getItem(FS_KEY) === "1"; } catch (e) { return false; }
+  }
+
+  function wantFullscreen() {
+    return isPhoneClient(clientInfo().platform) || desktopWantsFullscreen();
+  }
+
+  function setupFullscreen() {
+    if (!fullscreenAvailable()) return;
+    if (wantFullscreen()) enterFullscreen();
+    if (isPhoneClient(clientInfo().platform) || fsButton) return;
+    fsButton = el("button", "fs-toggle");
+    fsButton.type = "button";
+    fsButton.addEventListener("click", function () {
+      var on = !tg.isFullscreen;
+      try { window.localStorage.setItem(FS_KEY, on ? "1" : "0"); } catch (e) { /* без памяти — до закрытия */ }
+      if (on) enterFullscreen(); else leaveFullscreen();
+    });
+    document.body.appendChild(fsButton);
+    root.classList.add("has-fs-toggle");
+    syncFullscreenClass();
   }
 

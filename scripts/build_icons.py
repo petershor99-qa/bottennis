@@ -114,6 +114,8 @@ UI_ICONS = [
     "sparkles", "book", "list-numbers",
     # v2.181.0: иконка клуба на экране телефона
     "device-mobile",
+    # v2.186.0: «Во весь экран» на компьютере
+    "maximize", "minimize",
 ]
 
 
