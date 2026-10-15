@@ -197,6 +197,20 @@
     return bar;
   }
 
+  // «Пружинка» реакции (v2.180.0): кнопка сжимается и отпружинивает, над
+  // поставленной реакцией всплывает её значок
+  function reactionPop(bar, r, next) {
+    var nb = bar.querySelector('[data-kind="' + r.kind + '"]');
+    if (!nb) return;
+    nb.classList.add("pop");
+    var now = next.filter(function (x) { return x.kind === r.kind; })[0];
+    if (!now || !now.mine) return;
+    var fly = el("span", "reaction-fly");
+    fly.appendChild(useIcon(r.icon));
+    nb.appendChild(fly);
+    setTimeout(function () { if (fly.parentNode) fly.parentNode.removeChild(fly); }, 800);
+  }
+
   function reactionBar(matchId, list) {
     var box = el("div", "reactions-box");
     var bar = el("div", "reactions");
@@ -212,12 +226,14 @@
         b.type = "button";
         b.setAttribute("aria-label", r.title);
         b.setAttribute("aria-pressed", r.mine ? "true" : "false");
+        b.setAttribute("data-kind", r.kind);
         b.appendChild(useIcon(r.icon));
         if (r.count) b.appendChild(el("span", "reaction-n", String(r.count)));
         b.addEventListener("click", function () {
           haptic("select");
           var next = toggledReactions(items, r.kind);
           draw(next);
+          reactionPop(bar, r, next);
           post("match/" + matchId + "/react", { kind: r.kind }).then(function (resp) {
             draw(resp.reactions);
             delete apiCache["match/" + matchId];

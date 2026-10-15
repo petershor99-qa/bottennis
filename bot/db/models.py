@@ -183,6 +183,8 @@ class AppBoot(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     ms: Mapped[int]
     platform: Mapped[str] = mapped_column(default="")
+    # Запуск не дошёл до первого экрана (v2.180.0, отчёт /api/boot_fail): ms = 0
+    failed: Mapped[bool] = mapped_column(default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), index=True,
     )

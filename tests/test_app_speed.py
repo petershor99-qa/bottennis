@@ -71,7 +71,7 @@ async def test_unversioned_or_stale_asset_revalidates(client, query):
 async def test_icons_and_fonts_cache_headers(client):
     icons = await client.get("/static/icons.svg")
     assert icons.status == 200 and icons.headers["Content-Type"].startswith("image/svg+xml")
-    font = await client.get("/static/fonts/Raleway-Variable.woff2")
+    font = await client.get("/static/fonts/Raleway-Subset.woff2")
     assert font.status == 200 and font.headers["Cache-Control"] == "public, max-age=2592000"
 
 

@@ -251,7 +251,7 @@ async def test_index_and_static_are_served(client):
     page = await client.get("/")
     assert page.status == 200
     assert 'id="tabbar"' in await page.text()
-    for path in ("/static/app.css", "/static/app.js", "/static/fonts/Raleway-Variable.woff2", "/static/fonts/OFL.txt"):
+    for path in ("/static/app.css", "/static/app.js", "/static/fonts/Raleway-Subset.woff2", "/static/fonts/OFL.txt"):
         resp = await client.get(path)
         assert resp.status == 200
         # Ответ дочитываем: на Windows недочитанный крупный app.js (>128 КБ)

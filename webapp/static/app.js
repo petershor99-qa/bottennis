@@ -753,6 +753,20 @@
     return bar;
   }
 
+  // «Пружинка» реакции (v2.180.0): кнопка сжимается и отпружинивает, над
+  // поставленной реакцией всплывает её значок
+  function reactionPop(bar, r, next) {
+    var nb = bar.querySelector('[data-kind="' + r.kind + '"]');
+    if (!nb) return;
+    nb.classList.add("pop");
+    var now = next.filter(function (x) { return x.kind === r.kind; })[0];
+    if (!now || !now.mine) return;
+    var fly = el("span", "reaction-fly");
+    fly.appendChild(useIcon(r.icon));
+    nb.appendChild(fly);
+    setTimeout(function () { if (fly.parentNode) fly.parentNode.removeChild(fly); }, 800);
+  }
+
   function reactionBar(matchId, list) {
     var box = el("div", "reactions-box");
     var bar = el("div", "reactions");
@@ -768,12 +782,14 @@
         b.type = "button";
         b.setAttribute("aria-label", r.title);
         b.setAttribute("aria-pressed", r.mine ? "true" : "false");
+        b.setAttribute("data-kind", r.kind);
         b.appendChild(useIcon(r.icon));
         if (r.count) b.appendChild(el("span", "reaction-n", String(r.count)));
         b.addEventListener("click", function () {
           haptic("select");
           var next = toggledReactions(items, r.kind);
           draw(next);
+          reactionPop(bar, r, next);
           post("match/" + matchId + "/react", { kind: r.kind }).then(function (resp) {
             draw(resp.reactions);
             delete apiCache["match/" + matchId];
@@ -1033,8 +1049,9 @@
     card.stats.forEach(function (s, i) {
       var cell = el("div", "card-stat stagger");
       cell.style.animationDelay = (i * 50) + "ms";
-      cell.title = s.name;
-      cell.appendChild(el("span", "card-stat-value scoreboard", String(s.value)));
+      cell.title = s.name + (s.tier_hint ? ": " + s.tier_hint : "");
+      // Цвет — относительно клуба (v2.180.0): серый — мало данных, золото — лучший
+      cell.appendChild(el("span", "card-stat-value scoreboard" + (s.tier ? " tier tier-" + s.tier : ""), String(s.value)));
       cell.appendChild(el("span", "card-stat-name", s.short));
       wrap.appendChild(cell);
     });
@@ -1570,7 +1587,15 @@
       body.appendChild(card);
       var axes = section("Оси стиля");
       radar.axes.forEach(function (ax) {
-        axes.list.appendChild(itemRow({ label: ax.name, value: ax.value + "%", note: ax.hint, progress: ax.value / 100 }));
+        var row = itemRow({ label: ax.name, value: ax.value + "%", note: ax.hint, progress: ax.value / 100 });
+        // v2.180.0: цвет и пояснение «на фоне клуба»
+        if (ax.tier) {
+          var v = row.querySelector(".value");
+          if (v) v.className += " tier tier-" + ax.tier;
+          var body = row.querySelector(".body");
+          if (body && ax.tier_hint) body.insertBefore(el("div", "tier-note tier-" + ax.tier, ax.tier_hint), body.children[1] || null);
+        }
+        axes.list.appendChild(row);
       });
       body.appendChild(axes);
       if (radar.narrative) body.appendChild(el("p", "footnote", radar.narrative));
@@ -2823,6 +2848,7 @@
       if (token !== renderToken) return;
       app.textContent = "";
       entry[3](app, data, match);
+      if (route === "") saveHomeSnapshot(data);
       finishRender(route, false);
     }, function (err) {
       if (token !== renderToken) return;
@@ -2932,9 +2958,70 @@
     }, 1200);
   }
 
+  // Мгновенный старт (v2.180.0): последняя главная хранится на устройстве
+  // (localStorage, привязка к игроку, не старше SNAP_MAX_AGE_MS). При запуске на
+  // главную она показывается сразу, со строкой «Обновляется…», а свежие данные
+  // заменяют её на месте — без скелета и анимаций. Нет связи — остаётся снимок
+  // с пометкой, от какого он времени.
+  var SNAP_KEY = "snap_home_v1";
+  var SNAP_MAX_AGE_MS = 3 * 24 * 3600 * 1000;
+
+  function launchUserId() {
+    try { return JSON.parse(new URLSearchParams(initDataNow()).get("user") || "null").id || null; }
+    catch (e) { return null; }
+  }
+
+  function saveHomeSnapshot(data) {
+    var uid = launchUserId();
+    if (!uid || !data || data.empty) return;
+    try { window.localStorage.setItem(SNAP_KEY, JSON.stringify({ t: Date.now(), u: uid, v: viewerId, d: data })); }
+    catch (e) { /* нет памяти — старт как обычно */ }
+  }
+
+  function readHomeSnapshot() {
+    var uid = launchUserId();
+    if (!uid) return null;
+    try {
+      var snap = JSON.parse(window.localStorage.getItem(SNAP_KEY) || "null");
+      if (snap && snap.u === uid && snap.d && Date.now() - snap.t < SNAP_MAX_AGE_MS) return snap;
+    } catch (e) { /* испорченный снимок — как будто его нет */ }
+    return null;
+  }
+
+  function snapshotNote(text) {
+    var old = document.getElementById("snap-note");
+    if (old) old.parentNode.removeChild(old);
+    if (!text) return;
+    var note = el("div", "snap-note", text);
+    note.id = "snap-note";
+    app.insertBefore(note, app.firstChild);
+  }
+
   // Старт без лишнего ожидания (v2.172.0): данные первого экрана запрашиваются
   // сразу, параллельно с /api/me, — render() возьмёт их из кэша ответов
-  try { routeJobs(currentRoute()); } catch (e) { /* первый экран загрузит сам */ }
-  api("me").then(function (d) { viewerId = d.id; }, function () { viewerId = null; })
-    .then(function () { render(); prefetchTabs(); });
+  var firstJobs = [];
+  try { firstJobs = routeJobs(currentRoute()); } catch (e) { /* первый экран загрузит сам */ }
+  var meReady = api("me").then(function (d) { viewerId = d.id; }, function () { viewerId = null; });
+  var snap = currentRoute() === "" ? readHomeSnapshot() : null;
+  if (snap) {
+    viewerId = snap.v;
+    app.textContent = "";
+    app.classList.add("quiet");
+    drawTabbar("home");
+    try { renderHome(app, snap.d); snapshotNote("Обновляется…"); }
+    catch (e) { snap = null; app.textContent = ""; }
+  }
+  if (snap) {
+    Promise.all([meReady].concat(firstJobs)).then(function () {
+      snapshotNote("");
+      scrollPos[""] = window.scrollY;   // игрок мог уже пролистать снимок — место сохраняется
+      render(true);
+      prefetchTabs();
+    }, function () {
+      var t = new Date(snap.t);
+      snapshotNote("Нет связи — данные на " + ("0" + t.getHours()).slice(-2) + ":" + ("0" + t.getMinutes()).slice(-2));
+    });
+  } else {
+    meReady.then(function () { render(); prefetchTabs(); });
+  }
 })();

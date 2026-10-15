@@ -4,3 +4,5 @@ pytest-asyncio==1.4.0
 hypothesis==6.168.5
 ruff==0.15.15
 mypy==2.3.1
+fonttools==4.66.1  # урезание шрифта Mini App и его тест (v2.180.0)
+brotli==1.2.0  # чтение woff2 для fonttools

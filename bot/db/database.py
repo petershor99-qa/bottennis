@@ -67,6 +67,8 @@ async def _migrate_db() -> None:
         "ALTER TABLE players ADD COLUMN photo_file_id TEXT",
         # v2.179.0 — версия постоянной клавиатуры у игрока
         "ALTER TABLE players ADD COLUMN reply_kb_version INTEGER NOT NULL DEFAULT 0",
+        # v2.180.0 — неудачные запуски Mini App тоже в app_boots
+        "ALTER TABLE app_boots ADD COLUMN failed BOOLEAN NOT NULL DEFAULT 0",
     ]
     async with engine.begin() as conn:
         for sql in migrations:
