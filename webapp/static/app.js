@@ -638,6 +638,19 @@
     return line;
   }
 
+  // Игроки матча в ленте — по строке на каждого (v2.187.0): в одну строку длинные
+  // имена переносились, и аватар второго игрока уезжал один на следующую строку
+  function feedPlayers(m) {
+    var wrap = el("div", "feed-players");
+    [["a", m.a], ["b", m.b]].forEach(function (x) {
+      var row = el("div", "feed-player");
+      row.appendChild(avatar(x[1], "sm"));
+      row.appendChild(el("span", "vs-name" + (m.winner === x[0] ? " win" : ""), x[1].name));
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
   // Лента клуба (v2.168.0): матчи (у ярких — репортаж), ачивки, рекорды, трон
   // Лента клуба (v2.171.0): каждое событие — отдельная карточка, заголовок дня
   // прилипает к верху при прокрутке, «Показать ещё» догружает порции по 15.
@@ -661,7 +674,7 @@
       li = clickable(el("li", "feed-card feed-match"), "match/" + it.id);
       var tags = feedTags(it, featured);
       if (tags) body.appendChild(tags);
-      body.appendChild(versusLine(it));
+      body.appendChild(feedPlayers(it));
       var score = el("div", "feed-score");
       score.appendChild(setChips(it.sets, it.winner));
       if (it.delta) score.appendChild(el("span", "feed-delta tone-win", it.delta));
@@ -2513,15 +2526,16 @@
 
   // Партии по очереди (v2.186.0): при первом открытии матча на этом устройстве
   // партии «играются» одна за другой — полосы растут, очки набираются, счёт по
-  // партиям растёт. Вся запись не дольше REPLAY_TOTAL_MS; нажатие — сразу итог.
+  // партиям растёт. Вся запись — около 2 с (replayTiming); нажатие — сразу итог.
   // Повторно, при «уменьшить движение» и при тихом обновлении — сразу итог.
   // (числа — внутри replayTiming: в Node, где она проверяется, переменные модуля не заданы)
   var REPLAY_KEY = "match_replay_seen_v1";
 
+  // v2.187.0: быстрее — было до 0,8 с на партию и до 4 с на матч, «долго»
   function replayTiming(n) {
-    var total = 4000, setMs = 800, gap = 180;
+    var total = 2000, setMs = 350, gap = 60;
     var per = Math.min(setMs, Math.floor(total / Math.max(1, n)) - gap);
-    return { per: Math.max(250, per), gap: gap };
+    return { per: Math.max(200, per), gap: gap, start: 100 };
   }
 
   function replaySeen(id) {
@@ -2585,7 +2599,7 @@
           if (k < 1) requestAnimationFrame(frame);
           else { settle(i); haptic("select"); if (i === rows.length - 1) finish(); }
         })(performance.now());
-      }, 250 + i * (t.per + t.gap)));
+      }, t.start + i * (t.per + t.gap)));
     });
   }
 
