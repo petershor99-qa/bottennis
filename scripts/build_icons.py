@@ -112,6 +112,8 @@ UI_ICONS = [
     "chevron-left", "share", "filter",
     # v2.177.0: «Твой месяц», летопись, счета клуба
     "sparkles", "book", "list-numbers",
+    # v2.181.0: иконка клуба на экране телефона
+    "device-mobile",
 ]
 
 

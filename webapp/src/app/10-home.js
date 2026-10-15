@@ -302,6 +302,7 @@
     c.appendChild(header("Клуб сегодня", d.today.label));
     if (d.empty) { emptyState(c, d.empty); return; }
     firstRunHint(c);
+    checkSince(c);
     var homeCols = twoCols(c, false);
     var outer = c;
     c = homeCols.main;
@@ -317,8 +318,10 @@
     me.appendChild(num("me-rating", d.me.rating));
     c.appendChild(me);
     c.appendChild(challengeButton(null));
+    if (d.goals) c.appendChild(goalsBlock(d.goals));
 
     if (d.links.length) c.appendChild(clubTiles(d.links));
+    homeIconOffer(c);
 
     if (d.featured) {
       var f = d.featured.id ? clickable(el("div", "card feature"), "match/" + d.featured.id) : el("div", "card feature");

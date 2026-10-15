@@ -783,3 +783,27 @@ html, body {
 .snap-note { position: sticky; top: 0; z-index: 5; margin: 0 auto 8px; width: fit-content; padding: 4px 12px;
   border-radius: 999px; background: var(--card); color: var(--hint); font-size: 12px; font-weight: 600;
   box-shadow: 0 1px 4px rgba(0, 0, 0, .08); }
+
+/* ── v2.181.0: «Цели недели», «Пока тебя не было», иконка на экране ────── */
+.goal-row { align-items: center; }
+.goal-ring { width: 36px; height: 36px; flex: 0 0 36px; transform: rotate(-90deg); }
+.goal-ring-bg { fill: none; stroke: var(--soft); stroke-width: 4; }
+.goal-ring-arc { fill: none; stroke: var(--accent); stroke-width: 4; stroke-linecap: round;
+  transition: stroke-dashoffset .9s cubic-bezier(.2, .8, .2, 1); }
+.goal-ring.is-done .goal-ring-arc { stroke: var(--win); }
+.goal-ring-check { fill: none; stroke: var(--win); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round;
+  transform: rotate(90deg); transform-origin: 18px 18px; }
+.goal-row.is-done .name { color: var(--hint); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--hint) 60%, transparent); }
+.goal-count { font-weight: 700; white-space: nowrap; }
+.goal-row.is-done .goal-count { color: var(--win); }
+.goals-foot { margin-top: 8px; }
+.goals-foot.is-done { color: var(--win); font-weight: 700; }
+.since { position: relative; padding-right: 40px; margin-bottom: 12px; animation: since-in .45s ease-out both; }
+.since .list { background: none; margin-top: 4px; }
+.since .row { padding-left: 0; padding-right: 0; }
+@keyframes since-in { from { opacity: 0; transform: translateY(-6px); } }
+.home-icon .home-icon-add { width: auto; margin: 10px 0 0; padding: 8px 14px; }
+@media (prefers-reduced-motion: reduce) {
+  .goal-ring-arc { transition: none; }
+  .since { animation: none; }
+}
