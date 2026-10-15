@@ -14,7 +14,7 @@
       parseLaunchParams: parseLaunchParams, isColorDark: isColorDark,
       filterMatches: filterMatches, recordLine: recordLine, compactDate: compactDate,
       toggledReactions: toggledReactions, matchMood: matchMood,
-      nextNav: nextNav, sparkPoints: sparkPoints, odometerDigits: odometerDigits
+      nextNav: nextNav, sparkPoints: sparkPoints, odometerDigits: odometerDigits, raceOrder: raceOrder
     };
     return;
   }

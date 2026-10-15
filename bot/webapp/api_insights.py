@@ -354,3 +354,44 @@ async def pairs_payload(session: AsyncSession) -> dict:
         more = f" и ещё {len(never) - 3}" if len(never) > 3 else ""
         facts.append({"label": "Ещё не играли", "value": str(len(never)), "note": shown + more})
     return {**base, "empty": "", "players": people, "matrix": matrix, "facts": facts}
+
+
+# ── Гонка рейтинга (v2.184.0) ─────────────────────────────────────────────────
+
+RACE_DAYS = 30
+
+
+async def race_payload(session: AsyncSession) -> dict:
+    """Рейтинг каждого игрока на конец каждого дня за RACE_DAYS дней (МСК) —
+    для анимированной «гонки». Считается назад от текущего рейтинга по
+    изменениям в матчах (как график профиля). Игроки — с матчами за период."""
+    today = (_now() + MSK_OFFSET).date()
+    first_day = today - timedelta(days=RACE_DAYS - 1)
+    start = datetime(first_day.year, first_day.month, first_day.day) - MSK_OFFSET
+    matches = (await session.execute(
+        select(Match).where(Match.status == MatchStatus.completed, Match.completed_at >= start,
+                            Match.rating_change.is_not(None))
+    )).scalars().all()
+    base = {"title": "Гонка рейтинга", "period": f"за {RACE_DAYS} дней"}
+    if not matches:
+        return {**base, "empty": "За 30 дней матчей не было."}
+    ids = {pid for m in matches for pid in (m.challenger_id, m.challenged_id)}
+    players = sorted((await session.execute(select(Player).where(Player.id.in_(ids)))).scalars().all(),
+                     key=lambda p: (-p.rating, p.id))
+    # изменение рейтинга каждого игрока по дням
+    per_day: dict[tuple[int, object], float] = {}
+    for m in matches:
+        day = (m.completed_at + MSK_OFFSET).date()
+        for pid in (m.challenger_id, m.challenged_id):
+            per_day[(pid, day)] = per_day.get((pid, day), 0.0) + match_rating_delta(m, pid)
+    days = [first_day + timedelta(days=i) for i in range(RACE_DAYS)]
+    frames: list[list[float]] = [[0.0] * len(players) for _ in days]
+    for col, p in enumerate(players):
+        value = p.rating
+        for i in range(len(days) - 1, -1, -1):          # с сегодня назад
+            frames[i][col] = round(value, 1)
+            value -= per_day.get((p.id, days[i]), 0.0)
+    return {**base, "empty": "",
+            "players": [{"id": p.id, "name": p.display_name, "initial": (p.display_name.strip()[:1] or "?").upper()}
+                        for p in players],
+            "days": [d.strftime("%d.%m") for d in days], "frames": frames}
