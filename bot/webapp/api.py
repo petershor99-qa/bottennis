@@ -41,6 +41,7 @@ from bot.utils import (
     build_rating_series,
     compute_h2h,
     get_career_matches,
+    get_challenger,
     get_match_counts,
     match_drama_reason,
     match_rating_delta,
@@ -829,9 +830,51 @@ async def _reign_defenses(session: AsyncSession, reign: ChampionReign, end: date
     )).scalar_one()
 
 
+def _ms(dt: datetime) -> int:
+    """Время из базы (UTC без зоны) — миллисекунды эпохи для таймера на странице."""
+    return int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
+
+
+TIMELINE_REIGNS = 12
+
+
+async def _throne_contender(session: AsyncSession, players: list[Player]) -> dict | None:
+    """Претендент на трон (v2.191.0) — тот же get_challenger(), что у боссфайта:
+    рейтинг строго выше чемпиона и от NEWCOMER_THRESHOLD матчей. Нет претендента —
+    ближайший к нему: лучший по рейтингу из игравших, кроме чемпиона, и чего ему
+    не хватает (очков или матчей). None — боссфайт не активирован."""
+    champion = next((p for p in players if p.is_champion), None)
+    if champion is None:
+        return None
+    counts = await get_match_counts(session)
+    challenger = await get_challenger(session, champion, counts)
+
+    def _who(p: Player) -> dict:
+        return {"player_id": p.id, "name": p.display_name,
+                "initial": (p.display_name.strip()[:1] or "?").upper(), "rating": f"{p.rating:.1f}"}
+
+    if challenger is not None:
+        gap = round(challenger.rating - champion.rating, 1)
+        return {**_who(challenger), "kind": "challenger", "champion_id": champion.id,
+                "title": "Претендент", "text": f"на {gap:.1f} очка выше чемпиона · боссфайт за трон"}
+    rivals = sorted((p for p in players if p.id != champion.id and counts.get(p.id, 0) > 0),
+                    key=lambda p: (-p.rating, p.id))
+    if not rivals:
+        return None
+    near = rivals[0]
+    if near.rating <= champion.rating:
+        gap = round(champion.rating - near.rating, 1)
+        text = f"до претендента {gap:.1f} очка" if gap > 0 else "рейтинг сравнялся с чемпионом — нужно чуть больше"
+    else:
+        left = NEWCOMER_THRESHOLD - counts.get(near.id, 0)
+        text = f"рейтинг уже выше чемпиона, до претендента — {_ru_plural(left, 'матч', 'матча', 'матчей')}"
+    return {**_who(near), "kind": "nearest", "champion_id": champion.id, "title": "Ближе всех к трону", "text": text}
+
+
 async def hall_of_fame_payload(session: AsyncSession) -> dict:
     """v2.188.0: трон из ракеток — текущему чемпиону добавлены защиты, в факты —
-    «дольше всех» и «защит подряд» (рекорды клуба теми же функциями)."""
+    «дольше всех» и «защит подряд» (рекорды клуба теми же функциями).
+    v2.191.0: начало правления для живого таймера, претендент и летопись трона."""
     from bot.handlers.leaderboard import _reign_end_narrative
     from bot.utils import longest_champion_reign, most_boss_fight_defenses
 
@@ -839,7 +882,8 @@ async def hall_of_fame_payload(session: AsyncSession) -> dict:
     if not reigns:
         return {"title": "Зал славы", "current": None, "reigns": [], "facts": [],
                 "empty": "Боссфайт за 1-е место ещё ни разу не активировался."}
-    name_map = {p.id: p.display_name for p in (await session.execute(select(Player))).scalars().all()}
+    players = list((await session.execute(select(Player))).scalars().all())
+    name_map = {p.id: p.display_name for p in players}
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     def _days(delta_days: int) -> str:
@@ -852,6 +896,7 @@ async def hall_of_fame_payload(session: AsyncSession) -> dict:
             "name": name_map.get(current.player_id, "?"),
             "player_id": current.player_id,
             "since": current.started_at.strftime("%d.%m.%y"),
+            "since_ts": _ms(current.started_at),
             "duration": _days((now - current.started_at).days),
             "defenses": await _reign_defenses(session, current, now),
         }
@@ -876,9 +921,20 @@ async def hall_of_fame_payload(session: AsyncSession) -> dict:
             "duration": _days((r.ended_at - r.started_at).days),
             "note": plain(narrative) if narrative else "",
         })
+    # Летопись трона: правления по порядку, полоса — доля времени каждого
+    timeline = [{
+        "player_id": r.player_id,
+        "name": name_map.get(r.player_id, "?"),
+        "start_ts": _ms(r.started_at),
+        "end_ts": _ms(r.ended_at) if r.ended_at else None,
+        "period": f"{r.started_at.strftime('%d.%m.%y')} – {r.ended_at.strftime('%d.%m.%y') if r.ended_at else 'сейчас'}",
+        "duration": _days(((r.ended_at or now) - r.started_at).days),
+    } for r in reversed(reigns[:TIMELINE_REIGNS])]
     return {
         "title": "Зал славы",
         "current": current_payload,
+        "contender": await _throne_contender(session, players) if current_payload else None,
+        "timeline": timeline,
         "facts": [{"label": "Смен трона", "value": str(len(reigns))}],
         "records": records,
         "reigns": closed,

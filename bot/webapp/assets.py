@@ -36,8 +36,10 @@ ASSET_TYPES = {
     "telegram-web-app.js": "application/javascript",
     # Картинка заставки (v2.188.0): с версией — повторный запуск её не перепроверяет
     "splash.webp": "image/webp",
+    # Трон в «Зале славы» (v2.191.0, картинка владельца); адрес с версией — в ответе /api/throne
+    "throne.webp": "image/webp",
 }
-_NO_GZIP = {"splash.webp"}   # уже сжато — gzip только тратит время
+_NO_GZIP = {"splash.webp", "throne.webp"}   # уже сжато — gzip только тратит время
 IMMUTABLE = "public, max-age=31536000, immutable"
 _LINE_COMMENT = re.compile(rb"(?m)^[ \t]*//[^\n]*\n")
 
@@ -108,6 +110,10 @@ class Assets:
             splash = self.get("splash.webp").version
             html = html.replace('"static/splash.webp"', f'"static/splash.webp?v={splash}"')   # preload и картинка
         return html.encode("utf-8")
+
+    def url(self, name: str) -> str:
+        """Адрес файла с версией — для картинок, на которые ссылается не index.html, а ответ API."""
+        return f"static/{name}?v={self.get(name).version}"
 
     def response(self, request: web.Request, name: str) -> web.Response:
         asset = self.get(name)
