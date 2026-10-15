@@ -35,6 +35,10 @@ class Player(Base):
     # Своё фото для Mini App (v2.174.0, команда /photo): file_id из Telegram.
     # None — в приложении аватар Telegram или буква.
     photo_file_id: Mapped[str | None]
+    # Какую версию постоянной клавиатуры бот последней прислал игроку (v2.179.0):
+    # Telegram хранит у чата последнюю присланную клавиатуру, и у кого она старше
+    # REPLY_KB_VERSION (bot/keyboards/inline.py), бот один раз присылает новую.
+    reply_kb_version: Mapped[int] = mapped_column(default=0, server_default="0")
     created_at: Mapped[datetime | None] = mapped_column(
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )

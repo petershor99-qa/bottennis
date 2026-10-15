@@ -29,7 +29,7 @@ from bot.handlers.photo import router as photo_router
 from bot.handlers.profile import router as profile_router
 from bot.handlers.start import router as start_router
 from bot.handlers.year_vote import router as year_vote_router
-from bot.middleware import DatabaseMiddleware, UsageMiddleware
+from bot.middleware import DatabaseMiddleware, ReplyKeyboardMiddleware, UsageMiddleware
 from bot.scheduler import setup_scheduler
 from bot.webapp.config import webapp_base_url
 from bot.webapp.menu_button import sync_menu_button
@@ -98,6 +98,9 @@ async def main() -> None:
     # сессия, отдельная от DatabaseMiddleware выше, см. bot/middleware.py.
     dp.callback_query.middleware(UsageMiddleware("callback"))
     dp.message.middleware(UsageMiddleware("command"))
+    # Устаревшая постоянная клавиатура — один раз новая после действия игрока (v2.179.0)
+    dp.callback_query.middleware(ReplyKeyboardMiddleware())
+    dp.message.middleware(ReplyKeyboardMiddleware())
 
     dp.error.register(on_telegram_bad_request, ExceptionTypeFilter(TelegramBadRequest))
     dp.error.register(on_telegram_rate_limit, ExceptionTypeFilter(TelegramRetryAfter))

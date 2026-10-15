@@ -17,10 +17,19 @@ from bot.utils import (
 )
 from bot.webapp.config import (
     WEBAPP_BUTTON_TEXT,
+    WEBAPP_H2H_TEXT,
+    WEBAPP_MATCH_TEXT,
     WEBAPP_MORE_TEXT,
     WEBAPP_RATING_TEXT,
     webapp_url_for,
 )
+
+# Версия постоянной клавиатуры (v2.179.0). 1 — до v2.166.0 (её можно было
+# свернуть), 2 — закреплённая (is_persistent). Меняя клавиатуру так, что старая
+# у игроков должна замениться, поднимай число: ReplyKeyboardMiddleware
+# (bot/middleware.py) один раз пришлёт новую при следующем действии игрока.
+REPLY_KB_VERSION = 2
+REPLY_KB_TEXT = "👇 Быстрый доступ"
 
 
 def main_reply_kb() -> ReplyKeyboardMarkup:
@@ -64,6 +73,7 @@ def _peer_and_menu_row(b: InlineKeyboardBuilder, peer_text: str, peer_callback: 
 def main_menu_kb(
     share_match_id: int | None = None, rematch_opponent_id: int | None = None,
     viewer_telegram_id: int | None = None, app_url: str | None = None,
+    match_url: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Главное меню. Кнопки «Внести результат» убраны в v2.148.0: счёт пишут
     прямо в чат (подсказка стоит на экране начала матча и в приветствии).
@@ -82,7 +92,8 @@ def main_menu_kb(
     «Вызвать на матч» добавляется строка «Открыть приложение». None — без неё.
 
     app_url — переход сразу в рейтинг приложения после матча (v2.167.0): тогда
-    строка называется «Рейтинг в приложении» и ведёт на него."""
+    строка называется «Рейтинг в приложении» и ведёт на него. match_url — рядом
+    кнопка «Матч» на экран матча в приложении (v2.179.0)."""
     b = InlineKeyboardBuilder()
     if share_match_id is not None:
         b.row(InlineKeyboardButton(
@@ -94,7 +105,7 @@ def main_menu_kb(
         ))
     b.row(InlineKeyboardButton(text=random_challenge_button_label(), callback_data="menu_play"))
     if app_url:
-        b.row(InlineKeyboardButton(text=WEBAPP_RATING_TEXT, web_app=WebAppInfo(url=app_url)))
+        b.row(*_app_after_match_buttons(app_url, match_url))
     else:
         open_url = webapp_url_for(viewer_telegram_id) if viewer_telegram_id is not None else None
         if open_url:
@@ -257,9 +268,17 @@ def achievement_category_kb(player_id: int | None = None) -> InlineKeyboardMarku
     return b.as_markup()
 
 
+def _app_after_match_buttons(app_url: str, match_url: str | None) -> list[InlineKeyboardButton]:
+    """«Рейтинг в приложении» и, если есть, «Матч» одной строкой (v2.179.0)."""
+    row = [InlineKeyboardButton(text=WEBAPP_RATING_TEXT, web_app=WebAppInfo(url=app_url))]
+    if match_url:
+        row.append(InlineKeyboardButton(text=WEBAPP_MATCH_TEXT, web_app=WebAppInfo(url=match_url)))
+    return row
+
+
 def rematch_kb(
     opponent_id: int, can_rematch: bool = True, share_match_id: int | None = None,
-    app_url: str | None = None,
+    app_url: str | None = None, match_url: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Клавиатура после матча — предлагает реванш.
 
@@ -276,8 +295,9 @@ def rematch_kb(
     if can_rematch:
         b.row(InlineKeyboardButton(text="⚔️ Реванш", callback_data=f"rematch_{opponent_id}"))
     if app_url:
-        # v2.167.0: рейтинг в приложении с анимацией подъёма на новое место
-        b.row(InlineKeyboardButton(text=WEBAPP_RATING_TEXT, web_app=WebAppInfo(url=app_url)))
+        # v2.167.0: рейтинг в приложении с анимацией подъёма на новое место;
+        # v2.179.0: рядом — экран матча (реакции, партии)
+        b.row(*_app_after_match_buttons(app_url, match_url))
     _peer_and_menu_row(b, "🏆 Рейтинг клуба", "menu_leaderboard")
     return b.as_markup()
 
@@ -373,10 +393,13 @@ def players_list_kb(
     return b.as_markup()
 
 
-def active_match_kb(match_id: int) -> InlineKeyboardMarkup:
+def active_match_kb(match_id: int, h2h_url: str | None = None) -> InlineKeyboardMarkup:
     """Клавиатура экрана начала матча. Результат вносится прямым вводом счёта
-    в чат — отдельной кнопки для этого нет (см. подсказку в тексте сообщения)."""
+    в чат — отдельной кнопки для этого нет (см. подсказку в тексте сообщения).
+    h2h_url — «Личные встречи» пары в приложении (v2.179.0); None — без кнопки."""
     b = InlineKeyboardBuilder()
+    if h2h_url:
+        b.row(InlineKeyboardButton(text=WEBAPP_H2H_TEXT, web_app=WebAppInfo(url=h2h_url)))
     b.row(InlineKeyboardButton(text="❌ Отменить матч", callback_data=f"cancel_match_{match_id}"))
     b.row(InlineKeyboardButton(text="« В меню", callback_data="back_to_menu"))
     return b.as_markup()

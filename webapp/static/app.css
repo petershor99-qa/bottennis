@@ -745,3 +745,4 @@ html, body {
 .pull-mark { position: fixed; top: 6px; left: 50%; z-index: 20; width: 30px; height: 30px; border-radius: 50%;
   border: 3px solid var(--soft); border-top-color: var(--ball); background: var(--card); pointer-events: none; }
 .pull-mark.is-ready { border-color: var(--ball); }
+.challenge-btn { margin-top: 12px; }

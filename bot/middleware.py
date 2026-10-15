@@ -3,12 +3,13 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject
+from aiogram.types import Message, TelegramObject
 
 from bot.db.database import async_session
 from bot.db.models import UsageEvent
+from bot.keyboards.inline import REPLY_KB_TEXT, REPLY_KB_VERSION, main_reply_kb
 from bot.services.usage import normalize_action
-from bot.utils import CHALLENGE_BUTTON_LABELS, REPLY_KB_LEADERBOARD_ALL, REPLY_KB_PROFILE_ALL
+from bot.utils import CHALLENGE_BUTTON_LABELS, REPLY_KB_LEADERBOARD_ALL, REPLY_KB_PROFILE_ALL, get_player
 
 # Кнопки постоянной клавиатуры (main_reply_kb) — обычные текстовые сообщения, не
 # callback'и, поэтому раньше не считались и открытия рейтинга/статистики/вызова
@@ -128,3 +129,42 @@ class UsageMiddleware(BaseMiddleware):
         if text.startswith("/"):
             return text
         return REPLY_KEYBOARD_ACTIONS.get(text)
+
+
+class ReplyKeyboardMiddleware(BaseMiddleware):
+    """Обновление постоянной клавиатуры у тех, у кого она старая (v2.179.0).
+
+    Telegram хранит у чата последнюю присланную ботом клавиатуру. Закреплённой
+    (`is_persistent`) она стала в v2.166.0, но ставится только по /start — у
+    игроков, не нажимавших /start с тех пор, осталась прежняя: её можно
+    свернуть, и кнопки «терялись». Здесь после любого действия игрока в личном
+    чате (сообщение или кнопка), если `Player.reply_kb_version` меньше
+    REPLY_KB_VERSION, бот один раз и без звука присылает «👇 Быстрый доступ»
+    с новой клавиатурой. Рассылки нет — только в ответ на действие игрока.
+    Сбой отправки не мешает хендлеру и повторится при следующем действии.
+    """
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        result = await handler(event, data)
+        user = getattr(event, "from_user", None)
+        message = event if isinstance(event, Message) else getattr(event, "message", None)
+        chat = getattr(message, "chat", None)
+        session = data.get("session")
+        bot = data.get("bot")
+        if user is None or chat is None or chat.type != "private" or session is None or bot is None:
+            return result
+        try:
+            player = await get_player(session, user.id)
+            if player is None or (player.reply_kb_version or 0) >= REPLY_KB_VERSION:
+                return result
+            await bot.send_message(user.id, REPLY_KB_TEXT, reply_markup=main_reply_kb(),
+                                   disable_notification=True)
+            player.reply_kb_version = REPLY_KB_VERSION
+        except Exception:
+            logger.warning("Не удалось обновить клавиатуру игроку %s", user.id, exc_info=True)
+        return result

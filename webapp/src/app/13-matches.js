@@ -120,6 +120,7 @@
     wl.appendChild(el("span", "tone-loss", "Поражение " + d.forecast.lose));
     fc.appendChild(wl);
     c.appendChild(fc);
+    c.appendChild(challengeButton(d.them.id));
 
     if (d.axes.length) {
       var ax = section("Стиль: ты и " + d.them.name);
