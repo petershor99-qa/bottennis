@@ -142,3 +142,22 @@ test("raceOrder: места по убыванию рейтинга, при ра�
   assert.deepEqual(app.raceOrder([1000, 1100, 1050]), [1, 2, 0]);
   assert.deepEqual(app.raceOrder([1000, 1000, 1200]), [2, 0, 1]);
 });
+
+test("tapGuard: два пальца и двойной тап не дают второго действия (v2.185.0)", () => {
+  const a = { id: "a" }, b = { id: "b" };
+  let st = { multiTouchAt: 0, lastTap: { node: null, at: 0 } };
+  assert.equal(app.tapGuard(10000, a, st), true);
+  assert.equal(app.tapGuard(10200, a, st), false);          // тот же элемент через 0,2 с — двойной тап
+  assert.equal(app.tapGuard(10300, b, st), true);           // другой элемент — можно
+  assert.equal(app.tapGuard(10800, b, st), true);           // тот же, но позже 0,35 с — можно
+  st = { multiTouchAt: 20000, lastTap: { node: null, at: 0 } };
+  assert.equal(app.tapGuard(20100, a, st), false);          // только что было два пальца
+  assert.equal(app.tapGuard(20500, a, st), true);
+});
+
+test("chipSets: счёт из ленты для характера матча (v2.185.0)", () => {
+  assert.deepEqual(app.chipSets(["5:11", "11:8"]), [{ a: 5, b: 11 }, { a: 11, b: 8 }]);
+  assert.deepEqual(app.chipSets(null), []);
+  const sets = app.chipSets(["5:11", "6:11", "11:8", "11:8", "11:9"]);
+  assert.equal(app.matchMood({ winner: "a", boss: false, sets }), "comeback");
+});

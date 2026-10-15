@@ -43,11 +43,26 @@
   // Лента клуба (v2.168.0): матчи (у ярких — репортаж), ачивки, рекорды, трон
   // Лента клуба (v2.171.0): каждое событие — отдельная карточка, заголовок дня
   // прилипает к верху при прокрутке, «Показать ещё» догружает порции по 15.
-  function feedItem(it, i) {
+  // v2.185.0: метка характера матча (как штамп на экране матча) и пометка,
+  // что этот матч уже показан выше карточкой «Матч дня»
+  function feedTags(it, featured) {
+    var tags = [];
+    var mood = matchMood({ winner: it.winner, boss: it.boss, sets: chipSets(it.sets) });
+    if (featured && featured.id === it.id) tags.push(["feed-tag", featured.title]);
+    if (mood) tags.push(["feed-tag mood-tag mood-" + mood, MOOD_LABELS[mood]]);
+    if (!tags.length) return null;
+    var wrap = el("div", "feed-tags");
+    tags.forEach(function (t) { wrap.appendChild(el("span", t[0], t[1])); });
+    return wrap;
+  }
+
+  function feedItem(it, i, featured) {
     var li;
     var body = el("div", "body");
     if (it.type === "match") {
       li = clickable(el("li", "feed-card feed-match"), "match/" + it.id);
+      var tags = feedTags(it, featured);
+      if (tags) body.appendChild(tags);
       body.appendChild(versusLine(it));
       var score = el("div", "feed-score");
       score.appendChild(setChips(it.sets, it.winner));
@@ -81,7 +96,7 @@
     return li;
   }
 
-  function feedBlock(items, more) {
+  function feedBlock(items, more, featured) {
     var wrap = el("section", "group");
     wrap.appendChild(el("h2", "group-title", "Лента клуба"));
     var list = el("ul", "feed-list");
@@ -93,7 +108,7 @@
           state.lastDay = it.day;
           list.appendChild(el("li", "feed-day", it.day));
         }
-        list.appendChild(feedItem(it, i));
+        list.appendChild(feedItem(it, i, featured));
       });
       state.offset += batch.length;
     }
@@ -117,7 +132,7 @@
 
   // Меню клуба плиткой (v2.171.0): выше ленты, чтобы до него не листать
   function clubTiles(links) {
-    var wrap = el("section", "group");
+    var wrap = el("section", "group club-group");
     wrap.appendChild(el("h2", "group-title", "Клуб"));
     var grid = el("div", "club-tiles");
     links.forEach(function (l) {
@@ -336,7 +351,7 @@
       c.appendChild(f);
     }
 
-    if (d.feed && d.feed.length) homeCols.side.appendChild(feedBlock(d.feed, d.feed_more));
+    if (d.feed && d.feed.length) homeCols.side.appendChild(feedBlock(d.feed, d.feed_more, d.featured));
     if (!homeCols.side.firstChild) outer.classList.remove("is-wide");
   }
 

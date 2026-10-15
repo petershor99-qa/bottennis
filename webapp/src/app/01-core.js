@@ -109,7 +109,43 @@
     return s;
   }
 
-  function go(route) { haptic("impact"); location.hash = "#/" + route; }
+  // Нажатия в двух местах сразу (v2.185.0): пока на экране два пальца и ещё
+  // чуть-чуть после, нажатия не считаются; переход — не чаще раза в 0,4 с, иначе
+  // два пальца по двум плиткам давали два перехода подряд, и «Назад» вёл на
+  // первый; повторное нажатие того же элемента быстрее 0,35 с — двойной тап,
+  // не второе действие (кроме сторис: там частые нажатия — это листание).
+  // (пороги — внутри функции: в Node, где она проверяется, переменные модуля не заданы)
+  var NAV_LOCK_MS = 400;
+  var multiTouchAt = 0, navLockUntil = 0, lastTap = { node: null, at: 0 };
+
+  function tapGuard(now, target, state) {
+    if (now - state.multiTouchAt < 400) return false;
+    if (target && target === state.lastTap.node && now - state.lastTap.at < 350) return false;
+    state.lastTap = { node: target, at: now };
+    return true;
+  }
+
+  if (typeof document !== "undefined") {
+    var noteTouches = function (e) { if (e.touches && e.touches.length > 1) multiTouchAt = Date.now(); };
+    document.addEventListener("touchstart", noteTouches, { passive: true, capture: true });
+    document.addEventListener("touchmove", noteTouches, { passive: true, capture: true });
+    document.addEventListener("click", function (e) {
+      var node = e.target && e.target.closest ? e.target.closest("button, .tap, a") : null;
+      if (!node || node.closest(".story")) return;
+      var state = { multiTouchAt: multiTouchAt, lastTap: lastTap };
+      var ok = tapGuard(Date.now(), node, state);
+      lastTap = state.lastTap;
+      if (!ok) { e.stopPropagation(); e.preventDefault(); }
+    }, true);
+  }
+
+  function go(route) {
+    var now = Date.now();
+    if (now < navLockUntil) return;
+    navLockUntil = now + NAV_LOCK_MS;
+    haptic("impact");
+    location.hash = "#/" + route;
+  }
 
   function clickable(node, route) {
     node.classList.add("tap");

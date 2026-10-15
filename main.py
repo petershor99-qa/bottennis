@@ -132,7 +132,7 @@ async def main() -> None:
     webapp_runner = None
     if webapp_base_url():
         try:
-            webapp_runner = await start_webapp(token, async_session, bot)
+            webapp_runner = await start_webapp(token, async_session, bot, dp.storage)
         except Exception:
             logging.exception("Mini App не запустился, бот работает без него.")
     # Кнопка «Клуб» слева от строки ввода — по .env; без WEBAPP_URL возвращает
