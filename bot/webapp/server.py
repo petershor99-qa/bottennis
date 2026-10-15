@@ -52,7 +52,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Player
 from bot.utils import get_player
-from bot.webapp import api, api_chronicle, api_club, api_day, api_insights, api_month, api_personal, reactions
+from bot.webapp import (
+    api,
+    api_chronicle,
+    api_club,
+    api_day,
+    api_insights,
+    api_month,
+    api_personal,
+    api_return,
+    reactions,
+)
 from bot.webapp.assets import ASSET_TYPES, Assets, accepts_gzip
 from bot.webapp.auth import WebAppAuthError, init_data_from_header, telegram_id_from_init_data
 from bot.webapp.challenge_open import open_challenge
@@ -151,6 +161,8 @@ async def home(request, session, viewer):
     # «Ты сегодня» в карточке игрока, вход в «Итоги»
     # v2.171.0: первая порция ленты; остальное — /api/feed?offset=N
     page = await _feed_page(session, viewer, 0)
+    # v2.181.0: «Цели недели» — только в приложении, без уведомлений
+    payload["goals"] = await api_return.goals_payload(session, viewer)
     payload["feed"], payload["feed_more"] = page["items"], page["more"]
     # v2.173.0: реакции и на карточке «Матч дня» — счётчики, как в ленте
     featured = payload.get("featured")
@@ -276,6 +288,15 @@ async def share(request, session, viewer):
                 "fail": (502, "Telegram не принял картинку. Попробуйте ещё раз.")}
     status, text = messages[result]
     return _json_error(status, text)
+
+
+async def since(request, session, viewer):
+    """«Пока тебя не было» (v2.181.0): ?t=<секунды UTC прошлого захода>."""
+    try:
+        ts = int(request.query.get("t", ""))
+    except ValueError:
+        return None
+    return await api_return.since_payload(session, viewer, ts) if ts > 0 else None
 
 
 async def challenge_open(request, session, viewer):
@@ -549,6 +570,7 @@ def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
         ("/api/when", when),
         ("/api/feed", feed),
         ("/api/usage", usage),
+        ("/api/since", since),
     ]
     for path, handler in routes:
         app.router.add_get(path, endpoint(handler))
