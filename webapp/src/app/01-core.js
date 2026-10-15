@@ -185,6 +185,34 @@
     return wrap;
   }
 
+  // Длинные списки порциями (v2.189.0): на клубе в тысячи матчей история игрока
+  // рисовала все строки сразу (5000 элементов) — первые step, остальное по кнопке
+  var LIST_STEP = 40;
+
+  function appendInChunks(list, items, make, step) {
+    step = step || LIST_STEP;
+    var at = 0;
+    var more = null;
+    function next() {
+      var end = Math.min(items.length, at + step);
+      var frag = document.createDocumentFragment();
+      for (; at < end; at++) frag.appendChild(make(items[at], at));
+      if (more) list.insertBefore(frag, more); else list.appendChild(frag);
+      var left = items.length - at;
+      if (!left) { if (more) more.remove(); return; }
+      if (!more) {
+        more = el("li", "more-row");
+        var b = el("button", "more", "");
+        b.type = "button";
+        b.addEventListener("click", function () { haptic("select"); next(); });
+        more.appendChild(b);
+        list.appendChild(more);
+      }
+      more.firstChild.textContent = "Показать ещё (" + left + ")";
+    }
+    next();
+  }
+
   function progressBar(fraction) {
     var bar = el("div", "progress");
     var fill = el("i");
