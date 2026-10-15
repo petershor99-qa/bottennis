@@ -122,6 +122,7 @@
   }
 
   function renderMonth(c, d) {
+    enterFullscreen();   // v2.183.0: «Твой месяц» во весь экран, как сторис
     c.appendChild(header(d.title, ""));
     var nav = el("div", "day-nav");
     function arrow(target, name, label) {
