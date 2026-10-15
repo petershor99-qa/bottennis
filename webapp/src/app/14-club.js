@@ -55,20 +55,68 @@
     c.appendChild(legend(d));
   }
 
+  // Трон из ракеток (v2.188.0, макет утверждён владельцем): веер ракеток вместо
+  // мечей Железного трона — свой рисунок, без оформления сериала. Аватар
+  // чемпиона сидит на троне, над ним корона, рядом мяч.
+  var THRONE_ANGLES = [-72, -48, -24, 0, 24, 48, 72];
+
+  function throneArt() {
+    var s = svg("svg", { "class": "throne-art", viewBox: "0 0 272 210", "aria-hidden": "true" });
+    var g = svg("g", { transform: "translate(136 160)" });
+    THRONE_ANGLES.forEach(function (a, i) {
+      // k: 0 по краям, 3 в центре — центральная ракетка самая высокая и крупная
+      var k = 3 - Math.abs(3 - i), dist = 88 + k * 9, rx = 18 + k * 1.3, ry = 22 + k * 1.3;
+      // внешняя группа поворачивает ракетку, внутренняя «выезжает» вдоль неё
+      var outer = svg("g", { transform: "rotate(" + a + ")" });
+      var r = svg("g", { "class": "throne-racket" });
+      outer.appendChild(r);
+      // ручка уходит за спинку трона, лопасть торчит наружу
+      r.appendChild(svg("rect", { x: -4.5, y: -(dist - ry + 4), width: 9, height: dist - ry - 26, rx: 3, "class": "throne-handle" }));
+      r.appendChild(svg("ellipse", { cx: 0, cy: -dist, rx: rx, ry: ry, "class": i % 2 ? "throne-blade-black" : "throne-blade-red" }));
+      r.style.animationDelay = (i * 60) + "ms";
+      g.appendChild(outer);
+    });
+    [["rect", { x: -66, y: -40, width: 132, height: 66, rx: 10, "class": "throne-back" }],
+     ["rect", { x: -74, y: 20, width: 148, height: 18, rx: 6, "class": "throne-seat" }],
+     ["rect", { x: -62, y: 38, width: 10, height: 12, rx: 3, "class": "throne-back" }],
+     ["rect", { x: 52, y: 38, width: 10, height: 12, rx: 3, "class": "throne-back" }],
+     ["rect", { x: -90, y: -6, width: 26, height: 12, rx: 5, "class": "throne-seat" }],
+     ["rect", { x: 64, y: -6, width: 26, height: 12, rx: 5, "class": "throne-seat" }],
+     ["circle", { cx: 79, cy: -13, r: 7, "class": "throne-ball" }]   // мяч лежит на подлокотнике
+    ].forEach(function (x) { g.appendChild(svg(x[0], x[1])); });
+    s.appendChild(g);
+    return s;
+  }
+
+  function throneCard(cur) {
+    var card = clickable(el("div", "card throne-card"), "player/" + cur.player_id);
+    var stage = el("div", "throne-stage");
+    stage.appendChild(throneArt());
+    var seat = el("div", "throne-sitter");
+    seat.appendChild(icon("crown", "crown crown-big"));
+    seat.appendChild(avatar({ id: cur.player_id, initial: cur.name.charAt(0).toUpperCase() }, "xl"));
+    stage.appendChild(seat);
+    card.appendChild(stage);
+    card.appendChild(el("div", "hero-name", cur.name));
+    card.appendChild(el("div", "throne-reign", ["на троне " + cur.duration, cur.defenses_text].filter(Boolean).join(" · ")));
+    card.appendChild(el("div", "sub", "с " + cur.since));
+    return card;
+  }
+
   function renderThrone(c, d) {
-    c.appendChild(header(d.title));
+    c.appendChild(header(d.title, d.facts.map(function (f) { return f.label + ": " + f.value; }).join(" · ")));
     if (d.empty) { emptyState(c, d.empty); return; }
-    if (d.current) {
-      var card = clickable(el("div", "card throne-card"), "player/" + d.current.player_id);
-      card.appendChild(icon("crown", "crown crown-big"));
-      card.appendChild(avatar({ id: d.current.player_id, initial: d.current.name.charAt(0).toUpperCase() }, "xl"));
-      card.appendChild(el("div", "hero-name", d.current.name));
-      card.appendChild(el("div", "sub", "на троне " + d.current.duration + " · с " + d.current.since));
-      c.appendChild(card);
+    if (d.current) c.appendChild(throneCard(d.current));
+    if (d.records && d.records.length) {
+      var tiles = el("div", "tiles throne-records");
+      d.records.forEach(function (r) {
+        var t = el("div", "tile");
+        t.appendChild(el("div", "tile-label", r.label));
+        t.appendChild(el("div", "tile-value throne-record", r.value));
+        tiles.appendChild(t);
+      });
+      c.appendChild(tiles);
     }
-    var facts = section();
-    d.facts.forEach(function (f) { facts.list.appendChild(itemRow(f)); });
-    c.appendChild(facts);
     if (d.reigns.length) {
       var s = section("Прошлые правления");
       d.reigns.forEach(function (r) {

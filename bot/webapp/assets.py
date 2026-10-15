@@ -34,7 +34,10 @@ ASSET_TYPES = {
     # Копия скрипта Telegram (v2.178.0, scripts/update_telegram_js.py): без
     # зависимости от telegram.org, которая держала заставку Telegram при запуске
     "telegram-web-app.js": "application/javascript",
+    # Картинка заставки (v2.188.0): с версией — повторный запуск её не перепроверяет
+    "splash.webp": "image/webp",
 }
+_NO_GZIP = {"splash.webp"}   # уже сжато — gzip только тратит время
 IMMUTABLE = "public, max-age=31536000, immutable"
 _LINE_COMMENT = re.compile(rb"(?m)^[ \t]*//[^\n]*\n")
 
@@ -101,6 +104,9 @@ class Assets:
         html = html.replace('href="static/app.js"', f'href="static/app.js?v={js}"')  # preload — тот же адрес
         tg = self.get("telegram-web-app.js").version
         html = html.replace('src="static/telegram-web-app.js"', f'src="static/telegram-web-app.js?v={tg}"')
+        if (self.dir / "splash.webp").exists():
+            splash = self.get("splash.webp").version
+            html = html.replace('"static/splash.webp"', f'"static/splash.webp?v={splash}"')   # preload и картинка
         return html.encode("utf-8")
 
     def response(self, request: web.Request, name: str) -> web.Response:
@@ -114,7 +120,7 @@ class Assets:
         if request.headers.get("If-None-Match") == asset.etag:
             return web.Response(status=304, headers=headers)
         body = asset.body
-        if accepts_gzip(request):
+        if accepts_gzip(request) and name not in _NO_GZIP:
             body = asset.gz
             headers["Content-Encoding"] = "gzip"
         return web.Response(body=body, content_type=asset.content_type, headers=headers)

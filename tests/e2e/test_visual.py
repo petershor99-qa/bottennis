@@ -26,7 +26,9 @@ if os.environ.get("CI"):
 BASELINES = Path(__file__).parent / "baselines" / sys.platform
 # Экраны, которые не зависят от «сегодня»: всё время клуба, конкретный матч
 SCREENS = {"scores": "scores", "records": "records", "match": "match/96", "h2h": "h2h/3", "throne": "throne"}
-MASK = ".sub, .screen-sub, .feed-time, .eyebrow-meta, .chart-label, .sheet-meta, .day-label"
+# v2.188.0: дни правления на троне («55 дней») меняются каждый день — тоже маска
+MASK = (".sub, .screen-sub, .feed-time, .eyebrow-meta, .chart-label, .sheet-meta, .day-label,"
+        " .throne-reign, .throne-record")
 MAX_DIFF = 0.01   # доля различающихся пикселей
 CHANNEL_TOLERANCE = 24
 

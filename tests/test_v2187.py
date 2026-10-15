@@ -1,7 +1,7 @@
 """
 v2.187.0: партии по очереди быстрее, во весь экран — полоса сверху и отступ
 снизу, игроки в ленте по строке, заставка запуска, скрипт цифр для порогов
-радара (камбэки).
+радара (камбэки). v2.188.0 — картинка заставки, тема до app.js, трон из ракеток.
 Запуск: pytest tests/test_v2187.py
 """
 import json
@@ -65,4 +65,59 @@ def test_feed_players_two_rows_and_faster_replay():
 def test_boot_splash_markup():
     html = (ROOT / "webapp" / "static" / "index.html").read_text(encoding="utf-8")
     assert 'id="boot-state" role="status"' in html and "Клуб настольного тенниса" in html and "Загрузка…" in html
-    assert ".boot-ball" in CSS and "#boot-state::before" not in CSS
+    assert ".boot-pic" in CSS and "#boot-state::before" not in CSS   # v2.188.0: картинка вместо мяча
+
+
+# ── v2.188.0: картинка заставки и тёмная тема до app.js ──────────────────────
+
+def test_splash_picture_light_and_preloaded():
+    html = (ROOT / "webapp" / "static" / "index.html").read_text(encoding="utf-8")
+    pic = ROOT / "webapp" / "static" / "splash.webp"
+    assert pic.stat().st_size < 40 * 1024
+    assert 'class="boot-pic" src="static/splash.webp"' in html and 'rel="preload" href="static/splash.webp"' in html
+    assert "tgWebAppThemeParams" in html and 'setAttribute("data-theme", "dark")' in html
+
+
+async def test_splash_served_with_version_and_cached_forever(aiohttp_client=None):
+    from bot.webapp.assets import IMMUTABLE, Assets
+    from bot.webapp.server import STATIC_DIR
+
+    assets = Assets(STATIC_DIR)
+    v = assets.get("splash.webp").version
+    html = assets.index_html().decode("utf-8")
+    assert html.count(f'"static/splash.webp?v={v}"') == 2          # preload и сама картинка
+    assert assets.get("splash.webp").body[:4] == b"RIFF" and IMMUTABLE.endswith("immutable")
+
+
+# ── v2.188.0: трон из ракеток ────────────────────────────────────────────────
+
+async def test_hall_of_fame_defenses_and_records(db):
+    from datetime import datetime, timedelta, timezone
+
+    from bot.db.models import ChampionReign, Match, MatchStatus
+    from bot.webapp import api
+    from tests.conftest import _player
+
+    a, b = _player(1, "Алиса"), _player(2, "Боб")
+    db.add_all([a, b])
+    await db.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    start = now - timedelta(days=10)
+    db.add(ChampionReign(player_id=a.id, started_at=start))
+
+    def boss(winner, days_ago):
+        return Match(challenger_id=b.id, challenged_id=a.id, status=MatchStatus.completed, winner_id=winner,
+                     is_boss_fight=True, sets_data=[{"w": 11, "l": 7}], rating_change=10.0,
+                     completed_at=now - timedelta(days=days_ago))
+    db.add_all([boss(a.id, 8), boss(a.id, 3), boss(b.id, 20)])     # две защиты; давний боссфайт — не в правлении
+    await db.commit()
+    d = await api.hall_of_fame_payload(db)
+    assert d["current"]["defenses"] == 2 and d["current"]["defenses_text"] == "2 защиты"
+    labels = {r["label"]: r["value"] for r in d["records"]}
+    assert labels["Дольше всех"] == "Алиса · 10 дней" and labels["Защит за правление"] == "Алиса · 2"
+
+
+def test_throne_art_wiring():
+    club = (SRC / "14-club.js").read_text(encoding="utf-8")
+    assert "function throneArt" in club and "c.appendChild(throneCard(d.current))" in club
+    assert ".throne-sitter" in CSS and "@keyframes throne-fan" in CSS

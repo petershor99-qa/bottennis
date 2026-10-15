@@ -814,8 +814,24 @@ async def records_payload(session: AsyncSession) -> dict:
     return {"title": "Рекорды клуба", "categories": categories, "empty": ""}
 
 
+async def _reign_defenses(session: AsyncSession, reign: ChampionReign, end: datetime) -> int:
+    """Защиты трона в правлении — выигранные чемпионом боссфайты (как в
+    most_boss_fight_defenses: проигранный боссфайт, закрывший правление, — не защита)."""
+    return (await session.execute(
+        select(func.count()).select_from(Match).where(
+            Match.is_boss_fight == True,  # noqa: E712
+            Match.status == MatchStatus.completed,
+            Match.winner_id == reign.player_id,
+            Match.completed_at >= reign.started_at, Match.completed_at <= end,
+        )
+    )).scalar_one()
+
+
 async def hall_of_fame_payload(session: AsyncSession) -> dict:
+    """v2.188.0: трон из ракеток — текущему чемпиону добавлены защиты, в факты —
+    «дольше всех» и «защит подряд» (рекорды клуба теми же функциями)."""
     from bot.handlers.leaderboard import _reign_end_narrative
+    from bot.utils import longest_champion_reign, most_boss_fight_defenses
 
     reigns = (await session.execute(select(ChampionReign).order_by(desc(ChampionReign.started_at)))).scalars().all()
     if not reigns:
@@ -835,7 +851,17 @@ async def hall_of_fame_payload(session: AsyncSession) -> dict:
             "player_id": current.player_id,
             "since": current.started_at.strftime("%d.%m.%y"),
             "duration": _days((now - current.started_at).days),
+            "defenses": await _reign_defenses(session, current, now),
         }
+        n_def = current_payload["defenses"]
+        current_payload["defenses_text"] = _ru_plural(n_def, "защита", "защиты", "защит") if n_def else ""
+    records = []
+    longest = await longest_champion_reign(session)
+    if longest is not None:
+        records.append({"label": "Дольше всех", "value": f"{name_map.get(longest[0], '?')} · {_days(longest[1])}"})
+    defenses = await most_boss_fight_defenses(session)
+    if defenses is not None:
+        records.append({"label": "Защит за правление", "value": f"{name_map.get(defenses[0], '?')} · {defenses[1]}"})
     closed = []
     for r in reigns:
         if r.ended_at is None:
@@ -852,6 +878,7 @@ async def hall_of_fame_payload(session: AsyncSession) -> dict:
         "title": "Зал славы",
         "current": current_payload,
         "facts": [{"label": "Смен трона", "value": str(len(reigns))}],
+        "records": records,
         "reigns": closed,
         "empty": "",
     }
