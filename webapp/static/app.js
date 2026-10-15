@@ -14,7 +14,8 @@
       matchesWord: matchesWord, screenName: screenName, splitNumber: splitNumber, badgeClass: badgeClass,
       parseLaunchParams: parseLaunchParams, isColorDark: isColorDark,
       filterMatches: filterMatches, recordLine: recordLine, compactDate: compactDate,
-      toggledReactions: toggledReactions, matchMood: matchMood
+      toggledReactions: toggledReactions, matchMood: matchMood,
+      nextNav: nextNav, sparkPoints: sparkPoints
     };
     return;
   }
@@ -454,7 +455,12 @@
   function skeleton(kind) {
     var wrap = el("div", "sk");
     var shapes = kind === "profile" ? ["sk-hero", "sk-tabs", "sk-tiles"] :
-      kind === "body" ? ["sk-tiles", "sk-card"] : ["sk-title", "sk-card", "sk-card"];
+      kind === "body" ? ["sk-tiles", "sk-card"] :
+      // v2.182.0: по форме экрана — главная, рейтинг, матч
+      kind === "home" ? ["sk-title", "sk-podium", "sk-me", "sk-button", "sk-card"] :
+      kind === "rating" ? ["sk-title", "sk-tabs", "sk-row", "sk-row", "sk-row", "sk-row", "sk-row"] :
+      kind === "match" ? ["sk-versus", "sk-card", "sk-row", "sk-row"] :
+      ["sk-title", "sk-card", "sk-card"];
     shapes.forEach(function (c) { wrap.appendChild(el("div", "sk-block " + c)); });
     return wrap;
   }
@@ -909,6 +915,8 @@
     body.appendChild(el("div", "sub", row.subtitle));
     li.appendChild(body);
     var value = el("div", "value");
+    var spark = sparkline(row.spark);
+    if (spark) li.insertBefore(spark, null);
     value.appendChild(el("div", "rating", row.rating));
     if (row.week_change !== 0) {
       value.appendChild(el("div", "place " + (row.week_change > 0 ? "tone-win" : "tone-loss"),
@@ -998,7 +1006,13 @@
     });
     area.appendChild(board);
     if (d.gap) { gapNote = el("p", "footnote", d.gap); area.appendChild(gapNote); }
-    if (pendingRise && mine && pendingRise > myRow.rank) animateRise(c, mine, pendingRise, myRow.rank);
+    var ids = d.rows.map(function (row) { return row.player_id; });
+    if (pendingRise && mine && pendingRise > myRow.rank) {
+      animateRise(c, mine, pendingRise, myRow.rank);
+      try { window.localStorage.setItem(ORDER_KEY, JSON.stringify(ids)); } catch (e) { /* без памяти */ }
+    } else if (!app.classList.contains("quiet")) {
+      requestAnimationFrame(function () { boardFlip(board.list, ids); });
+    }
     pendingRise = null;
   }
 
@@ -1027,7 +1041,7 @@
   function profileHero(c, d, playerId) {
     var h = d.head;
     // Карточка игрока (v2.177.0): полоса «стола» сверху, характеристики из радара
-    var hero = el("div", "card hero player-card");
+    var hero = el("div", "card hero player-card" + (h.rank && h.rank <= 3 ? " frame frame-" + h.rank : ""));
     hero.appendChild(el("div", "table-band"));
     var top = el("div", "hero-top");
     top.appendChild(avatar({ id: +playerId, initial: h.initial }, "xl"));
@@ -1045,6 +1059,7 @@
     if (d.chart) hero.appendChild(ratingChart(d.chart));
     if (h.photo_link && !d.empty) hero.appendChild(shareButton("profile", function () { return profileCardBlocks(d); }));
     c.appendChild(hero);
+    if (String(playerId) === String(viewerId)) celebrateTitle(h);
   }
 
   function cardStats(card, playerId) {
@@ -1486,9 +1501,16 @@
       var seen = null;
       try { seen = JSON.parse(raw || "null"); } catch (e) { seen = null; }
       if (Array.isArray(seen)) {
+        var fresh = [];
         [].forEach.call(body.querySelectorAll(".badge-cell[data-id]"), function (cell) {
-          if (seen.indexOf(cell.getAttribute("data-id")) < 0) cell.classList.add("is-new");
+          if (seen.indexOf(cell.getAttribute("data-id")) < 0) { cell.classList.add("is-new"); fresh.push(cell); }
         });
+        // v2.182.0: новая ачивка «вылетает», над первой — конфетти
+        if (fresh.length) {
+          fresh[0].scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+          setTimeout(function () { confetti(fresh[0].querySelector(".badge") || fresh[0]); }, 450);
+          try { if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success"); } catch (e) { /* нет вибрации */ }
+        }
       }
       storageSet(SEEN_KEY, JSON.stringify(earnedIds.slice().sort()));
     });
@@ -2864,6 +2886,141 @@
     });
   }
 
+  // ── Живой дизайн (v2.182.0): переходы по направлению, «переезд» строк
+  // рейтинга, конфетти новой ачивки, заставка нового звания, мини-графики,
+  // скелеты по форме экрана. Везде: при «уменьшить движение» — без анимаций.
+
+  // Направление перехода: вглубь — экран въезжает справа, «Назад» — слева,
+  // между вкладками — мягкое проявление. Своя история адресов: кнопка «Назад»
+  // Telegram и жест «назад» приходят обычной сменой адреса.
+  var navStack = [];
+
+  // Чистая часть (проверяется в Node): [направление, новая история]
+  function nextNav(stack, route, viewer) {
+    var isTab = route === "" || route === "rating" || route === "player/" + viewer;
+    if (stack.length && stack[stack.length - 1] === route) return ["none", stack];
+    if (isTab) {
+      // вернулись на вкладку, с которой уходили вглубь, — это «назад»
+      return [stack.length > 1 && stack[0] === route ? "back" : "tab", [route]];
+    }
+    var i = stack.lastIndexOf(route);
+    if (i >= 0) return ["back", stack.slice(0, i + 1)];
+    return ["forward", stack.concat([route])];
+  }
+
+  function navDirection(route) {
+    var r = nextNav(navStack, route, viewerId);
+    navStack = r[1];
+    return r[0];
+  }
+
+  // Конфетти: короткий салют из цветных лепестков вокруг элемента
+  var CONFETTI_COLORS = ["var(--gold)", "var(--accent)", "var(--win)", "var(--them)", "var(--loss)"];
+
+  function confetti(anchor) {
+    if (reduceMotion || !anchor || !anchor.getBoundingClientRect) return;
+    var box = anchor.getBoundingClientRect();
+    var layer = el("div", "confetti");
+    layer.style.left = (box.left + box.width / 2) + "px";
+    layer.style.top = (box.top + box.height / 2) + "px";
+    for (var i = 0; i < 18; i++) {
+      var bit = el("i", "confetti-bit");
+      var angle = (Math.PI * 2 * i) / 18 + Math.random() * 0.3;
+      var dist = 40 + Math.random() * 46;
+      bit.style.setProperty("--dx", Math.round(Math.cos(angle) * dist) + "px");
+      bit.style.setProperty("--dy", Math.round(Math.sin(angle) * dist - 20) + "px");
+      bit.style.setProperty("--rot", Math.round(Math.random() * 360) + "deg");
+      bit.style.background = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
+      bit.style.animationDelay = Math.round(Math.random() * 80) + "ms";
+      layer.appendChild(bit);
+    }
+    document.body.appendChild(layer);
+    setTimeout(function () { if (layer.parentNode) layer.parentNode.removeChild(layer); }, 1400);
+  }
+
+  // Заставка «Новое звание»: один раз, при первом заходе в свой профиль после повышения
+  var TITLE_KEY = "seen_title_v1";
+
+  function celebrateTitle(head) {
+    if (!head || head.title_level === undefined) return;
+    storageGet(TITLE_KEY, function (raw) {
+      if (raw === undefined) return;
+      var seen = parseInt(raw, 10);
+      storageSet(TITLE_KEY, String(head.title_level));
+      if (raw === null || isNaN(seen) || head.title_level <= seen) return;
+      var wrap = el("div", "sheet-wrap celebrate-wrap");
+      var sheet = el("div", "sheet celebrate");
+      sheet.appendChild(el("div", "eyebrow", "Новое звание"));
+      var big = el("div", "celebrate-title", head.title);
+      sheet.appendChild(big);
+      sheet.appendChild(el("div", "sheet-text", "Рейтинг " + head.rating + " — так держать."));
+      wrap.appendChild(sheet);
+      wrap.addEventListener("click", function () { wrap.remove(); });
+      document.body.appendChild(wrap);
+      try { if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success"); } catch (e) { /* нет вибрации */ }
+      setTimeout(function () { confetti(big); }, 250);
+    });
+  }
+
+  // Мини-график рейтинга в строке таблицы: последние 10 матчей
+  function sparkPoints(points, W, H) {
+    var lo = Math.min.apply(null, points), hi = Math.max.apply(null, points);
+    var span = hi - lo || 1;
+    return points.map(function (v, i) {
+      return (i * W / (points.length - 1)).toFixed(1) + "," + (H - 1 - (v - lo) / span * (H - 2)).toFixed(1);
+    });
+  }
+
+  function sparkline(points) {
+    if (!points || points.length < 2) return null;
+    var W = 46, H = 16;
+    var pts = sparkPoints(points, W, H);
+    var up = points[points.length - 1] >= points[0];
+    var s = svg("svg", { "class": "spark " + (up ? "spark-up" : "spark-down"), viewBox: "0 0 " + W + " " + H, "aria-hidden": "true" });
+    s.appendChild(svg("polyline", { points: pts.join(" ") }));
+    return s;
+  }
+
+  // «Переезд» строк рейтинга: если с прошлого просмотра таблицы порядок
+  // изменился, строки плавно едут со старых мест на новые (FLIP).
+  var ORDER_KEY = "board_order_v1";
+
+  function boardFlip(list, ids) {
+    var order;
+    try { order = JSON.parse(window.localStorage.getItem(ORDER_KEY) || "null"); } catch (e) { order = null; }
+    try { window.localStorage.setItem(ORDER_KEY, JSON.stringify(ids)); } catch (e) { /* без памяти */ }
+    if (reduceMotion || !Array.isArray(order) || order.join() === ids.join()) return;
+    var rows = list.children;
+    var height = rows.length ? rows[0].offsetHeight : 0;
+    if (!height) return;
+    ids.forEach(function (id, i) {
+      var was = order.indexOf(id);
+      if (was < 0 || was === i || !rows[i]) return;
+      var row = rows[i];
+      row.style.transition = "none";
+      row.style.transform = "translateY(" + ((was - i) * height) + "px)";
+      row.classList.add("is-moving");
+    });
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        [].forEach.call(rows, function (row) {
+          if (!row.classList.contains("is-moving")) return;
+          row.style.transition = "transform .7s cubic-bezier(.2, .8, .2, 1)";
+          row.style.transform = "";
+          setTimeout(function () { row.classList.remove("is-moving"); row.style.transition = ""; }, 750);
+        });
+      });
+    });
+  }
+
+  // Скелет по форме экрана — меньше «прыжков», когда приходят данные
+  function skeletonFor(route) {
+    if (route === "") return skeleton("home");
+    if (route === "rating") return skeleton("rating");
+    if (/^match\/\d+$/.test(route)) return skeleton("match");
+    return skeleton("list");
+  }
+
   // ── Маршруты ───────────────────────────────────────────────────────────────
   // [шаблон адреса, вкладка снизу, загрузка данных, отрисовка]
   function one(path) { return function () { return api(path); }; }
@@ -2944,6 +3101,7 @@
       if (tg && tg.BackButton) { if (isOwn) tg.BackButton.hide(); else tg.BackButton.show(); }
       if (shell && shell.playerId === playerId && app.contains(shell.body)) {
         // тот же игрок — переключаем только раздел, шапку не трогаем
+        navDirection(route);   // история переходов знает и разделы профиля (v2.182.0)
         setSegment(tab);
         loadTab(tab, token);
         renderedRoute = route;
@@ -2953,6 +3111,7 @@
       shell = null;
       app.textContent = "";
       app.classList.remove("is-wide");
+      app.setAttribute("data-enter", quiet === true ? "none" : navDirection(route));
       app.appendChild(skeleton("profile"));
       api("player/" + playerId).then(function (d) {
         if (token !== renderToken) return;
@@ -2981,7 +3140,8 @@
 
     app.textContent = "";
     app.classList.remove("is-wide");
-    app.appendChild(skeleton("list"));
+    app.setAttribute("data-enter", quiet === true ? "none" : navDirection(route));
+    app.appendChild(skeletonFor(route));
     entry[2](match).then(function (data) {
       if (token !== renderToken) return;
       app.textContent = "";

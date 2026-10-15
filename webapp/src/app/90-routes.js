@@ -78,6 +78,7 @@
       if (tg && tg.BackButton) { if (isOwn) tg.BackButton.hide(); else tg.BackButton.show(); }
       if (shell && shell.playerId === playerId && app.contains(shell.body)) {
         // тот же игрок — переключаем только раздел, шапку не трогаем
+        navDirection(route);   // история переходов знает и разделы профиля (v2.182.0)
         setSegment(tab);
         loadTab(tab, token);
         renderedRoute = route;
@@ -87,6 +88,7 @@
       shell = null;
       app.textContent = "";
       app.classList.remove("is-wide");
+      app.setAttribute("data-enter", quiet === true ? "none" : navDirection(route));
       app.appendChild(skeleton("profile"));
       api("player/" + playerId).then(function (d) {
         if (token !== renderToken) return;
@@ -115,7 +117,8 @@
 
     app.textContent = "";
     app.classList.remove("is-wide");
-    app.appendChild(skeleton("list"));
+    app.setAttribute("data-enter", quiet === true ? "none" : navDirection(route));
+    app.appendChild(skeletonFor(route));
     entry[2](match).then(function (data) {
       if (token !== renderToken) return;
       app.textContent = "";
