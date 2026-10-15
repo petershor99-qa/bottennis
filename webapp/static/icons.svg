@@ -41,7 +41,9 @@
   <symbol id="ti-list" viewBox="0 0 24 24"><path d="M9 6l11 0" /> <path d="M9 12l11 0" /> <path d="M9 18l11 0" /> <path d="M5 6l0 .01" /> <path d="M5 12l0 .01" /> <path d="M5 18l0 .01" /></symbol>
   <symbol id="ti-list-numbers" viewBox="0 0 24 24"><path d="M11 6h9" /> <path d="M11 12h9" /> <path d="M12 18h8" /> <path d="M4 16a2 2 0 1 1 4 0c0 .591 -.5 1 -1 1.5l-3 2.5h4" /> <path d="M6 10v-6l-2 2" /></symbol>
   <symbol id="ti-lock" viewBox="0 0 24 24"><path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-6" /> <path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0" /> <path d="M8 11v-4a4 4 0 1 1 8 0v4" /></symbol>
+  <symbol id="ti-maximize" viewBox="0 0 24 24"><path d="M4 8v-2a2 2 0 0 1 2 -2h2" /> <path d="M4 16v2a2 2 0 0 0 2 2h2" /> <path d="M16 4h2a2 2 0 0 1 2 2v2" /> <path d="M16 20h2a2 2 0 0 0 2 -2v-2" /></symbol>
   <symbol id="ti-medal" viewBox="0 0 24 24"><path d="M12 4v3m-4 -3v6m8 -6v6" /> <path d="M12 18.5l-3 1.5l.5 -3.5l-2 -2l3 -.5l1.5 -3l1.5 3l3 .5l-2 2l.5 3.5l-3 -1.5" /></symbol>
+  <symbol id="ti-minimize" viewBox="0 0 24 24"><path d="M15 19v-2a2 2 0 0 1 2 -2h2" /> <path d="M15 5v2a2 2 0 0 0 2 2h2" /> <path d="M5 15h2a2 2 0 0 1 2 2v2" /> <path d="M5 9h2a2 2 0 0 0 2 -2v-2" /></symbol>
   <symbol id="ti-mood-cry" viewBox="0 0 24 24"><path d="M9 10l.01 0" /> <path d="M15 10l.01 0" /> <path d="M9.5 15.25a3.5 3.5 0 0 1 5 0" /> <path d="M17.566 17.606a2 2 0 1 0 2.897 .03l-1.463 -1.636l-1.434 1.606" /> <path d="M20.865 13.517a8.937 8.937 0 0 0 .135 -1.517a9 9 0 1 0 -9 9c.69 0 1.36 -.076 2 -.222" /></symbol>
   <symbol id="ti-mood-empty" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" /> <path d="M9 10l.01 0" /> <path d="M15 10l.01 0" /> <path d="M9 15l6 0" /></symbol>
   <symbol id="ti-mood-happy" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" /> <path d="M9 9l.01 0" /> <path d="M15 9l.01 0" /> <path d="M8 13a4 4 0 1 0 8 0h-8" /></symbol>

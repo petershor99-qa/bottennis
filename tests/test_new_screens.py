@@ -90,7 +90,7 @@ def test_page_wiring():
     assert '[/^pairs$/, "home", one("pairs"), renderPairs, "pairs"]' in routes
     assert "enterFullscreen();" in month and "leaveFullscreen();" in routes
     assert 'tg.onEvent("fullscreenChanged", syncFullscreenClass)' in routes
-    assert "return Promise.all(routeJobs(route))" in routes and "is-bouncing" in gestures
+    assert "return Promise.all(routeJobs(route))" in routes and "dropScene(mark, true)" in gestures
     assert 'ratingNumber("hero-value", h.rating, playerId)' in profile
     assert '["quarter", "90 дней"]' in rating
 

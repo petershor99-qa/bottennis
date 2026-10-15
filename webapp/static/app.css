@@ -454,6 +454,14 @@ html, body {
 .set-pts { font-size: 13px; color: var(--hint); min-width: 20px; }
 .set-pts.is-won { color: var(--text); font-weight: 700; }
 @keyframes grow-x { from { transform: scaleX(0); } to { transform: none; } }
+/* Партии по очереди (v2.186.0): штамп и тряска счёта — после последней партии */
+.set-row.is-waiting { opacity: 0.35; }
+.set-row { transition: opacity .2s ease-out; }
+.versus.replaying .mood-stamp { display: none; }
+.versus.replaying .versus-score, .versus.replaying .versus-num { animation: none; }
+.versus.replaying .versus-num.tone-win { color: var(--text); }
+.set-row.is-playing .set-bar.is-won { background: var(--hint); }
+.set-row.is-playing .set-pts.is-won { color: var(--hint); font-weight: 400; }
 
 .trend .chips-pick { margin-top: 10px; }
 .chip-btn { border: 0; cursor: pointer; font: 600 13px var(--font); }
@@ -759,10 +767,6 @@ html, body {
   .mood-stamp, .mood-comeback .versus-score, .mood-blowout .versus-num, .mood-boss .versus-row,
   .table-art .art-ball, #boot-state::before, .story-card, .story-bars i.is-now b, .chronicle-item { animation: none; }
 }
-/* v2.177.0: «потяни вниз — обновить» */
-.pull-mark { position: fixed; top: 6px; left: 50%; z-index: 20; width: 30px; height: 30px; border-radius: 50%;
-  border: 3px solid var(--soft); border-top-color: var(--ball); background: var(--card); pointer-events: none; }
-.pull-mark.is-ready { border-color: var(--ball); }
 .challenge-btn { margin-top: 12px; }
 
 /* ── v2.180.0: цвет показателей стиля относительно клуба ──────────────── */
@@ -900,12 +904,42 @@ html, body {
 
 html.is-fullscreen .screen { padding-top: calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px) + 12px); }
 
-.pull-mark { display: grid; place-items: center; border: 0; background: var(--card); color: var(--hint);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, .12); }
-.pull-mark .ico { width: 22px; height: 22px; }
-.pull-mark.is-ready { color: var(--ball); }
-.pull-mark.is-bouncing { color: var(--ball); transform: translate(-50%, 40px); animation: ball-bounce .5s ease-in-out infinite alternate; }
-@keyframes ball-bounce { from { transform: translate(-50%, 40px); } to { transform: translate(-50%, 18px); } }
+/* ── v2.186.0: всё приложение во весь экран ────────────────────────────── */
+/* --top-safe — высота полосы, которую во весь экран закрывают часы телефона и
+   кнопки Telegram: липкие заголовки и мячик обновления встают ниже неё */
+html { --top-safe: 0px; --bottom-safe: env(safe-area-inset-bottom, 0px); }
+html.is-fullscreen { --top-safe: calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px));
+  --bottom-safe: max(env(safe-area-inset-bottom, 0px), var(--tg-safe-area-inset-bottom, 0px)); }
+html.is-fullscreen .segmented, html.is-fullscreen .feed-list .feed-day, html.is-fullscreen .snap-note { top: var(--top-safe); }
+html.is-fullscreen .pull-scene { top: calc(var(--top-safe) + 4px); }
+html.is-fullscreen .is-wide .col-sticky { top: calc(var(--top-safe) + 12px); }
+html.is-fullscreen .tabbar { padding-bottom: calc(8px + var(--bottom-safe)); }
+/* «Во весь экран» на компьютере — маленькая кнопка в правом верхнем углу */
+.fs-toggle { position: fixed; top: calc(var(--top-safe) + 10px); right: 12px; z-index: 6; width: 34px; height: 34px;
+  display: grid; place-items: center; border: 0; border-radius: 10px; background: var(--soft); color: var(--hint); cursor: pointer; }
+.fs-toggle:hover { color: var(--text); }
+html.has-fs-toggle .screen-head { padding-right: 40px; }
+.fs-toggle .ico { width: 18px; height: 18px; }
+/* Широкий экран (компьютер во весь экран): шире поля и плитки клуба в 4 ряда */
+@media (min-width: 1280px) {
+  .screen.is-wide { max-width: 1280px; }
+  .is-wide .cols { gap: 32px; }
+  .club-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* v2.186.0: «потяни вниз» — мяч дважды отскакивает от кромки стола и улетает вверх */
+.pull-scene { position: fixed; top: 4px; left: 50%; z-index: 20; width: 96px; height: 62px; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-end; opacity: 0;
+  padding-bottom: 10px; box-sizing: border-box; border-radius: 16px; background: var(--card);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .18); }
+.pull-scene.is-flying { background: transparent; box-shadow: none; transition: background .2s, box-shadow .2s; }
+.pull-ball { width: 22px; height: 22px; color: var(--ball); margin-bottom: 1px; will-change: transform; }
+.pull-ball .ico { width: 22px; height: 22px; }
+.pull-table { width: 76px; height: 4px; border-radius: 2px; background: var(--table); position: relative; }
+.pull-table::after { content: ""; position: absolute; left: 50%; top: -5px; width: 2px; height: 9px; background: var(--hint); opacity: .6; }
+.pull-scene.is-flying .pull-ball { animation: ball-fly .5s cubic-bezier(.3, 0, .8, .4) forwards; }
+.pull-scene.is-flying .pull-table, .pull-scene.is-leaving { transition: opacity .2s ease-out; opacity: 0; }
+@keyframes ball-fly { to { transform: translateY(-140px) rotate(540deg); opacity: 0; } }
 
 /* Контраст подписей в светлой теме (WCAG AA): серый Telegram бывает слишком
    светлым на сером фоне — подмешиваем 20% чёрного */
@@ -913,7 +947,7 @@ html.is-fullscreen .screen { padding-top: calc(var(--tg-safe-area-inset-top, 0px
 .tier-gray { opacity: 0.85; }
 
 @media (prefers-reduced-motion: reduce) {
-  .pairs-cell, .pull-mark.is-bouncing { animation: none; }
+  .pairs-cell, .pull-scene.is-flying .pull-ball { animation: none; }
 }
 
 /* ── v2.184.0: гонка рейтинга ────────────────────────────────────────── */

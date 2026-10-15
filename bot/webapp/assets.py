@@ -11,9 +11,16 @@ icons.svg (`Cache-Control: no-cache` + ETag, v2.164.0) — по запросу �
 - если браузер принимает gzip, тело сжато заранее, один раз при загрузке.
 Файлы держатся в памяти и перечитываются, если поменялись на диске (превью
 подхватывает правки без перезапуска).
+
+v2.186.0: из app.js при раздаче убираются строки, целиком состоящие из
+комментария (`// …`), — около 9 КБ сжатого первого запуска. Файл на диске и
+исходники в webapp/src остаются с комментариями. Безопасно, пока в app.js нет
+шаблонных строк в обратных кавычках (строка внутри них могла бы начинаться с
+`//`) — это проверяет тест.
 """
 import gzip
 import hashlib
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +36,12 @@ ASSET_TYPES = {
     "telegram-web-app.js": "application/javascript",
 }
 IMMUTABLE = "public, max-age=31536000, immutable"
+_LINE_COMMENT = re.compile(rb"(?m)^[ \t]*//[^\n]*\n")
+
+
+def strip_line_comments(js: bytes) -> bytes:
+    """Убрать строки, где только комментарий `// …` (не трогая код с комментарием в конце)."""
+    return _LINE_COMMENT.sub(b"", js)
 
 
 @dataclass
@@ -71,6 +84,7 @@ class Assets:
             return cached
         body = (self.dir / name).read_bytes()
         if name == "app.js":
+            body = strip_line_comments(body)
             icons = self.get("icons.svg").version
             body = body.replace(b'"static/icons.svg#', f'"static/icons.svg?v={icons}#'.encode())
         asset = Asset(body=body, gz=gzip.compress(body, 9, mtime=0), version=_version(body),

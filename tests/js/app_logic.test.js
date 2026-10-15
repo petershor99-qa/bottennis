@@ -161,3 +161,27 @@ test("chipSets: счёт из ленты для характера матча (v
   const sets = app.chipSets(["5:11", "6:11", "11:8", "11:8", "11:9"]);
   assert.equal(app.matchMood({ winner: "a", boss: false, sets }), "comeback");
 });
+
+test("replayTiming: партии по очереди укладываются в 4 секунды (v2.186.0)", () => {
+  for (const n of [2, 3, 5, 7]) {
+    const t = app.replayTiming(n);
+    assert.ok(t.per <= 800 && t.per >= 250);
+    assert.ok(250 + n * (t.per + t.gap) <= 4300, `n=${n}`);
+  }
+  assert.equal(app.replayTiming(2).per, 800);
+});
+
+test("isPhoneClient: во весь экран сразу только на телефоне (v2.186.0)", () => {
+  assert.equal(app.isPhoneClient("android"), true);
+  assert.equal(app.isPhoneClient("ios"), true);
+  for (const p of ["tdesktop", "macos", "weba", "webk", ""]) assert.equal(app.isPhoneClient(p), false);
+});
+
+test("ballHeight: два отскока от стола по ходу натяжения (v2.186.0)", () => {
+  assert.equal(app.ballHeight(0), 0);
+  assert.equal(app.ballHeight(0.25), 26);     // первая вершина
+  assert.equal(app.ballHeight(0.5), 0);       // первый отскок
+  assert.equal(app.ballHeight(0.75), 26);     // вторая вершина
+  assert.equal(app.ballHeight(1), 0);         // второй отскок
+  assert.equal(app.ballHeight(3), 0);         // дальше — лежит на столе
+});

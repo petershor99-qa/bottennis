@@ -96,8 +96,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
 
+      # v2.186.0: процент покрытия кода бота — в журнале и в итоге прогона CI
+      # (только показывается, порога нет)
       - name: Run tests
-        run: pytest -v
+        run: pytest -v --cov=bot --cov-report=term
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          echo "### Покрытие кода тестами" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # 8 файлов с самым низким покрытием и итог
+          coverage report --sort=cover | head -n 10 >> "$GITHUB_STEP_SUMMARY" || true
+          coverage report | tail -n 1 >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
     runs-on: ubuntu-latest

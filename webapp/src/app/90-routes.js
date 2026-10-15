@@ -69,7 +69,8 @@
     app.classList.toggle("quiet", quiet === true);
     if (renderedRoute !== null && renderedRoute !== route) scrollPos[renderedRoute] = window.scrollY;
     if (route === "me") { location.replace("#/player/" + viewerId); return; }
-    if (!/^month/.test(route)) leaveFullscreen();   // во весь экран — только «Твой месяц» (v2.183.0)
+    // «Твой месяц» во весь экран (v2.183.0); остальные экраны — если так выбрано (v2.186.0)
+    if (!/^month/.test(route) && !wantFullscreen()) leaveFullscreen();
 
     var token = ++renderToken;
     var pm = route.match(PLAYER_ROUTE);
@@ -196,6 +197,7 @@
       if (tg.isVersionAtLeast && tg.isVersionAtLeast("7.7") && tg.disableVerticalSwipes) tg.disableVerticalSwipes();
       tg.onEvent("themeChanged", function () { applyTheme(); shell = null; render(true); });
       tg.onEvent("fullscreenChanged", syncFullscreenClass);
+      setupFullscreen();
       if (tg.BackButton) {
         tg.BackButton.onClick(function () { history.back(); });
         if (renderedRoute !== null && renderedRoute !== "" && renderedRoute !== "rating" &&
