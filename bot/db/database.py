@@ -65,6 +65,8 @@ async def _migrate_db() -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_match_reaction_player ON match_reactions (match_id, player_id)",
         # v2.174.0 — своё фото для приложения (file_id из Telegram)
         "ALTER TABLE players ADD COLUMN photo_file_id TEXT",
+        # v2.179.0 — версия постоянной клавиатуры у игрока
+        "ALTER TABLE players ADD COLUMN reply_kb_version INTEGER NOT NULL DEFAULT 0",
     ]
     async with engine.begin() as conn:
         for sql in migrations:

@@ -36,6 +36,7 @@ from bot.utils import (
     random_challenge_greeting,
     safe_send,
 )
+from bot.webapp.config import webapp_link
 
 logger = logging.getLogger(__name__)
 
@@ -339,7 +340,7 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
             f"<i>«{opponent_phrase}»</i>"
             f"{boss_fight_note}\n\n"
             f"📋 После игры просто напиши счёт сюда: <code>11:7 9:11 11:5</code>",
-            reply_markup=active_match_kb(match.id),
+            reply_markup=active_match_kb(match.id, h2h_url=webapp_link(opponent.telegram_id, f"h2h/{challenger.id}")),
             # Тихо (v2.166.0): в клубе вызывают уже после игры, соперник рядом,
             # и через полминуты придёт результат — второй звонок подряд не нужен.
             # Само сообщение остаётся: забывшему записать оно служит напоминанием.
@@ -380,7 +381,7 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
         f"<i>«{win_phrase}»</i>"
         f"{boss_fight_note}\n\n"
         f"📋 После игры просто напиши счёт сюда: <code>11:7 9:11 11:5</code>",
-        reply_markup=active_match_kb(match.id),
+        reply_markup=active_match_kb(match.id, h2h_url=webapp_link(challenger.telegram_id, f"h2h/{opponent.id}")),
     )
 
     # Пасхалка: вызвал текущего лидера рейтинга. Раньше текст был "Похоже это

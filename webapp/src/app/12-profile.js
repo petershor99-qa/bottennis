@@ -78,6 +78,8 @@
   function buildShell(c, d, playerId) {
     var cols = twoCols(c, true);
     profileHero(cols.main, d, playerId);
+    // Чужой профиль: «Вызвать на матч» сразу под карточкой, на любом разделе (v2.179.0)
+    if (String(playerId) !== String(viewerId)) cols.main.appendChild(challengeButton(playerId));
     var seg = null;
     if (!d.empty) { seg = segmented(playerId, "", d.counts); cols.side.appendChild(seg); }
     var body = el("div", "tab-body");

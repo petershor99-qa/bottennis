@@ -55,6 +55,7 @@ from bot.utils import get_player
 from bot.webapp import api, api_chronicle, api_club, api_day, api_insights, api_month, api_personal, reactions
 from bot.webapp.assets import ASSET_TYPES, Assets, accepts_gzip
 from bot.webapp.auth import WebAppAuthError, init_data_from_header, telegram_id_from_init_data
+from bot.webapp.challenge_open import open_challenge
 from bot.webapp.config import is_admin, is_webapp_allowed, webapp_listen
 from bot.webapp.photos import PhotoCache, photo_etag
 from bot.webapp.share import send_share
@@ -269,6 +270,29 @@ async def share(request, session, viewer):
     messages = {"bad": (400, "Не удалось прочитать картинку."),
                 "wait": (429, "Чуть позже — картинка только что отправлена."),
                 "fail": (502, "Telegram не принял картинку. Попробуйте ещё раз.")}
+    status, text = messages[result]
+    return _json_error(status, text)
+
+
+async def challenge_open(request, session, viewer):
+    """«Вызвать на матч» из приложения (v2.179.0): бот присылает экран вызова в чат."""
+    bot = request.app.get(BOT_KEY)
+    if bot is None:
+        return None
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    raw = body.get("opponent_id") if isinstance(body, dict) else None
+    if raw is not None and (isinstance(raw, bool) or not isinstance(raw, int)):
+        return _json_error(400, "Не удалось открыть вызов.")
+    result = await open_challenge(bot, session, viewer, raw)
+    if result == "ok":
+        request[TRACK_REQUEST_KEY] = (viewer.telegram_id, "challenge_open", None, None)
+        return {"ok": True}
+    messages = {"bad": (400, "Не удалось открыть вызов."),
+                "wait": (429, "Экран вызова уже в чате с ботом."),
+                "fail": (502, "Бот не смог ответить. Откройте чат с ботом.")}
     status, text = messages[result]
     return _json_error(status, text)
 
@@ -524,6 +548,7 @@ def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
     app.router.add_post("/api/client_error", endpoint(client_error))
     app.router.add_post("/api/feed/react", endpoint(feed_react))
     app.router.add_post("/api/share", endpoint(share))
+    app.router.add_post("/api/challenge/open", endpoint(challenge_open))
     app.router.add_post("/api/match/{match_id}/react", endpoint(react))
     app.router.add_static("/static/", STATIC_DIR, show_index=False)
     return app

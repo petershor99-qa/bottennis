@@ -253,6 +253,35 @@
     });
   }
 
+  // «Вызвать на матч» (v2.179.0): вызов делается в боте, как и раньше. Кнопка
+  // просит бота прислать экран вызова в чат (с выбранным соперником —
+  // подтверждение) и закрывает приложение — игрок сразу у нужного экрана.
+  function closeApp() {
+    try { if (tg && tg.close) { tg.close(); return true; } } catch (e) { /* ниже — напрямую */ }
+    try {
+      if (window.TelegramWebviewProxy) { window.TelegramWebviewProxy.postEvent("web_app_close", JSON.stringify("")); return true; }
+      if (window.parent !== window) { window.parent.postMessage(JSON.stringify({ eventType: "web_app_close", eventData: "" }), "*"); return true; }
+    } catch (e) { /* не в Telegram */ }
+    return false;
+  }
+
+  function challengeButton(opponentId) {
+    var b = el("button", "button challenge-btn");
+    b.type = "button";
+    b.appendChild(icon("swords", "ico-btn"));
+    b.appendChild(document.createTextNode("Вызвать на матч"));
+    b.addEventListener("click", function () {
+      haptic("impact");
+      b.disabled = true;
+      post("challenge/open", opponentId ? { opponent_id: Number(opponentId) } : {}).then(function () {
+        if (!closeApp()) sheetOpen(null, "Вызов — в чате с ботом", "Открой чат с ботом: там уже ждёт экран вызова.", "");
+      }, function (err) {
+        sheetOpen(null, "Не получилось", err.message, "");
+      }).then(function () { b.disabled = false; });
+    });
+    return b;
+  }
+
   function renderHome(c, d) {
     c.appendChild(header("Клуб сегодня", d.today.label));
     if (d.empty) { emptyState(c, d.empty); return; }
@@ -271,6 +300,7 @@
     me.appendChild(mb);
     me.appendChild(num("me-rating", d.me.rating));
     c.appendChild(me);
+    c.appendChild(challengeButton(null));
 
     if (d.links.length) c.appendChild(clubTiles(d.links));
 
