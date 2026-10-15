@@ -187,3 +187,27 @@ test("ballHeight: два отскока от стола по ходу натяж
   assert.equal(app.ballHeight(1), 0);         // второй отскок
   assert.equal(app.ballHeight(3), 0);         // дальше — лежит на столе
 });
+
+test("edgeProgress: натяжение «назад» от края, 0..1", () => {
+  assert.equal(app.edgeProgress(-5), 0);
+  assert.equal(app.edgeProgress(45), 0.5);
+  assert.equal(app.edgeProgress(90), 1);
+  assert.equal(app.edgeProgress(300), 1);
+});
+
+test("isRootRoute: на главных вкладках жеста «назад» нет", () => {
+  assert.equal(app.isRootRoute("", 7), true);
+  assert.equal(app.isRootRoute("rating", 7), true);
+  assert.equal(app.isRootRoute("player/7", 7), true);
+  assert.equal(app.isRootRoute("player/7/matches", 7), false);
+  assert.equal(app.isRootRoute("player/3", 7), false);
+  assert.equal(app.isRootRoute("h2h/3", 7), false);
+});
+
+test("playerFromRoute: долгое нажатие только на игрока", () => {
+  assert.equal(app.playerFromRoute("player/12"), "12");
+  assert.equal(app.playerFromRoute("player/12/style"), "12");
+  assert.equal(app.playerFromRoute("match/12"), null);
+  assert.equal(app.playerFromRoute("h2h/12"), null);
+  assert.equal(app.playerFromRoute(null), null);
+});
