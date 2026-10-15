@@ -35,6 +35,7 @@ from bot.utils import (
     HEATMAP_DAYS,
     MSK_OFFSET,
     NEWCOMER_THRESHOLD,
+    RANK_TITLE_BANDS,
     _ru_plural,
     activity_counts_by_day,
     build_rating_series,
@@ -117,9 +118,35 @@ async def _club_counts(session: AsyncSession) -> dict[str, int]:
     return {"matches": matches, "reigns": reigns}
 
 
+SPARK_POINTS = 10   # мини-график в строке рейтинга (v2.182.0): рейтинг после последних 10 матчей
+
+
+async def _sparklines(session: AsyncSession, players: dict[int, float]) -> dict[int, list[float]]:
+    """{id игрока: рейтинг после каждого из последних SPARK_POINTS матчей, от старых к
+    новым}. Считается назад от текущего рейтинга по изменениям в матчах (как график
+    профиля). Меньше двух точек — без графика."""
+    matches = (await session.execute(
+        select(Match).where(Match.status == MatchStatus.completed, Match.rating_change.is_not(None))
+        .order_by(Match.completed_at.desc(), Match.id.desc())
+    )).scalars().all()
+    out: dict[int, list[float]] = {pid: [round(r, 1)] for pid, r in players.items()}
+    current = dict(players)
+    for m in matches:
+        for pid in (m.challenger_id, m.challenged_id):
+            series = out.get(pid)
+            if series is None or len(series) > SPARK_POINTS:
+                continue
+            current[pid] -= match_rating_delta(m, pid)
+            series.append(round(current[pid], 1))
+        if all(len(v) > SPARK_POINTS for v in out.values()):
+            break
+    return {pid: list(reversed(v[:SPARK_POINTS])) for pid, v in out.items() if len(v) >= 2}
+
+
 async def leaderboard_payload(session: AsyncSession, viewer_player_id: int) -> dict:
     rows = await compute_leaderboard(session)
     viewer_index = next((i for i, r in enumerate(rows) if r.player_id == viewer_player_id), None)
+    sparks = await _sparklines(session, {r.player_id: r.rating for r in rows})
     return {
         "title": "Рейтинг клуба",
         "players_label": _ru_plural(len(rows), "игрок", "игрока", "игроков"),
@@ -134,6 +161,7 @@ async def leaderboard_payload(session: AsyncSession, viewer_player_id: int) -> d
                 "rating": f"{r.rating:.1f}",
                 "week_change": r.week_change,
                 "week_label": _week_label(r.week_change),
+                "spark": sparks.get(r.player_id, []),
             }
             for r in rows
         ],
@@ -281,6 +309,10 @@ async def player_payload(session: AsyncSession, player: Player, viewer: Player) 
         "initial": (player.display_name.strip()[:1] or "?").upper(),
         "rating": f"{player.rating:.1f}",
         "subtitle": f"{rank_title(player.rating)} · {place}",
+        # v2.182.0: рамка карточки по месту (1–3) и заставка «Новое звание»
+        "rank": rank,
+        "title": rank_title(player.rating),
+        "title_level": sum(1 for threshold, _ in RANK_TITLE_BANDS if player.rating >= threshold),
         "week": "",
         "personal": personal,
     }

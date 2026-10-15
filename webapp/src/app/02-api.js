@@ -94,7 +94,12 @@
   function skeleton(kind) {
     var wrap = el("div", "sk");
     var shapes = kind === "profile" ? ["sk-hero", "sk-tabs", "sk-tiles"] :
-      kind === "body" ? ["sk-tiles", "sk-card"] : ["sk-title", "sk-card", "sk-card"];
+      kind === "body" ? ["sk-tiles", "sk-card"] :
+      // v2.182.0: по форме экрана — главная, рейтинг, матч
+      kind === "home" ? ["sk-title", "sk-podium", "sk-me", "sk-button", "sk-card"] :
+      kind === "rating" ? ["sk-title", "sk-tabs", "sk-row", "sk-row", "sk-row", "sk-row", "sk-row"] :
+      kind === "match" ? ["sk-versus", "sk-card", "sk-row", "sk-row"] :
+      ["sk-title", "sk-card", "sk-card"];
     shapes.forEach(function (c) { wrap.appendChild(el("div", "sk-block " + c)); });
     return wrap;
   }

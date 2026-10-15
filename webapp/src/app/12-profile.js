@@ -23,7 +23,7 @@
   function profileHero(c, d, playerId) {
     var h = d.head;
     // Карточка игрока (v2.177.0): полоса «стола» сверху, характеристики из радара
-    var hero = el("div", "card hero player-card");
+    var hero = el("div", "card hero player-card" + (h.rank && h.rank <= 3 ? " frame frame-" + h.rank : ""));
     hero.appendChild(el("div", "table-band"));
     var top = el("div", "hero-top");
     top.appendChild(avatar({ id: +playerId, initial: h.initial }, "xl"));
@@ -41,6 +41,7 @@
     if (d.chart) hero.appendChild(ratingChart(d.chart));
     if (h.photo_link && !d.empty) hero.appendChild(shareButton("profile", function () { return profileCardBlocks(d); }));
     c.appendChild(hero);
+    if (String(playerId) === String(viewerId)) celebrateTitle(h);
   }
 
   function cardStats(card, playerId) {
@@ -482,9 +483,16 @@
       var seen = null;
       try { seen = JSON.parse(raw || "null"); } catch (e) { seen = null; }
       if (Array.isArray(seen)) {
+        var fresh = [];
         [].forEach.call(body.querySelectorAll(".badge-cell[data-id]"), function (cell) {
-          if (seen.indexOf(cell.getAttribute("data-id")) < 0) cell.classList.add("is-new");
+          if (seen.indexOf(cell.getAttribute("data-id")) < 0) { cell.classList.add("is-new"); fresh.push(cell); }
         });
+        // v2.182.0: новая ачивка «вылетает», над первой — конфетти
+        if (fresh.length) {
+          fresh[0].scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+          setTimeout(function () { confetti(fresh[0].querySelector(".badge") || fresh[0]); }, 450);
+          try { if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success"); } catch (e) { /* нет вибрации */ }
+        }
       }
       storageSet(SEEN_KEY, JSON.stringify(earnedIds.slice().sort()));
     });

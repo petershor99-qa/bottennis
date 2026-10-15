@@ -106,3 +106,27 @@ test("matchMood: характер матча по партиям", () => {
   assert.equal(app.matchMood(m([[11, 9]], "b", true)), "boss");
   assert.equal(app.matchMood(m([[11, 9], [9, 11]], "")), "");   // ничья — без эффектов
 });
+
+test("nextNav: вглубь, назад, вкладки, повтор (v2.182.0)", () => {
+  let [dir, st] = app.nextNav([], "", 7);
+  assert.equal(dir, "tab"); assert.deepEqual(st, [""]);
+  [dir, st] = app.nextNav(st, "records", 7);
+  assert.equal(dir, "forward"); assert.deepEqual(st, ["", "records"]);
+  [dir, st] = app.nextNav(st, "player/3", 7);
+  assert.equal(dir, "forward");
+  [dir, st] = app.nextNav(st, "records", 7);               // «Назад» на шаг
+  assert.equal(dir, "back"); assert.deepEqual(st, ["", "records"]);
+  [dir, st] = app.nextNav(st, "", 7);                      // назад на вкладку, с которой ушли
+  assert.equal(dir, "back"); assert.deepEqual(st, [""]);
+  [dir, st] = app.nextNav(st, "rating", 7);                // другая вкладка — проявление
+  assert.equal(dir, "tab");
+  [dir] = app.nextNav(st, "rating", 7);                     // тот же экран — без анимации
+  assert.equal(dir, "none");
+  [dir] = app.nextNav(["rating"], "player/7", 7);           // своя вкладка «Я»
+  assert.equal(dir, "tab");
+});
+
+test("sparkPoints: от старых к новым, ровная линия не делит на ноль", () => {
+  assert.deepEqual(app.sparkPoints([1000, 1010, 1005], 46, 16), ["0.0,15.0", "23.0,1.0", "46.0,8.0"]);
+  assert.deepEqual(app.sparkPoints([1000, 1000], 10, 10), ["0.0,9.0", "10.0,9.0"]);
+});
