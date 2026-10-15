@@ -221,15 +221,16 @@ async def test_stats_cache_reuses_and_invalidates(db, monkeypatch):
     api_mod._stats_cache.clear()
     calls = []
     real = api_mod._compute_player_stats
-    monkeypatch.setattr(api_mod, "_compute_player_stats", lambda p, m: calls.append(1) or real(p, m))
+    # считаем только своего игрока: цвета показателей (v2.180.0) считают и остальных
+    monkeypatch.setattr(api_mod, "_compute_player_stats", lambda p, m: calls.append(p.id) or real(p, m))
     first = await api_mod.player_payload(db, a, a)
     await api_mod.player_payload(db, a, a)
-    assert len(calls) == 1
+    assert calls.count(a.id) == 1
     assert first["card"]["stats"][0]["short"] == "ВИН" and len(first["card"]["stats"]) == 6
     db.add(_m(b, a, b.id, [(11, 5)], TODAY + timedelta(minutes=1)))
     await db.commit()
     await api_mod.player_payload(db, a, a)
-    assert len(calls) == 2            # новый матч — новый ключ
+    assert calls.count(a.id) == 2     # новый матч — новый ключ
 
 
 # ── Ошибки JS и время запуска ────────────────────────────────────────────────
@@ -254,7 +255,8 @@ async def test_boot_summary_medians(db):
                                                              created_at=datetime(2020, 1, 1))])
     await db.commit()
     rows = await boot_summary(db)
-    assert rows[0] == {"label": "Все клиенты, 7 дней", "value": "1,0 с", "note": "3 запуска"}
+    assert rows[0] == {"label": "Все клиенты, 7 дней", "value": "1,0 с",
+                       "note": "3 запуска · 90% — до 1,0 с"}
     assert {r["label"]: r["value"] for r in rows[1:]} == {"tdesktop": "2,0 с", "android": "0,5 с"}
     assert await boot_summary(SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(all=lambda: [])))) == []
 
@@ -316,7 +318,7 @@ async def test_usage_command_shows_boot_line(db, monkeypatch):
     sent = []
     monkeypatch.setattr(admin, "_send", AsyncMock(side_effect=lambda m, text: sent.append(text)))
     await admin.cmd_usage(msg, db)
-    assert "🚀 <b>Запуск приложения</b>" in sent[0] and "android: 1,2 с (1 запуск)" in sent[0]
+    assert "🚀 <b>Запуск приложения</b>" in sent[0] and "android: 1,2 с (1 запуск · 90% — до 1,2 с)" in sent[0]
 
 
 def test_share_match_caption_and_page_features():

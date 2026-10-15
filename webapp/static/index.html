@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>Клуб</title>
+  <!-- v2.180.0: без запроса favicon.ico (его нет — был 404 на каждом первом
+       запуске); app.js и шрифт качаются сразу, вместе со стилями, а не когда до
+       них дойдёт загрузчик внизу страницы -->
+  <link rel="icon" href="data:,">
+  <link rel="preload" href="static/app.js" as="script">
+  <link rel="preload" href="static/fonts/Raleway-Subset.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="static/app.css">
 </head>
 <body>

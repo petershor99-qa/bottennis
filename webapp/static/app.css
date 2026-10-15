@@ -5,11 +5,12 @@
    Светлая тема: нативная, как настройки Telegram (серый фон, белые карточки),
    цвета из themeParams там, где совпадают. Тёмная: тёмно-синий фон в духе
    SingularityApp, своя палитра.
-   Шрифт Raleway (static/fonts, OFL). В нём нет табличных цифр (tnum), поэтому
+   Шрифт Raleway (static/fonts, OFL; с v2.180.0 урезан scripts/subset_font.py до
+   знаков из unicode-range ниже). В нём нет табличных цифр (tnum), поэтому
    цифры исключены из unicode-range и берутся из системного шрифта. */
 @font-face {
   font-family: "Raleway";
-  src: url("fonts/Raleway-Variable.woff2") format("woff2");
+  src: url("fonts/Raleway-Subset.woff2") format("woff2");
   font-weight: 100 900;
   font-display: swap;
   unicode-range: U+0000-002F, U+003A-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC,
@@ -746,3 +747,39 @@ html, body {
   border: 3px solid var(--soft); border-top-color: var(--ball); background: var(--card); pointer-events: none; }
 .pull-mark.is-ready { border-color: var(--ball); }
 .challenge-btn { margin-top: 12px; }
+
+/* ── v2.180.0: цвет показателей стиля относительно клуба ──────────────── */
+.tier { animation: tier-in .5s ease-out both; }
+.tier-gray { color: var(--hint); opacity: 0.75; }
+.tier-white { color: var(--text); }
+.tier-green { color: var(--win); }
+.tier-red { color: var(--loss); }
+.tier-gold { color: var(--gold); animation: tier-in .5s ease-out both, tier-shine 1.4s ease-in-out .5s 1; }
+@keyframes tier-in { from { color: var(--hint); } }
+@keyframes tier-shine {
+  0%, 100% { text-shadow: none; }
+  50% { text-shadow: 0 0 10px color-mix(in srgb, var(--gold) 70%, transparent); }
+}
+.tier-note { font-size: 12px; font-weight: 600; margin-top: 2px; }
+.tier-note.tier-white { color: var(--hint); }
+@media (prefers-reduced-motion: reduce) {
+  .tier, .tier-gold { animation: none; }
+}
+
+/* ── v2.180.0: «пружинка» реакции ─────────────────────────────────────── */
+.reaction { position: relative; }
+.reaction.pop { animation: reaction-pop .38s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes reaction-pop { 0% { transform: scale(1); } 35% { transform: scale(0.82); } 70% { transform: scale(1.12); } 100% { transform: scale(1); } }
+.reaction-fly { position: absolute; left: 50%; top: 0; pointer-events: none; color: var(--accent);
+  animation: reaction-fly .75s ease-out forwards; }
+.reaction-fly .ico { width: 18px; height: 18px; }
+@keyframes reaction-fly { from { transform: translate(-50%, 0) scale(.8); opacity: 1; } to { transform: translate(-50%, -34px) scale(1.25); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .reaction.pop, .reaction-fly { animation: none; }
+  .reaction-fly { display: none; }
+}
+
+/* ── v2.180.0: мгновенный старт из снимка главной ─────────────────────── */
+.snap-note { position: sticky; top: 0; z-index: 5; margin: 0 auto 8px; width: fit-content; padding: 4px 12px;
+  border-radius: 999px; background: var(--card); color: var(--hint); font-size: 12px; font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .08); }

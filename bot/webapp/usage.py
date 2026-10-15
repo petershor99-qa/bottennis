@@ -44,16 +44,17 @@ class UsageWriter:
         task.add_done_callback(self._pending.discard)
         return True
 
-    def record_boot(self, ms: int, platform: str) -> None:
-        """Время запуска — в таблицу app_boots (v2.177.0), фоном, как и события."""
-        task = asyncio.create_task(self._write_boot(ms, platform))
+    def record_boot(self, ms: int, platform: str, failed: bool = False) -> None:
+        """Время запуска — в таблицу app_boots (v2.177.0), фоном, как и события.
+        failed — запуск не дошёл до первого экрана (v2.180.0), ms = 0."""
+        task = asyncio.create_task(self._write_boot(ms, platform, failed))
         self._pending.add(task)
         task.add_done_callback(self._pending.discard)
 
-    async def _write_boot(self, ms: int, platform: str) -> None:
+    async def _write_boot(self, ms: int, platform: str, failed: bool = False) -> None:
         try:
             async with self._factory() as session:
-                session.add(AppBoot(ms=ms, platform=platform))
+                session.add(AppBoot(ms=ms, platform=platform, failed=failed))
                 await session.commit()
         except Exception:
             logger.warning("Mini App: не удалось записать время запуска", exc_info=True)
@@ -80,6 +81,11 @@ def _ms(value) -> int | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value < MAX_BOOT_MS:
         return int(value)
     return None
+
+
+def client_name(value) -> str:
+    """Безопасное имя клиента Telegram для записи (v2.180.0)."""
+    return _client(value)
 
 
 def _client(value) -> str:
