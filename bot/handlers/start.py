@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Player
 from bot.keyboards.inline import (
+    REPLY_KB_TEXT,
+    REPLY_KB_VERSION,
     back_to_menu_kb,
     help_section_kb,
     help_toc_kb,
@@ -77,7 +79,8 @@ async def cmd_start(message: Message, command: CommandObject, session: AsyncSess
         )
         player.last_menu_message_id = sent.message_id
         await session.commit()
-        await message.answer("👇 Быстрый доступ", reply_markup=main_reply_kb())
+        await message.answer(REPLY_KB_TEXT, reply_markup=main_reply_kb())
+        player.reply_kb_version = REPLY_KB_VERSION
         return
 
     if INVITE_CODE:
@@ -107,7 +110,8 @@ async def cmd_start(message: Message, command: CommandObject, session: AsyncSess
     player.last_menu_message_id = sent.message_id
     await session.commit()
     await message.answer("🎮 Choose your destiny")
-    await message.answer("👇 Быстрый доступ", reply_markup=main_reply_kb())
+    await message.answer(REPLY_KB_TEXT, reply_markup=main_reply_kb())
+    player.reply_kb_version = REPLY_KB_VERSION
 
 
 # ── /cancel ───────────────────────────────────────────────────────────────────
