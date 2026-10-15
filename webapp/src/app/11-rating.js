@@ -11,6 +11,8 @@
     body.appendChild(el("div", "sub", row.subtitle));
     li.appendChild(body);
     var value = el("div", "value");
+    var spark = sparkline(row.spark);
+    if (spark) li.insertBefore(spark, null);
     value.appendChild(el("div", "rating", row.rating));
     if (row.week_change !== 0) {
       value.appendChild(el("div", "place " + (row.week_change > 0 ? "tone-win" : "tone-loss"),
@@ -100,7 +102,13 @@
     });
     area.appendChild(board);
     if (d.gap) { gapNote = el("p", "footnote", d.gap); area.appendChild(gapNote); }
-    if (pendingRise && mine && pendingRise > myRow.rank) animateRise(c, mine, pendingRise, myRow.rank);
+    var ids = d.rows.map(function (row) { return row.player_id; });
+    if (pendingRise && mine && pendingRise > myRow.rank) {
+      animateRise(c, mine, pendingRise, myRow.rank);
+      try { window.localStorage.setItem(ORDER_KEY, JSON.stringify(ids)); } catch (e) { /* без памяти */ }
+    } else if (!app.classList.contains("quiet")) {
+      requestAnimationFrame(function () { boardFlip(board.list, ids); });
+    }
     pendingRise = null;
   }
 
