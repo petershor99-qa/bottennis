@@ -254,7 +254,7 @@ async def match_payload(session: AsyncSession, match_id: int) -> dict | None:
 
 # ── Рейтинг за период ─────────────────────────────────────────────────────────
 
-PERIODS = {"week": (7, "за 7 дней"), "month": (30, "за 30 дней")}
+PERIODS = {"week": (7, "за 7 дней"), "month": (30, "за 30 дней"), "quarter": (90, "за 90 дней")}  # 90 — v2.183.0
 
 
 async def period_leaderboard_payload(session: AsyncSession, viewer: Player, period: str) -> dict | None:

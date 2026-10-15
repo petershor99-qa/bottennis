@@ -52,7 +52,7 @@
     return li;
   }
 
-  var PERIODS = [["", "Всё время"], ["week", "7 дней"], ["month", "30 дней"]];
+  var PERIODS = [["", "Всё время"], ["week", "7 дней"], ["month", "30 дней"], ["quarter", "90 дней"]];
 
   function periodSwitch(onPick) {
     var seg = el("div", "segmented segmented-flat");

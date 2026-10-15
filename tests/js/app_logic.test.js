@@ -130,3 +130,10 @@ test("sparkPoints: от старых к новым, ровная линия не
   assert.deepEqual(app.sparkPoints([1000, 1010, 1005], 46, 16), ["0.0,15.0", "23.0,1.0", "46.0,8.0"]);
   assert.deepEqual(app.sparkPoints([1000, 1000], 10, 10), ["0.0,9.0", "10.0,9.0"]);
 });
+
+test("odometerDigits: пары цифр, разделители, разная длина — не табло (v2.183.0)", () => {
+  assert.deepEqual(app.odometerDigits("1081.3", "1098.0"), [[1, 1], [0, 0], [8, 9], [1, 8], ".", [3, 0]]);
+  assert.equal(app.odometerDigits("999.5", "1000.1"), null);     // стало длиннее — обычный досчёт
+  assert.equal(app.odometerDigits("1000.0", "1000.0"), null);    // не менялось
+  assert.equal(app.odometerDigits("1000.0", "1000,0"), null);    // другой разделитель
+});

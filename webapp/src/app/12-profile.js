@@ -34,7 +34,7 @@
     top.appendChild(who);
     hero.appendChild(top);
     var line = el("div", "hero-rating");
-    line.appendChild(num("hero-value", h.rating));
+    line.appendChild(ratingNumber("hero-value", h.rating, playerId));   // табло (v2.183.0)
     if (h.week) line.appendChild(el("span", "hero-week " + (h.week_up ? "tone-win" : "tone-loss"), h.week));
     hero.appendChild(line);
     if (d.card) hero.appendChild(cardStats(d.card, playerId));

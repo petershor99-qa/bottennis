@@ -864,3 +864,37 @@ html, body {
   .screen[data-enter] > *, .podium-block, .podium .crown-slot .crown, .confetti-bit, .celebrate-title,
   .badge-cell.is-new .badge { animation: none; }
 }
+
+/* ── v2.183.0: «Кто с кем», табло, полный экран, мячик, контраст ──────── */
+.pairs { padding: 12px 10px 10px; overflow-x: auto; }
+.pairs-grid { display: grid; grid-template-columns: 30px repeat(var(--cols), minmax(30px, 1fr)); gap: 4px; align-items: center; justify-items: center; }
+.pairs-grid .avatar { width: 26px; height: 26px; font-size: 12px; }
+.pairs-cell { width: 100%; aspect-ratio: 1; border: 0; border-radius: 7px; font: 700 12px var(--font); color: var(--text);
+  cursor: pointer; animation: fade .3s ease-out both; }
+.pairs-cell.heat-0 { background: var(--heat-0); color: var(--hint); }
+.pairs-cell.heat-3 { color: #fff; }
+.pairs-self { width: 100%; aspect-ratio: 1; border-radius: 7px; background: repeating-linear-gradient(45deg, var(--soft), var(--soft) 3px, transparent 3px, transparent 6px); }
+
+.odometer { display: inline-flex; overflow: hidden; font-variant-numeric: tabular-nums; }
+.odo-col { display: inline-block; height: 1em; line-height: 1; overflow: hidden; position: relative; }
+.odo-strip { display: flex; flex-direction: column; will-change: transform; }
+.odo-digit { height: 1em; line-height: 1; }
+.odo-sep { line-height: 1; }
+
+html.is-fullscreen .screen { padding-top: calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px) + 12px); }
+
+.pull-mark { display: grid; place-items: center; border: 0; background: var(--card); color: var(--hint);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .12); }
+.pull-mark .ico { width: 22px; height: 22px; }
+.pull-mark.is-ready { color: var(--ball); }
+.pull-mark.is-bouncing { color: var(--ball); transform: translate(-50%, 40px); animation: ball-bounce .5s ease-in-out infinite alternate; }
+@keyframes ball-bounce { from { transform: translate(-50%, 40px); } to { transform: translate(-50%, 18px); } }
+
+/* Контраст подписей в светлой теме (WCAG AA): серый Telegram бывает слишком
+   светлым на сером фоне — подмешиваем 20% чёрного */
+:root:not([data-theme="dark"]) { --hint: color-mix(in srgb, var(--tg-theme-hint-color, #6D6D72) 80%, #000); }
+.tier-gray { opacity: 0.85; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pairs-cell, .pull-mark.is-bouncing { animation: none; }
+}
