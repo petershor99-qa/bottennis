@@ -44,7 +44,13 @@
       b.addEventListener("click", function () {
         haptic("select");
         var target = t[1] === "me" ? "player/" + viewerId : t[1];
-        if (currentRoute() === target) { window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+        if (currentRoute() === target) {
+          // v2.190.0: уже наверху — обновить экран (значок вкладки крутится, пока идёт запрос)
+          if (window.scrollY > 4) { window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+          b.classList.add("is-refreshing");
+          refresh().then(function () { b.classList.remove("is-refreshing"); });
+          return;
+        }
         location.hash = "#/" + target;
       });
       tabbar.appendChild(b);

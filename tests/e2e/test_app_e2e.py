@@ -111,3 +111,53 @@ def test_share_sends_png_to_bot(browser, base_url):
     page.wait_for_selector(".sheet-wrap")
     assert "в чате с ботом" in page.inner_text(".sheet-wrap")
     page.context.close()
+
+
+def _touch(page):
+    cdp = page.context.new_cdp_session(page)
+
+    def send(kind, x=0, y=0):
+        cdp.send("Input.dispatchTouchEvent", {"type": kind, "touchPoints": [] if kind == "touchEnd" else [{"x": x, "y": y}]})
+    return send
+
+
+def test_long_press_player_opens_quick_menu(browser, base_url):
+    """v2.190.0: долгое нажатие на игрока — быстрое меню; отпускание пальца его не закрывает."""
+    page = open_page(browser, f"{base_url}/preview#/rating", touch=True)
+    wait_screen(page)
+    box = page.locator('.list [data-route="player/2"]').bounding_box()
+    send = _touch(page)
+    send("touchStart", box["x"] + 60, box["y"] + box["height"] / 2)
+    page.wait_for_timeout(650)
+    send("touchEnd")
+    page.wait_for_timeout(300)
+    sheet = page.locator(".quick-sheet")
+    assert sheet.count() == 1 and page.evaluate("location.hash") == "#/rating"
+    page.wait_for_function("document.querySelector('.quick-sheet').innerText.includes('Ты против Боб')", timeout=3000)
+    page.locator(".quick-sheet .button", has_text="Ты против").click()
+    page.wait_for_function("location.hash === '#/h2h/2'", timeout=3000)
+    assert page.errors == []
+    page.context.close()
+
+
+def test_edge_swipe_goes_back(browser, base_url):
+    """v2.190.0: свайп от левого края — назад; на главной вкладке жеста нет."""
+    page = open_page(browser, f"{base_url}/preview#/rating", touch=True)
+    wait_screen(page)
+    page.evaluate("location.hash = '#/records'")
+    wait_screen(page)
+    send = _touch(page)
+    send("touchStart", 8, 400)
+    for dx in range(10, 140, 16):
+        send("touchMove", 8 + dx, 402)
+    send("touchEnd")
+    page.wait_for_function("location.hash === '#/rating'", timeout=3000)
+    page.wait_for_timeout(400)
+    send("touchStart", 8, 400)          # на «Рейтинге» — корневая вкладка: стрелки нет, никуда не уходим
+    for dx in range(10, 140, 16):
+        send("touchMove", 8 + dx, 402)
+    assert page.locator(".edge-back").count() == 0
+    send("touchEnd")
+    page.wait_for_timeout(300)
+    assert page.evaluate("location.hash") == "#/rating"
+    page.context.close()

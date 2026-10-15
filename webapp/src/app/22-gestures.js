@@ -89,3 +89,180 @@
       if (target) { haptic("select"); location.replace("#/" + target); }
     }
   }, { passive: true });
+
+  // ── Жесты 2 (v2.190.0) ─────────────────────────────────────────────────────
+  // «Назад» свайпом от левого края. На iPhone внутри Telegram системного жеста
+  // «назад» нет (на Android его делает система — через кнопку «Назад» Telegram).
+  // Тянешь от края — выезжает круглая стрелка; на полном натяжении она
+  // «щёлкает» (вибрация, стрелка наполняется цветом); отпустил — шаг назад.
+  // Отпустил раньше — стрелка уезжает обратно. На главных вкладках жеста нет.
+  var EDGE_ZONE = 24;
+
+  // натяжение 0..1; полное — 90 px (порог внутри: в Node переменные модуля не заданы)
+  function edgeProgress(dx) { return Math.max(0, Math.min(1, dx / 90)); }
+
+  function isRootRoute(route, viewer) { return route === "" || route === "rating" || route === "player/" + viewer; }
+
+  var edge = null;
+
+  document.addEventListener("touchstart", function (e) {
+    edge = null;
+    if (e.touches.length !== 1 || document.querySelector(".sheet-wrap")) return;
+    var t = e.touches[0];
+    if (t.clientX > EDGE_ZONE || isRootRoute(currentRoute(), viewerId)) return;
+    if (touch) touch.swipe = false;   // от края — не листание разделов профиля
+    edge = { x: t.clientX, y: t.clientY, mark: null, ready: false };
+  }, { passive: true });
+
+  document.addEventListener("touchmove", function (e) {
+    if (!edge) return;
+    var t = e.touches[0];
+    var dx = t.clientX - edge.x, dy = t.clientY - edge.y;
+    if (!edge.mark) {
+      if (Math.abs(dy) > 14 && Math.abs(dy) > dx) { edge = null; return; }   // это прокрутка
+      if (dx < 10) return;
+      edge.mark = el("div", "edge-back");
+      edge.mark.appendChild(icon("chevron", "edge-back-ico"));
+      document.body.appendChild(edge.mark);
+    }
+    var p = edgeProgress(dx);
+    edge.mark.style.top = Math.round(t.clientY - 22) + "px";
+    edge.mark.style.transform = "translateX(" + Math.round(p * 64) + "px) scale(" + (0.7 + p * 0.3).toFixed(2) + ")";
+    edge.mark.style.opacity = String(Math.min(1, p * 1.6));
+    if (p >= 1 && !edge.ready) haptic("select");
+    edge.ready = p >= 1;
+    edge.mark.classList.toggle("is-ready", edge.ready);
+  }, { passive: true });
+
+  function edgeEnd(goBack) {
+    var cur = edge;
+    edge = null;
+    if (!cur || !cur.mark) return;
+    var mark = cur.mark;
+    if (goBack && cur.ready) {
+      mark.classList.add("is-going");
+      haptic("impact");
+      history.back();
+    } else {
+      mark.style.transform = "translateX(0) scale(0.7)";
+      mark.style.opacity = "0";
+    }
+    setTimeout(function () { mark.remove(); }, 260);
+  }
+
+  document.addEventListener("touchend", function () { edgeEnd(true); }, { passive: true });
+  document.addEventListener("touchcancel", function () { edgeEnd(false); }, { passive: true });
+
+  // Долгое нажатие на игрока (рейтинг, лента, подиум, «Кто с кем», гонка —
+  // везде, где нажатие на игрока открывает профиль): быстрое меню «Вызвать на
+  // матч / Ты против … / Профиль». На компьютере — правая кнопка мыши. Пока
+  // палец держит, строка чуть «вдавливается»; сработало — вибрация, и отпускание
+  // пальца уже не считается нажатием.
+  var LONG_PRESS_MS = 450;
+  var press = null;
+
+  function playerFromRoute(route) {
+    var m = /^player\/(\d+)(?:\/|$)/.exec(route || "");
+    return m ? m[1] : null;
+  }
+
+  function cancelPress() {
+    if (!press) return;
+    clearTimeout(press.timer);
+    press.node.classList.remove("is-pressing");
+    press = null;
+  }
+
+  function pressTarget(target) {
+    var node = target && target.closest ? target.closest("[data-route]") : null;
+    var id = node ? playerFromRoute(node.getAttribute("data-route")) : null;
+    return id ? { node: node, id: id } : null;
+  }
+
+  document.addEventListener("touchstart", function (e) {
+    cancelPress();
+    if (e.touches.length !== 1 || document.querySelector(".sheet-wrap")) return;
+    var hit = pressTarget(e.target);
+    if (!hit) return;
+    var t = e.touches[0];
+    hit.node.classList.add("is-pressing");
+    press = { node: hit.node, id: hit.id, x: t.clientX, y: t.clientY, timer: setTimeout(function () {
+      var cur = press;
+      press = null;
+      cur.node.classList.remove("is-pressing");
+      suppressClicks();
+      haptic("impact");
+      playerSheet(cur.id);
+    }, LONG_PRESS_MS) };
+  }, { passive: true });
+
+  document.addEventListener("touchmove", function (e) {
+    if (!press) return;
+    var t = e.touches[0];
+    if (Math.abs(t.clientX - press.x) > 10 || Math.abs(t.clientY - press.y) > 10) cancelPress();
+  }, { passive: true });
+  document.addEventListener("touchend", cancelPress, { passive: true });
+  document.addEventListener("touchcancel", cancelPress, { passive: true });
+
+  document.addEventListener("contextmenu", function (e) {
+    var hit = pressTarget(e.target);
+    if (!hit) return;
+    e.preventDefault();   // без меню браузера; на телефоне быстрое меню открывает таймер
+    if (e.pointerType === "touch" || document.querySelector(".sheet-wrap")) return;
+    playerSheet(hit.id);
+  });
+
+  // Быстрое меню игрока. Шапка (имя, звание и рейтинг) — из того же ответа, что
+  // и профиль (обычно уже в кэше), действия доступны сразу.
+  function playerSheet(id) {
+    var old = document.querySelector(".sheet-wrap");
+    if (old) old.remove();
+    var own = String(id) === String(viewerId);
+    var wrap = el("div", "sheet-wrap");
+    var sheet = el("div", "sheet quick-sheet");
+    var head = el("div", "quick-head");
+    var av = avatar({ id: Number(id), initial: "" }, "lg");
+    var who = el("div", "quick-who");
+    var name = el("div", "sheet-title", own ? "Ты" : "");
+    var sub = el("div", "quick-sub", "");
+    who.appendChild(name);
+    who.appendChild(sub);
+    head.appendChild(av);
+    head.appendChild(who);
+    sheet.appendChild(head);
+    var actions = el("div", "quick-actions");
+    sheet.appendChild(actions);
+
+    function action(text, ico, quiet, onTap) {
+      var b = el("button", "button" + (quiet ? " button-quiet" : ""));
+      b.type = "button";
+      b.appendChild(icon(ico, "ico-btn"));
+      b.appendChild(document.createTextNode(text));
+      b.addEventListener("click", function () { wrap.remove(); onTap(); });
+      actions.appendChild(b);
+      return b;
+    }
+
+    var versus = null;
+    if (own) {
+      action("Мой профиль", "user", false, function () { go("player/" + id); });
+      action("Твой месяц", "calendar", true, function () { go("month"); });
+    } else {
+      actions.appendChild(challengeButton(id));
+      versus = action("Ты против", "swords", true, function () { go("h2h/" + id); });
+      action("Профиль", "user", true, function () { go("player/" + id); });
+    }
+    api("player/" + id).then(function (d) {
+      if (!d || !d.head) return;
+      if (!own) name.textContent = d.head.name;
+      if (!av.classList.contains("has-photo")) av.textContent = d.head.initial;
+      sub.textContent = d.head.rating + " · " + d.head.subtitle;
+      if (versus) versus.lastChild.textContent = "Ты против " + d.head.name;
+    }, function () { /* без шапки меню всё равно работает */ });
+
+    sheet.addEventListener("click", function (e) { e.stopPropagation(); });
+    wrap.addEventListener("click", function () { wrap.remove(); });
+    wrap.appendChild(sheet);
+    document.body.appendChild(wrap);
+    haptic("select");
+  }
