@@ -39,11 +39,14 @@ async def compute_leaderboard(session: AsyncSession) -> list[LeaderboardRow]:
     if not players:
         return []
 
+    # v2.189.0: только нужные столбцы — без объектов ORM и разбора JSON партий
+    # (на клубе в тысячи матчей это было ~2/3 времени расчёта)
     all_matches = (await session.execute(
-        select(Match)
+        select(Match.challenger_id, Match.challenged_id, Match.winner_id,
+               Match.completed_at, Match.rating_change)
         .where(Match.status == MatchStatus.completed)
         .order_by(desc(Match.completed_at))
-    )).scalars().all()
+    )).all()
 
     match_count: dict[int, int] = {}
     win_count: dict[int, int] = {}

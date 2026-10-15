@@ -125,10 +125,12 @@ async def _sparklines(session: AsyncSession, players: dict[int, float]) -> dict[
     """{id игрока: рейтинг после каждого из последних SPARK_POINTS матчей, от старых к
     новым}. Считается назад от текущего рейтинга по изменениям в матчах (как график
     профиля). Меньше двух точек — без графика."""
+    # v2.189.0: только нужные столбцы — match_rating_delta читает их же
     matches = (await session.execute(
-        select(Match).where(Match.status == MatchStatus.completed, Match.rating_change.is_not(None))
+        select(Match.challenger_id, Match.challenged_id, Match.winner_id, Match.rating_change)
+        .where(Match.status == MatchStatus.completed, Match.rating_change.is_not(None))
         .order_by(Match.completed_at.desc(), Match.id.desc())
-    )).scalars().all()
+    )).all()
     out: dict[int, list[float]] = {pid: [round(r, 1)] for pid, r in players.items()}
     current = dict(players)
     for m in matches:

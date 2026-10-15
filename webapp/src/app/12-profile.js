@@ -444,7 +444,7 @@
       head.appendChild(el("span", "group-count", shown.length ? recordLine(shown) : ""));
       s.insertBefore(head, s.list);
       if (!shown.length) s.list.appendChild(el("li", "row sub", "Матчей с таким фильтром нет."));
-      shown.forEach(function (m) { s.list.appendChild(matchRow(m, !!state.opponent)); });
+      appendInChunks(s.list, shown, function (m) { return matchRow(m, !!state.opponent); });
       listWrap.appendChild(s);
     }
     draw();

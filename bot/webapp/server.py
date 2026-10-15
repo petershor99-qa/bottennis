@@ -42,6 +42,8 @@
 Снаружи сервер закрыт: слушает 127.0.0.1, HTTPS даёт прокси (Caddy), см.
 docs/MINIAPP.md.
 """
+import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -62,6 +64,7 @@ from bot.webapp import (
     api_month,
     api_personal,
     api_return,
+    payload_cache,
     reactions,
 )
 from bot.webapp.assets import ASSET_TYPES, Assets, accepts_gzip
@@ -436,7 +439,9 @@ async def player(request, session, viewer):
     target = await _target(request, session)
     if target is None:
         return None
-    payload = await api.player_payload(session, target, viewer)
+    # v2.189.0: ответ — из кэша по версии данных клуба (bot/webapp/payload_cache.py)
+    payload = await payload_cache.cached(session, ("player", target.id, target.id == viewer.id),
+                                         lambda: api.player_payload(session, target, viewer))
     # v2.174.0: в своём профиле — ссылка в бота поставить или сменить фото
     bot = request.app.get(BOT_KEY)
     if target.id == viewer.id and bot is not None:
@@ -515,7 +520,7 @@ async def h2h(request, session, viewer):
 
 
 async def records(request, session, viewer):
-    return await api.records_payload(session)
+    return await payload_cache.cached(session, ("records",), lambda: api.records_payload(session))
 
 
 async def matches(request, session, viewer):
@@ -620,7 +625,23 @@ def create_app(bot_token: str, session_factory, bot=None, storage=None) -> web.A
 async def start_webapp(bot_token: str, session_factory, bot=None, storage=None) -> web.AppRunner:
     """Запускает сервер рядом с поллингом бота; вернуть runner, чтобы закрыть."""
     host, port = webapp_listen()
-    runner = web.AppRunner(create_app(bot_token, session_factory, bot, storage), access_log=None)
+    app = create_app(bot_token, session_factory, bot, storage)
+    # v2.189.0: прогрев кэша профилей в фоне — только в настоящем сервере, не в тестах
+    warm_task: dict[str, asyncio.Task] = {}
+
+    async def start_warm(_app):
+        warm_task["t"] = asyncio.create_task(payload_cache.warm_forever(session_factory))
+
+    async def stop_warm(_app):
+        task = warm_task.pop("t", None)
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    app.on_startup.append(start_warm)
+    app.on_cleanup.append(stop_warm)
+    runner = web.AppRunner(app, access_log=None)
     await runner.setup()
     await web.TCPSite(runner, host, port).start()
     logger.info("Mini App: веб-сервер слушает %s:%s", host, port)
