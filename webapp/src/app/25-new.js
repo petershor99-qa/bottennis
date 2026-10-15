@@ -1,0 +1,121 @@
+  // ── Новое (v2.183.0): «Кто с кем», цифры-табло рейтинга, полноэкранный
+  // «Твой месяц», мячик «потяни, чтобы обновить».
+
+  // «Кто с кем»: матрица пар клуба — сколько матчей и кто кого чаще обыгрывал
+  function renderPairs(c, d) {
+    c.appendChild(header(d.title, d.period));
+    if (d.empty) { emptyState(c, d.empty); return; }
+    var card = el("div", "card pairs");
+    var grid = el("div", "pairs-grid");
+    grid.style.setProperty("--cols", String(d.players.length));
+    grid.appendChild(el("span", "pairs-corner"));
+    d.players.forEach(function (p) { grid.appendChild(avatar(p, "sm")); });
+    d.matrix.forEach(function (cells, ri) {
+      var rowP = d.players[ri];
+      grid.appendChild(avatar(rowP, "sm"));
+      cells.forEach(function (cell, ci) {
+        if (!cell) { grid.appendChild(el("span", "pairs-self")); return; }
+        var colP = d.players[ci];
+        var b = el("button", "pairs-cell heat-" + cell.lvl, cell.n ? String(cell.n) : "");
+        b.type = "button";
+        b.style.animationDelay = (ri * 40 + ci * 15) + "ms";
+        b.setAttribute("aria-label", rowP.name + " — " + colP.name + ": " + cell.n);
+        b.addEventListener("click", function () {
+          var other = d.matrix[ci][ri] ? d.matrix[ci][ri].wins : 0;
+          var text = cell.n ? matchesCount(cell.n) + " · счёт " + cell.wins + "–" + other : "Ещё не играли";
+          sheetOpen(null, rowP.name + " — " + colP.name, text, "");
+          if (String(rowP.id) === String(viewerId)) {
+            var wrap = document.querySelector(".sheet");
+            if (wrap) {
+              var go2 = el("button", "button button-quiet", "Ты против " + colP.name);
+              go2.type = "button";
+              go2.addEventListener("click", function () { document.querySelector(".sheet-wrap").remove(); go("h2h/" + colP.id); });
+              wrap.appendChild(go2);
+            }
+          }
+        });
+        grid.appendChild(b);
+      });
+    });
+    card.appendChild(grid);
+    c.appendChild(card);
+    c.appendChild(el("p", "footnote", "Число в клетке — матчи пары. Нажмите на клетку, чтобы увидеть счёт."));
+    var facts = section("Главное");
+    d.facts.forEach(function (it) { facts.list.appendChild(itemRow(it)); });
+    c.appendChild(facts);
+  }
+
+  function matchesCount(n) {
+    var m10 = n % 10, m100 = n % 100;
+    return n + " " + (m100 >= 11 && m100 <= 14 ? "матчей" : m10 === 1 ? "матч" : m10 >= 2 && m10 <= 4 ? "матча" : "матчей");
+  }
+
+  // Цифры-табло: если рейтинг изменился с прошлого просмотра этой карточки,
+  // цифры «перелистываются» со старого значения на новое, как на механическом
+  // табло. Иначе — обычный досчёт. Последнее увиденное — на устройстве.
+  var SEEN_RATING_KEY = "seen_rating_v1";
+
+  function odometerDigits(from, to) {
+    // Чистая часть (проверяется в Node): пары [было, стало] по знакам; null — не табло
+    if (from === to || from.length !== to.length) return null;
+    var out = [];
+    for (var i = 0; i < to.length; i++) {
+      var a = from.charAt(i), b = to.charAt(i);
+      var isDigit = /\d/.test(a) && /\d/.test(b);
+      if (!isDigit && a !== b) return null;
+      out.push(isDigit ? [parseInt(a, 10), parseInt(b, 10)] : b);
+    }
+    return out;
+  }
+
+  function ratingNumber(cls, text, playerId) {
+    var seen = {};
+    try { seen = JSON.parse(window.localStorage.getItem(SEEN_RATING_KEY) || "{}") || {}; } catch (e) { seen = {}; }
+    var prev = seen[playerId];
+    seen[playerId] = text;
+    try { window.localStorage.setItem(SEEN_RATING_KEY, JSON.stringify(seen)); } catch (e) { /* без памяти */ }
+    var digits = prev && !reduceMotion && !app.classList.contains("quiet") ? odometerDigits(prev, text) : null;
+    if (!digits) return num(cls, text);
+    var wrap = el("div", cls + " odometer");
+    wrap.setAttribute("aria-label", text);
+    // по окончании прокрутки — обычный текст: у цифр разная ширина, а колонки
+    // табло одинаковые, поэтому в покое число выглядит как везде
+    setTimeout(function () { wrap.classList.remove("odometer"); wrap.textContent = text; },
+      250 + 600 + text.length * 80 + 150);
+    digits.forEach(function (d, i) {
+      if (typeof d === "string") { wrap.appendChild(el("span", "odo-sep", d)); return; }
+      var col = el("span", "odo-col");
+      var strip = el("span", "odo-strip");
+      for (var k = 0; k <= 9; k++) strip.appendChild(el("span", "odo-digit", String(k)));
+      strip.style.transform = "translateY(" + (-d[0] * 10) + "%)";
+      col.appendChild(strip);
+      wrap.appendChild(col);
+      if (d[0] !== d[1]) {
+        setTimeout(function () {
+          strip.style.transition = "transform " + (0.6 + i * 0.08) + "s cubic-bezier(.2, .8, .2, 1)";
+          strip.style.transform = "translateY(" + (-d[1] * 10) + "%)";
+        }, 250);
+      }
+    });
+    return wrap;
+  }
+
+  // «Твой месяц» во весь экран (Telegram 8.0+): как сторис; при уходе с экрана — обратно
+  function fullscreenAvailable() {
+    try { return !!(tg && tg.requestFullscreen && tg.isVersionAtLeast && tg.isVersionAtLeast("8.0")); }
+    catch (e) { return false; }
+  }
+
+  function enterFullscreen() {
+    if (!fullscreenAvailable() || tg.isFullscreen) return;
+    try { tg.requestFullscreen(); } catch (e) { /* клиент не разрешил */ }
+  }
+
+  function leaveFullscreen() {
+    try { if (tg && tg.isFullscreen && tg.exitFullscreen) tg.exitFullscreen(); } catch (e) { /* уже вышли */ }
+  }
+
+  function syncFullscreenClass() {
+    root.classList.toggle("is-fullscreen", !!(tg && tg.isFullscreen));
+  }
+

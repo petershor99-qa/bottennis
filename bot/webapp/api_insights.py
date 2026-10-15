@@ -301,3 +301,56 @@ async def year_extras(session: AsyncSession, viewer: Player) -> dict:
             if items:
                 out["vote"] = {"title": f"Неформальные звания {year}", "items": items}
     return out
+
+
+# ── Кто с кем (v2.183.0) ──────────────────────────────────────────────────────
+
+async def pairs_payload(session: AsyncSession) -> dict:
+    """Матрица пар клуба за всё время: сколько матчей сыграла каждая пара и
+    кто кого чаще обыгрывал. В клетке строки A и столбца B — матчи пары и
+    победы A. Плюс самая частая пара и пары, которые ещё не играли."""
+    rows = (await session.execute(
+        select(Match.challenger_id, Match.challenged_id, Match.winner_id).where(Match.status == MatchStatus.completed)
+    )).all()
+    base = {"title": "Кто с кем", "period": "за всё время"}
+    if not rows:
+        return {**base, "empty": "Матчей пока не было."}
+    games: dict[tuple[int, int], int] = {}
+    wins: dict[tuple[int, int], int] = {}
+    ids: set[int] = set()
+    for a, b, w in rows:
+        ids.update((a, b))
+        key = (min(a, b), max(a, b))
+        games[key] = games.get(key, 0) + 1
+        if w is not None:
+            loser = b if w == a else a
+            wins[(w, loser)] = wins.get((w, loser), 0) + 1
+    players = (await session.execute(select(Player).where(Player.id.in_(ids)))).scalars().all()
+    players = sorted(players, key=lambda p: (-p.rating, p.id))
+    top = max(games.values())
+
+    def level(n: int) -> int:
+        return 0 if n == 0 else 1 if n * 3 <= top else 2 if n * 3 <= top * 2 else 3
+
+    people = [{"id": p.id, "name": p.display_name, "initial": (p.display_name.strip()[:1] or "?").upper()}
+              for p in players]
+    matrix = []
+    for p in players:
+        cells = []
+        for q in players:
+            if p.id == q.id:
+                cells.append(None)
+                continue
+            n = games.get((min(p.id, q.id), max(p.id, q.id)), 0)
+            cells.append({"n": n, "wins": wins.get((p.id, q.id), 0), "lvl": level(n)})
+        matrix.append(cells)
+    names = {p.id: p.display_name for p in players}
+    (fa, fb), fn = max(games.items(), key=lambda kv: (kv[1], -kv[0][0], -kv[0][1]))
+    facts = [{"label": "Чаще всех", "value": f"{names[fa]} — {names[fb]}", "note": pluralize_matches(fn)}]
+    never = [(p, q) for i, p in enumerate(players) for q in players[i + 1:]
+             if (min(p.id, q.id), max(p.id, q.id)) not in games]
+    if never:
+        shown = ", ".join(f"{p.display_name} — {q.display_name}" for p, q in never[:3])
+        more = f" и ещё {len(never) - 3}" if len(never) > 3 else ""
+        facts.append({"label": "Ещё не играли", "value": str(len(never)), "note": shown + more})
+    return {**base, "empty": "", "players": people, "matrix": matrix, "facts": facts}

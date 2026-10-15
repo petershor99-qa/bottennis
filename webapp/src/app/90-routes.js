@@ -23,6 +23,7 @@
     [/^when(?:\/(me))?$/, "home", function (m) { return api("when?who=" + (m[1] || "club")); },
       function (c, d, m) { renderWhen(c, d, m[1] || "club"); }, "when"],
     [/^usage$/, "home", one("usage"), renderUsage, "usage"],
+    [/^pairs$/, "home", one("pairs"), renderPairs, "pairs"],
     // v2.177.0: летопись, счета клуба, «Твой месяц»
     [/^chronicle$/, "home", one("chronicle"), renderChronicle, "chronicle"],
     [/^scores$/, "home", one("scores"), renderScores, "scores"],
@@ -67,6 +68,7 @@
     app.classList.toggle("quiet", quiet === true);
     if (renderedRoute !== null && renderedRoute !== route) scrollPos[renderedRoute] = window.scrollY;
     if (route === "me") { location.replace("#/player/" + viewerId); return; }
+    if (!/^month/.test(route)) leaveFullscreen();   // во весь экран — только «Твой месяц» (v2.183.0)
 
     var token = ++renderToken;
     var pm = route.match(PLAYER_ROUTE);
@@ -158,7 +160,7 @@
     var route = currentRoute(), y = window.scrollY;
     apiCache = {};
     delete photoCache[viewerId];  // фото могли сменить в боте, пока приложение было свёрнуто
-    Promise.all(routeJobs(route)).then(function () {
+    return Promise.all(routeJobs(route)).then(function () {
       if (currentRoute() !== route || document.querySelector(".sheet-wrap")) return;
       shell = null;
       scrollPos[route] = y;
@@ -192,6 +194,7 @@
       // Свайп вниз при прокрутке не закрывает приложение (Telegram 7.7+, v2.171.0)
       if (tg.isVersionAtLeast && tg.isVersionAtLeast("7.7") && tg.disableVerticalSwipes) tg.disableVerticalSwipes();
       tg.onEvent("themeChanged", function () { applyTheme(); shell = null; render(true); });
+      tg.onEvent("fullscreenChanged", syncFullscreenClass);
       if (tg.BackButton) {
         tg.BackButton.onClick(function () { history.back(); });
         if (renderedRoute !== null && renderedRoute !== "" && renderedRoute !== "rating" &&

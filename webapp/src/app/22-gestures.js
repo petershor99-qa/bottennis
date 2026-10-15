@@ -36,7 +36,12 @@
     var dy = e.touches[0].clientY - touch.y;
     var dx = Math.abs(e.touches[0].clientX - touch.x);
     if (dy > 24 && dy > dx * 2) {
-      if (!pullMark) { pullMark = el("div", "pull-mark"); document.body.appendChild(pullMark); }
+      if (!pullMark) {
+        // v2.183.0: мячик вместо кружка — крутится, пока тянешь
+        pullMark = el("div", "pull-mark");
+        pullMark.appendChild(useIcon("ball-tennis"));
+        document.body.appendChild(pullMark);
+      }
       var p = Math.min(1, dy / PULL_MIN);
       pullMark.style.opacity = String(p);
       pullMark.style.transform = "translate(-50%, " + Math.min(dy * 0.5, 50) + "px) rotate(" + Math.round(p * 270) + "deg)";
@@ -55,7 +60,16 @@
     var dx = t.clientX - start.x, dy = t.clientY - start.y;
     if (start.top && pullAllowed() && dy > PULL_MIN && dy > Math.abs(dx) * 2) {
       haptic("impact");
-      refresh();
+      // мячик подпрыгивает, пока экран обновляется (не меньше полсекунды)
+      var ball = el("div", "pull-mark is-bouncing");
+      ball.appendChild(useIcon("ball-tennis"));
+      document.body.appendChild(ball);
+      var started = Date.now();
+      var done = function () {
+        setTimeout(function () { ball.remove(); }, Math.max(0, 500 - (Date.now() - started)));
+      };
+      var r = refresh();
+      if (r && r.then) r.then(done, done); else done();
       return;
     }
     if (start.swipe && Math.abs(dx) > SWIPE_MIN && Math.abs(dx) > Math.abs(dy) * 2) {
