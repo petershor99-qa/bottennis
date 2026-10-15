@@ -24,6 +24,27 @@ from bot.webapp.api_day import _standings_at
 SINCE_MAX_DAYS = 30          # дальше «пока тебя не было» не смотрим
 STREAK_MAX_WEEKS = 26
 MATCH_GOAL_MIN, MATCH_GOAL_MAX = 3, 15
+REVENGE_WEEKS = 8            # реванш — только за поражения последних 8 недель
+
+
+def revenge_rival(history: list[Match], pid: int, start: datetime) -> int | None:
+    """Кому реванш (v2.185.0): самое позднее поражение за REVENGE_WEEKS, за
+    которое игрок ещё не отыгрался — не обыграл этого соперника после него.
+    Раньше бралось просто последнее поражение, и «Реванш: X» выпадал, даже
+    если игрок уже выиграл у X следом."""
+    since = start - timedelta(weeks=REVENGE_WEEKS)
+    avenged: set[int] = set()
+    for m in sorted(history, key=lambda m: m.completed_at, reverse=True):
+        if m.completed_at < since:
+            break
+        if m.winner_id is None:
+            continue
+        rival = m.challenged_id if m.challenger_id == pid else m.challenger_id
+        if m.winner_id == pid:
+            avenged.add(rival)
+        elif rival not in avenged:
+            return rival
+    return None
 
 
 def _now() -> datetime:
@@ -136,13 +157,11 @@ def _goals_for_week(history: list[Match], week: list[Match], pid: int, start: da
     goals = [{"key": "matches", "title": f"Сыграй {_ru_plural(target, 'матч', 'матча', 'матчей')}",
               "target": target, "progress": len(week)}]
 
-    last_loss = next((m for m in sorted(history, key=lambda m: m.completed_at, reverse=True)
-                      if m.winner_id is not None and m.winner_id != pid), None)
-    if last_loss is not None:
-        rival = last_loss.winner_id
+    rival = revenge_rival(history, pid, start)
+    if rival is not None:
         beat = sum(1 for m in week if m.winner_id == pid and rival in (m.challenger_id, m.challenged_id))
         goals.append({"key": "revenge", "title": f"Реванш: {names.get(rival, '?')}",
-                      "note": "Выиграй у того, кто обыграл тебя последним", "target": 1, "progress": beat,
+                      "note": "Выиграй у того, кому ещё не отыгрался", "target": 1, "progress": beat,
                       "player_id": rival})
     else:
         wins_target = max(2, min(10, round(sum(1 for m in recent if m.winner_id == pid) / 4) + 1))
