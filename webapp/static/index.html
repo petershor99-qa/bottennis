@@ -15,7 +15,11 @@
 </head>
 <body>
   <main class="screen" id="app">
-    <p class="state" id="boot-state">Загрузка…</p>
+    <div class="state boot" id="boot-state" role="status">
+      <div class="boot-art" aria-hidden="true"><i class="boot-shadow"></i><i class="boot-ball"></i><i class="boot-net"></i><i class="boot-table"></i></div>
+      <div class="boot-title">Клуб настольного тенниса</div>
+      <div class="boot-sub">Загрузка…</div>
+    </div>
   </main>
   <nav class="tabbar" id="tabbar" aria-label="Разделы"></nav>
   <!-- Скрипт Telegram — своя копия (v2.178.0, scripts/update_telegram_js.py),

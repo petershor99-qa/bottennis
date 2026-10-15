@@ -40,6 +40,19 @@
     return line;
   }
 
+  // Игроки матча в ленте — по строке на каждого (v2.187.0): в одну строку длинные
+  // имена переносились, и аватар второго игрока уезжал один на следующую строку
+  function feedPlayers(m) {
+    var wrap = el("div", "feed-players");
+    [["a", m.a], ["b", m.b]].forEach(function (x) {
+      var row = el("div", "feed-player");
+      row.appendChild(avatar(x[1], "sm"));
+      row.appendChild(el("span", "vs-name" + (m.winner === x[0] ? " win" : ""), x[1].name));
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
   // Лента клуба (v2.168.0): матчи (у ярких — репортаж), ачивки, рекорды, трон
   // Лента клуба (v2.171.0): каждое событие — отдельная карточка, заголовок дня
   // прилипает к верху при прокрутке, «Показать ещё» догружает порции по 15.
@@ -63,7 +76,7 @@
       li = clickable(el("li", "feed-card feed-match"), "match/" + it.id);
       var tags = feedTags(it, featured);
       if (tags) body.appendChild(tags);
-      body.appendChild(versusLine(it));
+      body.appendChild(feedPlayers(it));
       var score = el("div", "feed-score");
       score.appendChild(setChips(it.sets, it.winner));
       if (it.delta) score.appendChild(el("span", "feed-delta tone-win", it.delta));

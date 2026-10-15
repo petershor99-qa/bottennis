@@ -27,15 +27,16 @@
 
   // Партии по очереди (v2.186.0): при первом открытии матча на этом устройстве
   // партии «играются» одна за другой — полосы растут, очки набираются, счёт по
-  // партиям растёт. Вся запись не дольше REPLAY_TOTAL_MS; нажатие — сразу итог.
+  // партиям растёт. Вся запись — около 2 с (replayTiming); нажатие — сразу итог.
   // Повторно, при «уменьшить движение» и при тихом обновлении — сразу итог.
   // (числа — внутри replayTiming: в Node, где она проверяется, переменные модуля не заданы)
   var REPLAY_KEY = "match_replay_seen_v1";
 
+  // v2.187.0: быстрее — было до 0,8 с на партию и до 4 с на матч, «долго»
   function replayTiming(n) {
-    var total = 4000, setMs = 800, gap = 180;
+    var total = 2000, setMs = 350, gap = 60;
     var per = Math.min(setMs, Math.floor(total / Math.max(1, n)) - gap);
-    return { per: Math.max(250, per), gap: gap };
+    return { per: Math.max(200, per), gap: gap, start: 100 };
   }
 
   function replaySeen(id) {
@@ -99,7 +100,7 @@
           if (k < 1) requestAnimationFrame(frame);
           else { settle(i); haptic("select"); if (i === rows.length - 1) finish(); }
         })(performance.now());
-      }, 250 + i * (t.per + t.gap)));
+      }, t.start + i * (t.per + t.gap)));
     });
   }
 
