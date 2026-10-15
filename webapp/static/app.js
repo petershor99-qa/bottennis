@@ -14,7 +14,7 @@
       matchesWord: matchesWord, screenName: screenName, splitNumber: splitNumber, badgeClass: badgeClass,
       parseLaunchParams: parseLaunchParams, isColorDark: isColorDark,
       filterMatches: filterMatches, recordLine: recordLine, compactDate: compactDate,
-      toggledReactions: toggledReactions, matchMood: matchMood, tapGuard: tapGuard, chipSets: chipSets,
+      toggledReactions: toggledReactions, matchMood: matchMood, tapGuard: tapGuard, chipSets: chipSets, isPhoneClient: isPhoneClient, replayTiming: replayTiming, ballHeight: ballHeight,
       nextNav: nextNav, sparkPoints: sparkPoints, odometerDigits: odometerDigits, raceOrder: raceOrder
     };
     return;
@@ -2511,6 +2511,84 @@
     });
   }
 
+  // Партии по очереди (v2.186.0): при первом открытии матча на этом устройстве
+  // партии «играются» одна за другой — полосы растут, очки набираются, счёт по
+  // партиям растёт. Вся запись не дольше REPLAY_TOTAL_MS; нажатие — сразу итог.
+  // Повторно, при «уменьшить движение» и при тихом обновлении — сразу итог.
+  // (числа — внутри replayTiming: в Node, где она проверяется, переменные модуля не заданы)
+  var REPLAY_KEY = "match_replay_seen_v1";
+
+  function replayTiming(n) {
+    var total = 4000, setMs = 800, gap = 180;
+    var per = Math.min(setMs, Math.floor(total / Math.max(1, n)) - gap);
+    return { per: Math.max(250, per), gap: gap };
+  }
+
+  function replaySeen(id) {
+    var list = [];
+    try { list = JSON.parse(window.localStorage.getItem(REPLAY_KEY) || "[]"); } catch (e) { return true; }
+    if (!Array.isArray(list)) list = [];
+    if (list.indexOf(id) >= 0) return true;
+    list.push(id);
+    try { window.localStorage.setItem(REPLAY_KEY, JSON.stringify(list.slice(-200))); } catch (e) { return true; }
+    return false;
+  }
+
+  function replaySets(card, rows, aNum, bNum, d) {
+    var t = replayTiming(d.sets.length);
+    var won = { a: 0, b: 0 }, timers = [], finished = false;
+    card.classList.add("replaying");
+    aNum.textContent = "0";
+    bNum.textContent = "0";
+    rows.forEach(function (r) {
+      r.li.classList.add("is-waiting");
+      r.parts.forEach(function (p) { p.bar.style.animation = "none"; p.bar.style.width = "0"; p.pts.textContent = "0"; });
+    });
+    function settle(i) {
+      rows[i].li.classList.remove("is-playing");
+      var s = d.sets[i];
+      won[s.a > s.b ? "a" : "b"] += 1;
+      aNum.textContent = String(won.a);
+      bNum.textContent = String(won.b);
+    }
+    function finish() {
+      if (finished) return;
+      finished = true;
+      timers.forEach(clearTimeout);
+      document.removeEventListener("click", skip, true);
+      rows.forEach(function (r) {
+        r.li.classList.remove("is-waiting", "is-playing");
+        r.parts.forEach(function (p) { p.bar.style.transition = "none"; p.bar.style.width = p.width; p.pts.textContent = p.final; });
+      });
+      var aSets = d.sets.filter(function (x) { return x.a > x.b; }).length;
+      aNum.textContent = String(aSets);
+      bNum.textContent = String(d.sets.length - aSets);
+      card.classList.remove("replaying");
+    }
+    function skip() { finish(); }
+    document.addEventListener("click", skip, true);
+    rows.forEach(function (r, i) {
+      timers.push(setTimeout(function () {
+        if (finished || !card.isConnected) { finish(); return; }
+        r.li.classList.remove("is-waiting");
+        r.li.classList.add("is-playing");   // кто взял партию — видно в её конце
+        var start = null;
+        r.parts.forEach(function (p) {
+          p.bar.style.transition = "width " + t.per + "ms linear, background-color .3s";
+          p.bar.style.width = p.width;
+        });
+        (function frame(ts) {
+          if (finished) return;
+          if (start === null) start = ts;
+          var k = Math.min(1, (ts - start) / t.per);
+          r.parts.forEach(function (p) { p.pts.textContent = String(Math.round(p.value * k)); });
+          if (k < 1) requestAnimationFrame(frame);
+          else { settle(i); haptic("select"); if (i === rows.length - 1) finish(); }
+        })(performance.now());
+      }, 250 + i * (t.per + t.gap)));
+    });
+  }
+
   function matchCardBlocks(d) {
     var aSets = d.sets.filter(function (x) { return x.a > x.b; }).length;
     var blocks = [titleBlock(d.a.name + " — " + d.b.name, d.date),
@@ -2538,10 +2616,15 @@
     }
     var aSets = d.sets.filter(function (x) { return x.a > x.b; }).length;
     var bSets = d.sets.length - aSets;
+    var replay = d.sets.length > 1 && d.id && !reduceMotion && !app.classList.contains("quiet") && !replaySeen(d.id);
     var score = el("div", "versus-score");
-    score.appendChild(num("versus-num" + (d.winner === "a" ? " tone-win" : ""), String(aSets)));
+    var aNum = replay ? el("div", "versus-num" + (d.winner === "a" ? " tone-win" : ""), "0")
+      : num("versus-num" + (d.winner === "a" ? " tone-win" : ""), String(aSets));
+    var bNum = replay ? el("div", "versus-num" + (d.winner === "b" ? " tone-win" : ""), "0")
+      : num("versus-num" + (d.winner === "b" ? " tone-win" : ""), String(bSets));
+    score.appendChild(aNum);
     score.appendChild(el("span", "versus-colon", ":"));
-    score.appendChild(num("versus-num" + (d.winner === "b" ? " tone-win" : ""), String(bSets)));
+    score.appendChild(bNum);
     row.appendChild(side(d.a, "a"));
     row.appendChild(score);
     row.appendChild(side(d.b, "b"));
@@ -2550,9 +2633,11 @@
     c.appendChild(card);
 
     var sets = section("Партии");
+    var rows = [];
     d.sets.forEach(function (st, i) {
-      var li = el("li", "row set-row stagger");
+      var li = el("li", "row set-row" + (replay ? "" : " stagger"));
       li.style.animationDelay = (i * 80) + "ms";
+      var parts = [];
       li.appendChild(el("div", "set-n", String(i + 1)));
       var bars = el("div", "set-bars");
       var max = Math.max(st.a, st.b, 11);
@@ -2561,13 +2646,17 @@
         var bar = el("i", "set-bar set-bar-" + x[0] + (x[2] ? " is-won" : ""));
         bar.style.width = Math.round(x[1] / max * 100) + "%";
         line.appendChild(bar);
-        line.appendChild(el("span", "set-pts" + (x[2] ? " is-won" : ""), String(x[1])));
+        var pts = el("span", "set-pts" + (x[2] ? " is-won" : ""), String(x[1]));
+        line.appendChild(pts);
         bars.appendChild(line);
+        parts.push({ bar: bar, pts: pts, width: bar.style.width, value: x[1], final: String(x[1]) });
       });
       li.appendChild(bars);
       sets.list.appendChild(li);
+      rows.push({ li: li, parts: parts });
     });
     c.appendChild(sets);
+    if (replay) replaySets(card, rows, aNum, bNum, d);
 
     if (d.reason || d.report) {
       var story = el("div", "card");
@@ -2780,6 +2869,26 @@
   var touch = null;
   var pullMark = null;
 
+  // Мячик над столом (v2.186.0): пока тянешь, мяч дважды отскакивает от кромки
+  // стола (высота — две дуги |sin| по ходу натяжения), отпустил на полном
+  // натяжении — мяч улетает вверх, экран обновляется. Высота отскока в px.
+  function ballHeight(p) { return Math.round(Math.abs(Math.sin(2 * Math.PI * Math.min(1, Math.max(0, p)))) * 26); }
+
+  function pullScene() {
+    var scene = el("div", "pull-scene");
+    var ball = el("div", "pull-ball");
+    ball.appendChild(useIcon("ball-tennis"));
+    scene.appendChild(ball);
+    scene.appendChild(el("div", "pull-table"));
+    document.body.appendChild(scene);
+    return { scene: scene, ball: ball, half: false };
+  }
+
+  function dropScene(mark, fly) {
+    mark.scene.classList.add(fly ? "is-flying" : "is-leaving");
+    setTimeout(function () { mark.scene.remove(); }, fly ? 520 : 220);
+  }
+
   document.addEventListener("touchstart", function (e) {
     if (e.touches.length !== 1 || document.querySelector(".sheet-wrap")) { touch = null; return; }
     var t = e.touches[0];
@@ -2792,16 +2901,16 @@
     var dy = e.touches[0].clientY - touch.y;
     var dx = Math.abs(e.touches[0].clientX - touch.x);
     if (dy > 24 && dy > dx * 2) {
-      if (!pullMark) {
-        // v2.183.0: мячик вместо кружка — крутится, пока тянешь
-        pullMark = el("div", "pull-mark");
-        pullMark.appendChild(useIcon("ball-tennis"));
-        document.body.appendChild(pullMark);
+      if (!pullMark) pullMark = pullScene();
+      var p = Math.min(1, (dy - 24) / (PULL_MIN - 24));
+      pullMark.scene.style.opacity = String(Math.min(1, p * 2));
+      pullMark.scene.style.transform = "translate(-50%, " + Math.round(Math.min(dy * 0.4, 36)) + "px)";
+      if (!reduceMotion) {
+        pullMark.ball.style.transform = "translateY(" + (-ballHeight(p)) + "px) rotate(" + Math.round(p * 360) + "deg)";
+        if (p >= 0.5 && !pullMark.half) { pullMark.half = true; haptic("select"); }   // первый отскок
       }
-      var p = Math.min(1, dy / PULL_MIN);
-      pullMark.style.opacity = String(p);
-      pullMark.style.transform = "translate(-50%, " + Math.min(dy * 0.5, 50) + "px) rotate(" + Math.round(p * 270) + "deg)";
-      pullMark.classList.toggle("is-ready", p >= 1);
+      if (p >= 1 && !pullMark.scene.classList.contains("is-ready")) haptic("select");   // второй
+      pullMark.scene.classList.toggle("is-ready", p >= 1);
     }
   }, { passive: true });
 
@@ -2810,24 +2919,16 @@
     touch = null;
     var mark = pullMark;
     pullMark = null;
-    if (mark) mark.remove();
-    if (!start) return;
+    if (!start) { if (mark) dropScene(mark, false); return; }
     var t = e.changedTouches[0];
     var dx = t.clientX - start.x, dy = t.clientY - start.y;
     if (start.top && pullAllowed() && dy > PULL_MIN && dy > Math.abs(dx) * 2) {
       haptic("impact");
-      // мячик подпрыгивает, пока экран обновляется (не меньше полсекунды)
-      var ball = el("div", "pull-mark is-bouncing");
-      ball.appendChild(useIcon("ball-tennis"));
-      document.body.appendChild(ball);
-      var started = Date.now();
-      var done = function () {
-        setTimeout(function () { ball.remove(); }, Math.max(0, 500 - (Date.now() - started)));
-      };
-      var r = refresh();
-      if (r && r.then) r.then(done, done); else done();
+      if (mark) dropScene(mark, true);   // мяч улетает вверх, экран обновляется
+      refresh();
       return;
     }
+    if (mark) dropScene(mark, false);
     if (start.swipe && Math.abs(dx) > SWIPE_MIN && Math.abs(dx) > Math.abs(dy) * 2) {
       var target = nextTab(currentRoute(), dx < 0 ? 1 : -1);
       if (target) { haptic("select"); location.replace("#/" + target); }
@@ -3222,6 +3323,47 @@
 
   function syncFullscreenClass() {
     root.classList.toggle("is-fullscreen", !!(tg && tg.isFullscreen));
+    if (fsButton) {
+      var on = !!(tg && tg.isFullscreen);
+      fsButton.textContent = "";
+      fsButton.appendChild(icon(on ? "minimize" : "maximize", "ico-btn"));
+      fsButton.setAttribute("aria-label", on ? "Обычный размер" : "Во весь экран");
+      fsButton.title = on ? "Обычный размер" : "Во весь экран";
+    }
+  }
+
+  // Во весь экран всегда (v2.186.0): на телефоне — сразу при запуске (Telegram
+  // 8.0+; кнопки Telegram «закрыть» и «⋮» остаются поверх, под них — отступ
+  // safe area). На компьютере окно приложения Telegram не даёт «чуть увеличить»,
+  // только на весь монитор — поэтому там кнопка в углу, выбор запоминается на
+  // этом устройстве (localStorage, не CloudStorage: на телефоне свой режим).
+  var FS_KEY = "fullscreen_desktop_v1";
+  var fsButton = null;
+
+  function isPhoneClient(platform) { return platform === "android" || platform === "ios"; }
+
+  function desktopWantsFullscreen() {
+    try { return window.localStorage.getItem(FS_KEY) === "1"; } catch (e) { return false; }
+  }
+
+  function wantFullscreen() {
+    return isPhoneClient(clientInfo().platform) || desktopWantsFullscreen();
+  }
+
+  function setupFullscreen() {
+    if (!fullscreenAvailable()) return;
+    if (wantFullscreen()) enterFullscreen();
+    if (isPhoneClient(clientInfo().platform) || fsButton) return;
+    fsButton = el("button", "fs-toggle");
+    fsButton.type = "button";
+    fsButton.addEventListener("click", function () {
+      var on = !tg.isFullscreen;
+      try { window.localStorage.setItem(FS_KEY, on ? "1" : "0"); } catch (e) { /* без памяти — до закрытия */ }
+      if (on) enterFullscreen(); else leaveFullscreen();
+    });
+    document.body.appendChild(fsButton);
+    root.classList.add("has-fs-toggle");
+    syncFullscreenClass();
   }
 
   // ── Гонка рейтинга (v2.184.0): рейтинг клуба за 30 дней — полосы игроков
@@ -3378,7 +3520,8 @@
     app.classList.toggle("quiet", quiet === true);
     if (renderedRoute !== null && renderedRoute !== route) scrollPos[renderedRoute] = window.scrollY;
     if (route === "me") { location.replace("#/player/" + viewerId); return; }
-    if (!/^month/.test(route)) leaveFullscreen();   // во весь экран — только «Твой месяц» (v2.183.0)
+    // «Твой месяц» во весь экран (v2.183.0); остальные экраны — если так выбрано (v2.186.0)
+    if (!/^month/.test(route) && !wantFullscreen()) leaveFullscreen();
 
     var token = ++renderToken;
     var pm = route.match(PLAYER_ROUTE);
@@ -3505,6 +3648,7 @@
       if (tg.isVersionAtLeast && tg.isVersionAtLeast("7.7") && tg.disableVerticalSwipes) tg.disableVerticalSwipes();
       tg.onEvent("themeChanged", function () { applyTheme(); shell = null; render(true); });
       tg.onEvent("fullscreenChanged", syncFullscreenClass);
+      setupFullscreen();
       if (tg.BackButton) {
         tg.BackButton.onClick(function () { history.back(); });
         if (renderedRoute !== null && renderedRoute !== "" && renderedRoute !== "rating" &&

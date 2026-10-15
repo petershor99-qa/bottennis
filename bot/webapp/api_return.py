@@ -12,6 +12,7 @@ Mini App, пакет 4, релиз 3 (v2.181.0): поводы заглядыва
   по матчам этой недели. «Недель подряд» — сколько недель до этой закрыты
   целиком.
 """
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_, select
@@ -140,12 +141,120 @@ def _comeback(m: Match, pid: int) -> bool:
     return len(sets) >= 2 and m.winner_id == pid and sets[0][0] < sets[0][1]
 
 
+def _dry_set_wins(m: Match, pid: int) -> int:
+    return sum(1 for a, b in _sets(m, pid) if a > b and b <= 5)
+
+
+def _clean_win(m: Match, pid: int) -> bool:
+    sets = _sets(m, pid)
+    return len(sets) >= 2 and m.winner_id == pid and all(a > b for a, b in sets)
+
+
+def _decider(m: Match, pid: int) -> bool:
+    """Матч дошёл до решающей партии: перед последней партией счёт по партиям равный."""
+    sets = _sets(m, pid)
+    if len(sets) < 3:
+        return False
+    before = sets[:-1]
+    return sum(1 for a, b in before if a > b) == sum(1 for a, b in before if a < b)
+
+
+def _decider_win(m: Match, pid: int) -> bool:
+    return _decider(m, pid) and m.winner_id == pid
+
+
+def _opponent(m: Match, pid: int) -> int:
+    return m.challenged_id if m.challenger_id == pid else m.challenger_id
+
+
+def _rivals_count(week: list[Match], pid: int) -> int:
+    return len({_opponent(m, pid) for m in week})
+
+
+def _best_streak(week: list[Match], pid: int) -> int:
+    best = run = 0
+    for m in sorted(week, key=lambda m: m.completed_at):
+        run = run + 1 if m.winner_id == pid else 0
+        best = max(best, run)
+    return best
+
+
+# Цель на мастерство: (ключ, заголовок, цель, прогресс по матчам недели)
 SKILLS = [
-    # (ключ, заголовок, цель, счётчик по матчу)
-    ("deuce", "Выиграй 2 партии на дьюсе", 2, _deuce_set_wins),
-    ("convert", "Дожми 2 матча после выигранной первой партии", 2, lambda m, pid: int(_converted(m, pid))),
-    ("comeback", "Отыграйся после проигранной первой партии", 1, lambda m, pid: int(_comeback(m, pid))),
+    ("deuce", "Выиграй 2 партии на дьюсе", 2, lambda w, pid: sum(_deuce_set_wins(m, pid) for m in w)),
+    ("convert", "Дожми 2 матча после выигранной первой партии", 2,
+     lambda w, pid: sum(_converted(m, pid) for m in w)),
+    ("comeback", "Отыграйся после проигранной первой партии", 1, lambda w, pid: sum(_comeback(m, pid) for m in w)),
+    # v2.186.0: пул шире, у каждого игрока своя цель
+    ("dry", "Выиграй партию, отдав не больше 5 очков", 1, lambda w, pid: sum(_dry_set_wins(m, pid) for m in w)),
+    ("clean", "Выиграй матч, не отдав ни одной партии", 1, lambda w, pid: sum(_clean_win(m, pid) for m in w)),
+    ("decider", "Выиграй матч в решающей партии", 1, lambda w, pid: sum(_decider_win(m, pid) for m in w)),
+    ("rivals", "Сыграй с тремя разными соперниками", 3, _rivals_count),
+    ("streak", "Выиграй 3 матча подряд", 3, _best_streak),
 ]
+SKILL_BY_KEY = {s[0]: s for s in SKILLS}
+OLD_SKILLS = ("deuce", "convert", "comeback")   # до v2.186.0: одна на весь клуб по номеру недели
+# С понедельника 19.10.2026 (МСК) — своя цель каждому; прошлые недели считаются
+# по-старому, чтобы «недель подряд» не пересчитались задним числом
+PERSONAL_SKILLS_FROM = datetime(2026, 10, 18, 21, 0)
+
+# Слабая сторона — по матчам за FOCUS_WEEKS до начала недели: доля удачных
+# попыток, делённая на ориентир (типичную долю). Меньше всего — туда и цель.
+# Ориентиры подобраны на глаз, как пороги архетипов, — пересматривать по данным.
+FOCUS_WEEKS = 12
+FOCUS_MIN_TRIES = 4
+FOCUS_NOTE = "Здесь у тебя больше всего запаса — по последним матчам"
+FOCUS_ANCHORS = {"deuce": 0.5, "convert": 0.75, "comeback": 0.3, "decider": 0.5, "dry": 0.3}
+
+
+def _focus_rates(history: list[Match], pid: int) -> dict[str, float]:
+    tries = {k: [0, 0] for k in FOCUS_ANCHORS}      # [удачно, попыток]
+    for m in history:
+        sets = _sets(m, pid)
+        if not sets:
+            continue
+        for a, b in sets:
+            if max(a, b) >= 12:
+                tries["deuce"][1] += 1
+                tries["deuce"][0] += a > b
+            if a > b:
+                tries["dry"][1] += 1
+                tries["dry"][0] += b <= 5
+        if len(sets) >= 2:
+            first_won = sets[0][0] > sets[0][1]
+            key = "convert" if first_won else "comeback"
+            tries[key][1] += 1
+            tries[key][0] += m.winner_id == pid
+        if _decider(m, pid):
+            tries["decider"][1] += 1
+            tries["decider"][0] += m.winner_id == pid
+    return {k: ok / n / FOCUS_ANCHORS[k] for k, (ok, n) in tries.items() if n >= FOCUS_MIN_TRIES}
+
+
+def _weakest(history: list[Match], pid: int, start: datetime) -> str | None:
+    since = start - timedelta(weeks=FOCUS_WEEKS)
+    rates = _focus_rates([m for m in history if since <= m.completed_at < start], pid)
+    return min(rates, key=lambda k: (rates[k], k)) if rates else None
+
+
+def _shuffled(pid: int, week_no: int) -> list[str]:
+    """Пул в своём порядке для игрока и недели — стабильно, без случайности."""
+    return sorted(SKILL_BY_KEY, key=lambda k: hashlib.md5(f"{pid}:{week_no}:{k}".encode()).hexdigest())
+
+
+def pick_skill(history: list[Match], pid: int, start: datetime) -> tuple[str, bool]:
+    """Цель на мастерство недели: (ключ, по слабой стороне?). Слабая сторона — если
+    она не та же, что на прошлой неделе (иначе одна и та же цель неделями);
+    иначе — своя по порядку для игрока и недели, не повторяя прошлую."""
+    week_no = int((start + MSK_OFFSET).strftime("%V"))
+    if start < PERSONAL_SKILLS_FROM:
+        return OLD_SKILLS[week_no % len(OLD_SKILLS)], False
+    focus = _weakest(history, pid, start)
+    prev = _weakest(history, pid, start - timedelta(weeks=1))
+    if focus is not None and focus != prev:
+        return focus, True
+    avoid = {focus, prev}
+    return next(k for k in _shuffled(pid, week_no) if k not in avoid), False
 
 
 def _goals_for_week(history: list[Match], week: list[Match], pid: int, start: datetime,
@@ -168,10 +277,12 @@ def _goals_for_week(history: list[Match], week: list[Match], pid: int, start: da
         goals.append({"key": "wins", "title": f"Выиграй {_ru_plural(wins_target, 'матч', 'матча', 'матчей')}",
                       "target": wins_target, "progress": sum(1 for m in week if m.winner_id == pid)})
 
-    week_no = int((start + MSK_OFFSET).strftime("%V"))
-    key, title, skill_target, counter = SKILLS[week_no % len(SKILLS)]
-    goals.append({"key": key, "title": title, "target": skill_target,
-                  "progress": sum(counter(m, pid) for m in week)})
+    skill, focused = pick_skill(history, pid, start)
+    key, title, skill_target, progress = SKILL_BY_KEY[skill]
+    goal = {"key": key, "title": title, "target": skill_target, "progress": int(progress(week, pid))}
+    if focused:
+        goal["note"] = FOCUS_NOTE
+    goals.append(goal)
     for g in goals:
         g["progress"] = min(g["progress"], g["target"])
         g["done"] = g["progress"] >= g["target"]
