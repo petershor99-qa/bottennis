@@ -898,3 +898,22 @@ html.is-fullscreen .screen { padding-top: calc(var(--tg-safe-area-inset-top, 0px
 @media (prefers-reduced-motion: reduce) {
   .pairs-cell, .pull-mark.is-bouncing { animation: none; }
 }
+
+/* ── v2.184.0: гонка рейтинга ────────────────────────────────────────── */
+.race { padding: 14px 12px 12px; }
+.race-day { font-size: 28px; line-height: 1; margin-bottom: 10px; color: var(--hint); }
+.race-track { position: relative; }
+.race-row { position: absolute; left: 0; right: 0; top: 0; height: 40px; display: flex; align-items: center; gap: 8px;
+  transition: transform .5s cubic-bezier(.2, .8, .2, 1); }
+.race-row .avatar { flex: 0 0 auto; }
+.race-name { width: 64px; flex: 0 0 64px; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.race-bar { height: 22px; border-radius: 6px; flex: 0 1 auto; min-width: 4px; max-width: calc(100% - 150px);
+  background: hsl(var(--hue), 55%, 55%); transition: width .5s cubic-bezier(.2, .8, .2, 1); }
+.race-row.is-viewer .race-name { color: var(--accent); }
+.race-value { font-size: 15px; white-space: nowrap; }
+.race-controls { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.race-play { width: auto; margin: 0; padding: 9px 16px; flex: 0 0 auto; }
+.race-slider { flex: 1; accent-color: var(--accent); }
+@media (prefers-reduced-motion: reduce) {
+  .race-row, .race-bar { transition: none; }
+}

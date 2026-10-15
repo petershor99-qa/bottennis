@@ -24,6 +24,7 @@
       function (c, d, m) { renderWhen(c, d, m[1] || "club"); }, "when"],
     [/^usage$/, "home", one("usage"), renderUsage, "usage"],
     [/^pairs$/, "home", one("pairs"), renderPairs, "pairs"],
+    [/^race$/, "home", one("race"), renderRace, "race"],
     // v2.177.0: летопись, счета клуба, «Твой месяц»
     [/^chronicle$/, "home", one("chronicle"), renderChronicle, "chronicle"],
     [/^scores$/, "home", one("scores"), renderScores, "scores"],

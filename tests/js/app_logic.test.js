@@ -137,3 +137,8 @@ test("odometerDigits: пары цифр, разделители, разная д
   assert.equal(app.odometerDigits("1000.0", "1000.0"), null);    // не менялось
   assert.equal(app.odometerDigits("1000.0", "1000,0"), null);    // другой разделитель
 });
+
+test("raceOrder: места по убыванию рейтинга, при равенстве — порядок списка (v2.184.0)", () => {
+  assert.deepEqual(app.raceOrder([1000, 1100, 1050]), [1, 2, 0]);
+  assert.deepEqual(app.raceOrder([1000, 1000, 1200]), [2, 0, 1]);
+});
