@@ -11,12 +11,30 @@
   <link rel="icon" href="data:,">
   <link rel="preload" href="static/app.js" as="script">
   <link rel="preload" href="static/fonts/Raleway-Subset.woff2" as="font" type="font/woff2" crossorigin>
+  <!-- v2.188.0: картинка заставки — сразу, вместе со стилями -->
+  <link rel="preload" href="static/splash.webp" as="image" fetchpriority="high">
   <link rel="stylesheet" href="static/app.css">
+  <!-- v2.188.0: тёмная тема Telegram — сразу, до app.js, иначе заставка мелькала
+       белым. Тот же порог, что isColorDark в app.js -->
+  <script>
+    (function earlyTheme() {
+      try {
+        var m = /[#&?]tgWebAppThemeParams=([^&]+)/.exec(location.hash);
+        var hex = m ? JSON.parse(decodeURIComponent(m[1])).bg_color : null;
+        var c = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ""));
+        if (!c) return;
+        var r = parseInt(c[1], 16), g = parseInt(c[2], 16), b = parseInt(c[3], 16);
+        if (Math.sqrt(0.299 * r * r + 0.587 * g * g + 0.114 * b * b) < 120) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      } catch (e) { /* без темы — светлая, app.js поправит */ }
+    })();
+  </script>
 </head>
 <body>
   <main class="screen" id="app">
     <div class="state boot" id="boot-state" role="status">
-      <div class="boot-art" aria-hidden="true"><i class="boot-shadow"></i><i class="boot-ball"></i><i class="boot-net"></i><i class="boot-table"></i></div>
+      <img class="boot-pic" src="static/splash.webp" alt="" width="240" height="245" decoding="async" fetchpriority="high">
       <div class="boot-title">Клуб настольного тенниса</div>
       <div class="boot-sub">Загрузка…</div>
     </div>

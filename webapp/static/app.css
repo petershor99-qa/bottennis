@@ -338,6 +338,26 @@ html, body {
 /* Зал славы */
 .throne-card { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 18px; }
 .crown-big { width: 30px; height: 30px; }
+/* Трон из ракеток (v2.188.0): веер ракеток, спинка и сиденье, аватар чемпиона
+   «сидит» в центре спинки, над ним корона; ракетки раскрываются веером */
+.throne-stage { position: relative; width: 272px; max-width: 100%; aspect-ratio: 272 / 210; margin: 4px auto 0; }
+.throne-art { width: 100%; height: 100%; display: block; overflow: visible; }
+.throne-handle { fill: #7A5534; }
+.throne-blade-red { fill: #C43D3D; stroke: var(--card); stroke-width: 2; }
+.throne-blade-black { fill: #2B2B33; stroke: var(--card); stroke-width: 2; }
+:root[data-theme="dark"] .throne-blade-black { fill: #3A3A46; }
+.throne-back { fill: color-mix(in srgb, var(--hint) 35%, var(--card)); }
+.throne-seat { fill: color-mix(in srgb, var(--hint) 50%, var(--card)); }
+.throne-ball { fill: var(--ball); }
+.throne-racket { animation: throne-fan .5s cubic-bezier(.2, .9, .3, 1.15) both; }
+@keyframes throne-fan { from { opacity: 0; transform: translateY(34px); } }
+@media (prefers-reduced-motion: reduce) { .throne-racket { animation: none; } }
+.throne-sitter { position: absolute; left: 50%; top: 69.5%; transform: translate(-50%, -50%); }
+.throne-sitter .avatar { box-shadow: 0 0 0 3px var(--gold), 0 0 18px color-mix(in srgb, var(--gold) 45%, transparent); }
+.throne-sitter .crown-big { position: absolute; left: 50%; top: -34px; transform: translateX(-50%) rotate(-8deg); }
+.throne-reign { color: var(--gold); font-size: 14px; font-weight: 700; }
+.throne-records { margin-bottom: 12px; }
+.throne-records .throne-record { font-size: 16px; font-weight: 700; }
 
 /* ── Графики ──────────────────────────────────────────────────────────── */
 .row-chart { justify-content: center; padding-top: 14px; padding-bottom: 12px; }
@@ -672,21 +692,18 @@ html, body {
 .table-art .art-trail { stroke: var(--ball); stroke-dasharray: 2 5; opacity: 0.6; }
 @keyframes art-bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(14px); } }
 
-/* Заставка при старте (v2.187.0): посередине экрана мяч прыгает над столом с
-   сеткой, тень под мячом, название клуба и «Загрузка…» */
-.boot { min-height: 64vh; justify-content: center; margin: 0 16px; }
-.boot-art { position: relative; width: 120px; height: 64px; margin-bottom: 6px; }
-.boot-ball { position: absolute; left: 50%; bottom: 10px; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%;
-  background: var(--ball); box-shadow: inset -3px -3px 0 rgba(0, 0, 0, .15);
-  animation: boot-bounce .6s cubic-bezier(.5, 0, .5, 1) infinite alternate; }
-.boot-shadow { position: absolute; left: 50%; bottom: 3px; width: 18px; height: 4px; margin-left: -9px; border-radius: 50%;
-  background: rgba(0, 0, 0, .25); animation: boot-shadow .6s cubic-bezier(.5, 0, .5, 1) infinite alternate; }
-.boot-table { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; border-radius: 2px; background: var(--table); }
-.boot-net { position: absolute; left: 50%; bottom: 4px; width: 2px; height: 12px; margin-left: -1px; background: var(--hint); opacity: .6; }
-.boot-title { color: var(--text); font-size: 18px; font-weight: 800; letter-spacing: -0.01em; }
+/* Заставка при старте: картинка владельца (v2.188.0; прозрачный фон — ложится и
+   на светлую, и на тёмную тему), низ картинки растворяется в фоне, под ней
+   название клуба и «Загрузка…». Картинка проявляется и чуть «дышит». */
+.boot { min-height: 70vh; justify-content: center; margin: 0 16px; }
+.boot-pic { width: 240px; height: auto; max-width: 70vw;
+  -webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
+  animation: boot-in .5s ease-out both, boot-breathe 2.4s ease-in-out .5s infinite alternate; }
+.boot-title { color: var(--text); font-size: 18px; font-weight: 800; letter-spacing: -0.01em; margin-top: -6px; }
 .boot-sub { font-size: 13px; }
-@keyframes boot-bounce { from { transform: translateY(-40px); } to { transform: translateY(0); } }
-@keyframes boot-shadow { from { transform: scale(.45); opacity: .4; } to { transform: scale(1); opacity: 1; } }
+@keyframes boot-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes boot-breathe { to { transform: translateY(-4px); } }
 
 /* Характер матча: камбэк, разгром, дьюсы, боссфайт — одна короткая анимация */
 .versus { position: relative; }
@@ -779,7 +796,7 @@ html, body {
 
 @media (prefers-reduced-motion: reduce) {
   .mood-stamp, .mood-comeback .versus-score, .mood-blowout .versus-num, .mood-boss .versus-row,
-  .table-art .art-ball, .boot-ball, .boot-shadow, .story-card, .story-bars i.is-now b, .chronicle-item { animation: none; }
+  .table-art .art-ball, .boot-pic, .story-card, .story-bars i.is-now b, .chronicle-item { animation: none; }
 }
 .challenge-btn { margin-top: 12px; }
 
