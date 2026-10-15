@@ -211,3 +211,22 @@ test("playerFromRoute: долгое нажатие только на игрок�
   assert.equal(app.playerFromRoute("h2h/12"), null);
   assert.equal(app.playerFromRoute(null), null);
 });
+
+test("reignClock: дни и часы правления", () => {
+  assert.equal(app.reignClock(0), "00:00:00");
+  assert.equal(app.reignClock(-5000), "00:00:00");
+  assert.equal(app.reignClock(((3 * 24 + 4) * 3600 + 12 * 60 + 5) * 1000 + 999), "3 д 04:12:05");
+  assert.equal(app.reignClock(59 * 1000), "00:00:59");
+});
+
+test("timelineShares: доли по длительности, не меньше 3%, в сумме 100", () => {
+  const day = 86400000;
+  const s = app.timelineShares([
+    { start_ts: 0, end_ts: 99 * day },
+    { start_ts: 99 * day, end_ts: 99 * day + 1000 },   // правление на секунду — всё равно видно
+    { start_ts: 99 * day + 1000, end_ts: null },
+  ], 100 * day);
+  assert.ok(s[1] >= 2.8);
+  assert.ok(s[0] > s[2]);
+  assert.ok(Math.abs(s.reduce((a, b) => a + b, 0) - 100) < 0.05);
+});
