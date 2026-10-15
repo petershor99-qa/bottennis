@@ -522,6 +522,24 @@ async def h2h(request, session, viewer):
     return await api.h2h_payload(session, viewer, target)
 
 
+async def pair(request, session, viewer):
+    """Любая пара игроков (v2.193.0): /api/pair/{a}/{b} — «A против B» глазами
+    третьего. Если смотрит один из пары — обычное «Ты против …» с его стороны."""
+    try:
+        ids = int(request.match_info["a"]), int(request.match_info["b"])
+    except (KeyError, ValueError):
+        return None
+    if ids[0] == ids[1]:
+        return None
+    players = {p.id: p for p in (await session.execute(select(Player).where(Player.id.in_(ids)))).scalars().all()}
+    if len(players) != 2:
+        return None
+    a, b = players[ids[0]], players[ids[1]]
+    if viewer.id in ids:
+        return await api.h2h_payload(session, viewer, b if viewer.id == a.id else a)
+    return await api.h2h_payload(session, a, b, third=True)
+
+
 async def records(request, session, viewer):
     return await payload_cache.cached(session, ("records",), lambda: api.records_payload(session))
 
@@ -597,6 +615,7 @@ def create_app(bot_token: str, session_factory, bot=None, storage=None) -> web.A
         ("/api/player/{player_id}/activity", player_activity),
         ("/api/player/{player_id}/history", history),
         ("/api/h2h/{player_id}", h2h),
+        ("/api/pair/{a}/{b}", pair),
         ("/api/activity/club", club_activity),
         ("/api/records", records),
         ("/api/summary/{kind}", summary),

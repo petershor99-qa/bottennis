@@ -181,11 +181,12 @@
     }
     if (d.reactions) c.appendChild(reactionBar(d.id, d.reactions));
     var h = section("Личные встречи");
-    h.list.appendChild(itemRow({
+    // v2.193.0: строка ведёт на экран пары (для участника — «Ты против …»)
+    h.list.appendChild(clickable(itemRow({
       label: d.a.name + " — " + d.b.name,
       value: d.h2h.a + " : " + d.h2h.b + (d.h2h.draws ? ", ничьих " + d.h2h.draws : ""),
       note: d.h2h.total
-    }));
+    }), "pair/" + d.a.id + "/" + d.b.id));
     c.appendChild(h);
     var share = el("div", "share-row");
     share.appendChild(shareButton("match", function () { return matchCardBlocks(d); }));

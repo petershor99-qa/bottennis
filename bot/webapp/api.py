@@ -739,7 +739,9 @@ async def _axes_pair(session: AsyncSession, viewer: Player, opponent: Player) ->
     return [{"name": name, "me": round(mine[name]), "them": round(theirs.get(name, 0))} for name in mine]
 
 
-async def h2h_payload(session: AsyncSession, viewer: Player, opponent: Player) -> dict:
+async def h2h_payload(session: AsyncSession, viewer: Player, opponent: Player, third: bool = False) -> dict:
+    """«Ты против …». third=True (v2.193.0) — пара глазами третьего игрока:
+    viewer — первый игрок пары (его сторона слева), подписи в третьем лице."""
     matches = (await session.execute(
         select(Match)
         .where(Match.status == MatchStatus.completed, or_(
@@ -750,8 +752,9 @@ async def h2h_payload(session: AsyncSession, viewer: Player, opponent: Player) -
         .options(selectinload(Match.challenger), selectinload(Match.challenged))
     )).scalars().all()
     base = {
-        "title": f"Ты против {opponent.display_name}",
+        "title": f"{viewer.display_name} против {opponent.display_name}" if third else f"Ты против {opponent.display_name}",
         "subtitle": "",
+        "pair": third,
         "me": _person(viewer),
         "them": _person(opponent),
         "score": None,
@@ -759,7 +762,8 @@ async def h2h_payload(session: AsyncSession, viewer: Player, opponent: Player) -
         "axes": await _axes_pair(session, viewer, opponent),
     }
     if not matches:
-        return {**base, "metrics": [], "matches": [], "empty": "Вы ещё не встречались за столом."}
+        return {**base, "metrics": [], "matches": [],
+                "empty": "Они ещё не встречались за столом." if third else "Вы ещё не встречались за столом."}
     s = compute_h2h(matches, viewer.id, opponent.id)
     base["score"] = {"me": s["wins"], "them": s["losses"], "draws": s["draws"]}
     score = f"{s['wins']}–{s['losses']}"
@@ -770,7 +774,11 @@ async def h2h_payload(session: AsyncSession, viewer: Player, opponent: Player) -
         metrics.append({"label": "Противостояние", "value": "Равный бой"})
     metrics.append({"label": "По партиям", "value": f"{s['my_sets']}–{s['opp_sets']}"})
     if s["streak_desc"]:
-        metrics.append({"label": "Сейчас", "value": s["streak_desc"]})
+        streak = s["streak_desc"]
+        if third:
+            streak = (streak.replace("ты ведёшь", f"{viewer.display_name} ведёт")
+                      .replace("ты проигрываешь", f"{viewer.display_name} проигрывает"))
+        metrics.append({"label": "Сейчас", "value": streak})
     metrics.append({"label": "Рейтинг в противостоянии", "value": f"{_signed(s['rating_delta'])} pts"})
     if s["best_win"] is not None and s["best_win"] > 0:
         metrics.append({"label": "Лучшая победа", "value": f"+{s['best_win']} pts"})
