@@ -59,16 +59,23 @@
     return wrap;
   }
 
-  // Своё фото ставится в боте (v2.174.0): ссылка открывает чат с ботом.
-  // «Сменить», если фото уже есть (своё или из Telegram), иначе «Поставить».
+  // Своё фото ставится в боте (v2.174.0). «Сменить», если фото уже есть
+  // (своё или из Telegram), иначе «Поставить». v2.185.0: ссылка на чат с ботом
+  // открывала чат под приложением — казалось, что кнопка не работает; теперь
+  // бот сам присылает просьбу о фото, а приложение закрывается (как вызов).
   function photoLink(url, playerId) {
     var b = el("button", "hero-photo-link", "Поставить фото");
     b.type = "button";
     loadPhoto(+playerId, document.createElement("div")).then(function (u) { if (u) b.textContent = "Сменить фото"; });
     b.addEventListener("click", function () {
-      track("photo_link");
-      if (tg && tg.openTelegramLink) tg.openTelegramLink(url);
-      else window.open(url, "_blank");
+      if (b.disabled) return;
+      haptic("impact");
+      b.disabled = true;
+      post("photo/open", {}).then(function () {
+        if (!closeApp()) sheetOpen(null, "Фото — в чате с ботом", "Открой чат с ботом и пришли туда фото.", "");
+      }, function (err) {
+        sheetOpen(null, "Не получилось", err.message, "");
+      }).then(function () { b.disabled = false; });
     });
     return b;
   }

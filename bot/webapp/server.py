@@ -51,6 +51,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Player
+from bot.handlers.photo import ask_photo_from_app
 from bot.utils import get_player
 from bot.webapp import (
     api,
@@ -78,6 +79,8 @@ STATIC_DIR = Path(__file__).resolve().parent.parent.parent / "webapp" / "static"
 BOT_TOKEN_KEY: web.AppKey[str] = web.AppKey("bot_token", str)
 SESSION_FACTORY_KEY: web.AppKey = web.AppKey("session_factory")
 BOT_KEY: web.AppKey = web.AppKey("bot")
+# Хранилище FSM бота (v2.185.0): «Поставить фото» из приложения ставит ожидание фото
+STORAGE_KEY: web.AppKey = web.AppKey("fsm_storage")
 PHOTOS_KEY: web.AppKey[PhotoCache] = web.AppKey("photos", PhotoCache)
 USAGE_KEY: web.AppKey[UsageWriter] = web.AppKey("usage", UsageWriter)
 TRACK_REQUEST_KEY = "bottennis_track"  # что записать в счётчик после ответа
@@ -332,6 +335,20 @@ async def challenge_open(request, session, viewer):
     return _json_error(status, text)
 
 
+async def photo_open(request, session, viewer):
+    """«Поставить фото» из приложения (v2.185.0): бот присылает просьбу в чат."""
+    bot = request.app.get(BOT_KEY)
+    if bot is None:
+        return None
+    result = await ask_photo_from_app(bot, request.app.get(STORAGE_KEY), viewer)
+    if result == "ok":
+        request[TRACK_REQUEST_KEY] = (viewer.telegram_id, "photo_open", None, None)
+        return {"ok": True}
+    if result == "wait":
+        return _json_error(429, "Просьба о фото уже в чате с ботом.")
+    return _json_error(502, "Бот не смог ответить. Откройте чат с ботом.")
+
+
 async def feed_react(request, session, viewer):
     """Реакция на ачивку или рекорд в ленте (v2.176.0). Без уведомлений."""
     try:
@@ -540,13 +557,15 @@ async def compress_json(request: web.Request, handler):
     return response
 
 
-def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
-    """bot — экземпляр aiogram.Bot для фото игроков; без него /api/photo отвечает 404."""
+def create_app(bot_token: str, session_factory, bot=None, storage=None) -> web.Application:
+    """bot — экземпляр aiogram.Bot для фото игроков; без него /api/photo отвечает 404.
+    storage — хранилище FSM диспетчера (ожидание фото из приложения)."""
     # client_max_size: картинка «Поделиться» (v2.176.0) приходит base64 до ~2,7 МБ
     app = web.Application(middlewares=[revalidate_static, compress_json], client_max_size=3 * 1024 * 1024)
     app[BOT_TOKEN_KEY] = bot_token
     app[SESSION_FACTORY_KEY] = session_factory
     app[BOT_KEY] = bot
+    app[STORAGE_KEY] = storage
     app[PHOTOS_KEY] = PhotoCache()
     app[USAGE_KEY] = UsageWriter(session_factory)
     app[ASSETS_KEY] = Assets(STATIC_DIR)
@@ -592,15 +611,16 @@ def create_app(bot_token: str, session_factory, bot=None) -> web.Application:
     app.router.add_post("/api/feed/react", endpoint(feed_react))
     app.router.add_post("/api/share", endpoint(share))
     app.router.add_post("/api/challenge/open", endpoint(challenge_open))
+    app.router.add_post("/api/photo/open", endpoint(photo_open))
     app.router.add_post("/api/match/{match_id}/react", endpoint(react))
     app.router.add_static("/static/", STATIC_DIR, show_index=False)
     return app
 
 
-async def start_webapp(bot_token: str, session_factory, bot=None) -> web.AppRunner:
+async def start_webapp(bot_token: str, session_factory, bot=None, storage=None) -> web.AppRunner:
     """Запускает сервер рядом с поллингом бота; вернуть runner, чтобы закрыть."""
     host, port = webapp_listen()
-    runner = web.AppRunner(create_app(bot_token, session_factory, bot), access_log=None)
+    runner = web.AppRunner(create_app(bot_token, session_factory, bot, storage), access_log=None)
     await runner.setup()
     await web.TCPSite(runner, host, port).start()
     logger.info("Mini App: веб-сервер слушает %s:%s", host, port)

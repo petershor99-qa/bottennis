@@ -6,10 +6,19 @@ Telegram отдаёт боту аватар игрока, только если 
 или ссылка «Поставить фото» в своём профиле приложения), бот хранит его
 `file_id` в `Player.photo_file_id`, приложение показывает его вместо аватара
 Telegram (bot/webapp/photos.py).
+
+v2.185.0: «Поставить фото» в приложении больше не открывает ссылку на чат с
+ботом (Telegram открывал чат под приложением, и казалось, что кнопка не
+работает) — бот сам присылает просьбу прислать фото (`ask_photo_from_app`), а
+приложение закрывается, как у «Вызвать на матч».
 """
+import logging
+import time
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import BaseStorage, StorageKey
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +28,12 @@ from bot.utils import cb_msg, get_player, msg_user
 from bot.webapp.config import webapp_link
 from bot.webapp.photos import pick_photo_size
 
+logger = logging.getLogger(__name__)
 router = Router()
+
+# Не чаще раза в несколько секунд — двойной тап не присылает две просьбы
+APP_COOLDOWN_S = 5.0
+_last_app_ask: dict[int, float] = {}
 
 PHOTO_ASK_TEXT = "📷 Пришли фото для своего профиля в приложении. Лучше портрет, где видно лицо."
 PHOTO_DONE_TEXT = "Готово, фото стоит в профиле приложения."
@@ -49,6 +63,26 @@ async def ask_photo(message: Message, player: Player, state: FSMContext) -> None
     """Начало: просьба прислать фото. Общая для /photo, /start photo и кнопки."""
     await state.set_state(PhotoStates.waiting)
     await message.answer(PHOTO_ASK_TEXT, reply_markup=_ask_kb(bool(player.photo_file_id)))
+
+
+async def ask_photo_from_app(bot, storage: BaseStorage | None, player: Player) -> str:
+    """Просьба прислать фото по кнопке из приложения: то же сообщение, что у
+    /photo, и ожидание фото в FSM. ok | wait (только что присылали) | fail."""
+    now = time.monotonic()
+    tid = player.telegram_id
+    if now - _last_app_ask.get(tid, -APP_COOLDOWN_S) < APP_COOLDOWN_S:
+        return "wait"
+    try:
+        await bot.send_message(tid, PHOTO_ASK_TEXT, reply_markup=_ask_kb(bool(player.photo_file_id)),
+                               disable_notification=True)
+    except Exception:
+        logger.warning("Не удалось прислать просьбу о фото игроку %s", tid, exc_info=True)
+        return "fail"
+    if storage is not None:
+        state = FSMContext(storage, StorageKey(bot_id=bot.id, chat_id=tid, user_id=tid))
+        await state.set_state(PhotoStates.waiting)
+    _last_app_ask[tid] = now
+    return "ok"
 
 
 @router.message(Command("photo"))

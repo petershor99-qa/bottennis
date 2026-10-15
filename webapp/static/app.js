@@ -14,7 +14,7 @@
       matchesWord: matchesWord, screenName: screenName, splitNumber: splitNumber, badgeClass: badgeClass,
       parseLaunchParams: parseLaunchParams, isColorDark: isColorDark,
       filterMatches: filterMatches, recordLine: recordLine, compactDate: compactDate,
-      toggledReactions: toggledReactions, matchMood: matchMood,
+      toggledReactions: toggledReactions, matchMood: matchMood, tapGuard: tapGuard, chipSets: chipSets,
       nextNav: nextNav, sparkPoints: sparkPoints, odometerDigits: odometerDigits, raceOrder: raceOrder
     };
     return;
@@ -152,7 +152,43 @@
     return s;
   }
 
-  function go(route) { haptic("impact"); location.hash = "#/" + route; }
+  // Нажатия в двух местах сразу (v2.185.0): пока на экране два пальца и ещё
+  // чуть-чуть после, нажатия не считаются; переход — не чаще раза в 0,4 с, иначе
+  // два пальца по двум плиткам давали два перехода подряд, и «Назад» вёл на
+  // первый; повторное нажатие того же элемента быстрее 0,35 с — двойной тап,
+  // не второе действие (кроме сторис: там частые нажатия — это листание).
+  // (пороги — внутри функции: в Node, где она проверяется, переменные модуля не заданы)
+  var NAV_LOCK_MS = 400;
+  var multiTouchAt = 0, navLockUntil = 0, lastTap = { node: null, at: 0 };
+
+  function tapGuard(now, target, state) {
+    if (now - state.multiTouchAt < 400) return false;
+    if (target && target === state.lastTap.node && now - state.lastTap.at < 350) return false;
+    state.lastTap = { node: target, at: now };
+    return true;
+  }
+
+  if (typeof document !== "undefined") {
+    var noteTouches = function (e) { if (e.touches && e.touches.length > 1) multiTouchAt = Date.now(); };
+    document.addEventListener("touchstart", noteTouches, { passive: true, capture: true });
+    document.addEventListener("touchmove", noteTouches, { passive: true, capture: true });
+    document.addEventListener("click", function (e) {
+      var node = e.target && e.target.closest ? e.target.closest("button, .tap, a") : null;
+      if (!node || node.closest(".story")) return;
+      var state = { multiTouchAt: multiTouchAt, lastTap: lastTap };
+      var ok = tapGuard(Date.now(), node, state);
+      lastTap = state.lastTap;
+      if (!ok) { e.stopPropagation(); e.preventDefault(); }
+    }, true);
+  }
+
+  function go(route) {
+    var now = Date.now();
+    if (now < navLockUntil) return;
+    navLockUntil = now + NAV_LOCK_MS;
+    haptic("impact");
+    location.hash = "#/" + route;
+  }
 
   function clickable(node, route) {
     node.classList.add("tap");
@@ -605,11 +641,26 @@
   // Лента клуба (v2.168.0): матчи (у ярких — репортаж), ачивки, рекорды, трон
   // Лента клуба (v2.171.0): каждое событие — отдельная карточка, заголовок дня
   // прилипает к верху при прокрутке, «Показать ещё» догружает порции по 15.
-  function feedItem(it, i) {
+  // v2.185.0: метка характера матча (как штамп на экране матча) и пометка,
+  // что этот матч уже показан выше карточкой «Матч дня»
+  function feedTags(it, featured) {
+    var tags = [];
+    var mood = matchMood({ winner: it.winner, boss: it.boss, sets: chipSets(it.sets) });
+    if (featured && featured.id === it.id) tags.push(["feed-tag", featured.title]);
+    if (mood) tags.push(["feed-tag mood-tag mood-" + mood, MOOD_LABELS[mood]]);
+    if (!tags.length) return null;
+    var wrap = el("div", "feed-tags");
+    tags.forEach(function (t) { wrap.appendChild(el("span", t[0], t[1])); });
+    return wrap;
+  }
+
+  function feedItem(it, i, featured) {
     var li;
     var body = el("div", "body");
     if (it.type === "match") {
       li = clickable(el("li", "feed-card feed-match"), "match/" + it.id);
+      var tags = feedTags(it, featured);
+      if (tags) body.appendChild(tags);
       body.appendChild(versusLine(it));
       var score = el("div", "feed-score");
       score.appendChild(setChips(it.sets, it.winner));
@@ -643,7 +694,7 @@
     return li;
   }
 
-  function feedBlock(items, more) {
+  function feedBlock(items, more, featured) {
     var wrap = el("section", "group");
     wrap.appendChild(el("h2", "group-title", "Лента клуба"));
     var list = el("ul", "feed-list");
@@ -655,7 +706,7 @@
           state.lastDay = it.day;
           list.appendChild(el("li", "feed-day", it.day));
         }
-        list.appendChild(feedItem(it, i));
+        list.appendChild(feedItem(it, i, featured));
       });
       state.offset += batch.length;
     }
@@ -679,7 +730,7 @@
 
   // Меню клуба плиткой (v2.171.0): выше ленты, чтобы до него не листать
   function clubTiles(links) {
-    var wrap = el("section", "group");
+    var wrap = el("section", "group club-group");
     wrap.appendChild(el("h2", "group-title", "Клуб"));
     var grid = el("div", "club-tiles");
     links.forEach(function (l) {
@@ -898,7 +949,7 @@
       c.appendChild(f);
     }
 
-    if (d.feed && d.feed.length) homeCols.side.appendChild(feedBlock(d.feed, d.feed_more));
+    if (d.feed && d.feed.length) homeCols.side.appendChild(feedBlock(d.feed, d.feed_more, d.featured));
     if (!homeCols.side.firstChild) outer.classList.remove("is-wide");
   }
 
@@ -1077,16 +1128,23 @@
     return wrap;
   }
 
-  // Своё фото ставится в боте (v2.174.0): ссылка открывает чат с ботом.
-  // «Сменить», если фото уже есть (своё или из Telegram), иначе «Поставить».
+  // Своё фото ставится в боте (v2.174.0). «Сменить», если фото уже есть
+  // (своё или из Telegram), иначе «Поставить». v2.185.0: ссылка на чат с ботом
+  // открывала чат под приложением — казалось, что кнопка не работает; теперь
+  // бот сам присылает просьбу о фото, а приложение закрывается (как вызов).
   function photoLink(url, playerId) {
     var b = el("button", "hero-photo-link", "Поставить фото");
     b.type = "button";
     loadPhoto(+playerId, document.createElement("div")).then(function (u) { if (u) b.textContent = "Сменить фото"; });
     b.addEventListener("click", function () {
-      track("photo_link");
-      if (tg && tg.openTelegramLink) tg.openTelegramLink(url);
-      else window.open(url, "_blank");
+      if (b.disabled) return;
+      haptic("impact");
+      b.disabled = true;
+      post("photo/open", {}).then(function () {
+        if (!closeApp()) sheetOpen(null, "Фото — в чате с ботом", "Открой чат с ботом и пришли туда фото.", "");
+      }, function (err) {
+        sheetOpen(null, "Не получилось", err.message, "");
+      }).then(function () { b.disabled = false; });
     });
     return b;
   }
@@ -2445,6 +2503,14 @@
 
   var MOOD_LABELS = { boss: "Боссфайт", comeback: "Камбэк", blowout: "Разгром", deuce: "Дьюсы" };
 
+  // Счёт партий из ленты («5:11») — в вид экрана матча ({a, b}) для matchMood
+  function chipSets(sets) {
+    return (sets || []).map(function (sc) {
+      var p = String(sc).split(":");
+      return { a: parseInt(p[0], 10) || 0, b: parseInt(p[1], 10) || 0 };
+    });
+  }
+
   function matchCardBlocks(d) {
     var aSets = d.sets.filter(function (x) { return x.a > x.b; }).length;
     var blocks = [titleBlock(d.a.name + " — " + d.b.name, d.date),
@@ -2459,7 +2525,8 @@
 
   function renderMatch(c, d) {
     var mood = matchMood(d);
-    var card = el("div", "card versus" + (mood ? " mood-" + mood : ""));
+    // штамп — над победителем (v2.185.0; раньше всегда справа)
+    var card = el("div", "card versus" + (mood ? " mood-" + mood + " stamp-" + d.winner : ""));
     if (mood) card.appendChild(el("div", "mood-stamp", MOOD_LABELS[mood]));
     var row = el("div", "versus-row");
     function side(p, mine) {

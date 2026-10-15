@@ -17,6 +17,14 @@
 
   var MOOD_LABELS = { boss: "Боссфайт", comeback: "Камбэк", blowout: "Разгром", deuce: "Дьюсы" };
 
+  // Счёт партий из ленты («5:11») — в вид экрана матча ({a, b}) для matchMood
+  function chipSets(sets) {
+    return (sets || []).map(function (sc) {
+      var p = String(sc).split(":");
+      return { a: parseInt(p[0], 10) || 0, b: parseInt(p[1], 10) || 0 };
+    });
+  }
+
   function matchCardBlocks(d) {
     var aSets = d.sets.filter(function (x) { return x.a > x.b; }).length;
     var blocks = [titleBlock(d.a.name + " — " + d.b.name, d.date),
@@ -31,7 +39,8 @@
 
   function renderMatch(c, d) {
     var mood = matchMood(d);
-    var card = el("div", "card versus" + (mood ? " mood-" + mood : ""));
+    // штамп — над победителем (v2.185.0; раньше всегда справа)
+    var card = el("div", "card versus" + (mood ? " mood-" + mood + " stamp-" + d.winner : ""));
     if (mood) card.appendChild(el("div", "mood-stamp", MOOD_LABELS[mood]));
     var row = el("div", "versus-row");
     function side(p, mine) {
