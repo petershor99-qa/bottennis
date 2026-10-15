@@ -779,18 +779,43 @@
   }
 
   // Меню клуба плиткой (v2.171.0): выше ленты, чтобы до него не листать
+  // v2.192.0: плитки — по тому, что клуб чаще открывает (порядок с сервера,
+  // bot/webapp/menu.py); редкие — под «Ещё», раскрытие запоминается на устройстве
+  var CLUB_MORE_KEY = "club_more_v1";
+
   function clubTiles(links) {
     var wrap = el("section", "group club-group");
     wrap.appendChild(el("h2", "group-title", "Клуб"));
     var grid = el("div", "club-tiles");
+    var extra = 0;
     links.forEach(function (l) {
-      var t = clickable(el("div", "club-tile"), l.route);
+      var t = clickable(el("div", "club-tile" + (l.more ? " club-tile-more" : "")), l.route);
       t.appendChild(icon(l.icon || "chevron", "ico-lead"));
       t.appendChild(el("div", "club-tile-title", l.title));
       if (l.value) t.appendChild(el("div", "club-tile-value", l.value));
+      if (l.more) extra += 1;
       grid.appendChild(t);
     });
     wrap.appendChild(grid);
+    if (extra) {
+      var open = false;
+      try { open = window.localStorage.getItem(CLUB_MORE_KEY) === "1"; } catch (e) { /* закрыто */ }
+      var btn = el("button", "more club-more");
+      btn.type = "button";
+      var setOpen = function (v) {
+        open = v;
+        wrap.classList.toggle("is-open", v);
+        btn.textContent = v ? "Свернуть" : "Ещё " + extra;
+        btn.setAttribute("aria-expanded", v ? "true" : "false");
+      };
+      btn.addEventListener("click", function () {
+        haptic("select");
+        setOpen(!open);
+        try { window.localStorage.setItem(CLUB_MORE_KEY, open ? "1" : "0"); } catch (e) { /* без памяти */ }
+      });
+      setOpen(open);
+      wrap.appendChild(btn);
+    }
     return wrap;
   }
 
@@ -1076,6 +1101,30 @@
     return seg;
   }
 
+  // Подсказка про жесты (v2.192.0): один раз, на сенсорном экране; пропадает и
+  // сама, как только быстрое меню открыто долгим нажатием
+  var GESTURE_HINT_KEY = "gesture_hint_v1";
+
+  function gestureHint(c, before) {
+    if (!("ontouchstart" in window)) return;
+    storageGet(GESTURE_HINT_KEY, function (seen) {
+      if (seen !== null || !before.isConnected) return;
+      var card = el("div", "card hint gesture-hint");
+      card.appendChild(useIcon("hand-finger", "ico-lead"));
+      var b = el("div", "body");
+      b.appendChild(el("div", "name", "Подержи палец на игроке"));
+      b.appendChild(el("div", "sub", "Откроется быстрое меню: вызвать на матч, «Ты против …», профиль. А провести от левого края экрана — назад."));
+      card.appendChild(b);
+      var close = el("button", "hint-close");
+      close.type = "button";
+      close.setAttribute("aria-label", "Закрыть подсказку");
+      close.appendChild(useIcon("x"));
+      close.addEventListener("click", function () { haptic("select"); storageSet(GESTURE_HINT_KEY, "1"); card.remove(); });
+      card.appendChild(close);
+      c.insertBefore(card, before);
+    });
+  }
+
   function renderLeaderboard(c, d) {
     c.appendChild(header(d.title, d.players_label));
     if (d.empty) { emptyState(c, d.empty); return; }
@@ -1107,6 +1156,7 @@
     });
     area.appendChild(board);
     if (d.gap) { gapNote = el("p", "footnote", d.gap); area.appendChild(gapNote); }
+    gestureHint(c, area);
     var ids = d.rows.map(function (row) { return row.player_id; });
     if (pendingRise && mine && pendingRise > myRow.rank) {
       animateRise(c, mine, pendingRise, myRow.rank);
@@ -1156,6 +1206,13 @@
     line.appendChild(ratingNumber("hero-value", h.rating, playerId));   // табло (v2.183.0)
     if (h.week) line.appendChild(el("span", "hero-week " + (h.week_up ? "tone-win" : "tone-loss"), h.week));
     hero.appendChild(line);
+    if (h.days_streak) {
+      // v2.192.0: игровых дней подряд (выходные серию не рвут)
+      var streak = el("div", "hero-streak");
+      streak.appendChild(icon("flame", "ico-inline"));
+      streak.appendChild(document.createTextNode(h.days_streak));
+      hero.appendChild(streak);
+    }
     if (d.card) hero.appendChild(cardStats(d.card, playerId));
     if (d.chart) hero.appendChild(ratingChart(d.chart));
     if (h.photo_link && !d.empty) hero.appendChild(shareButton("profile", function () { return profileCardBlocks(d); }));
@@ -3276,6 +3333,9 @@
   function playerSheet(id) {
     var old = document.querySelector(".sheet-wrap");
     if (old) old.remove();
+    storageSet("gesture_hint_v1", "1");   // жест освоен — подсказка больше не нужна (v2.192.0)
+    var hint = document.querySelector(".gesture-hint");
+    if (hint) hint.remove();
     var own = String(id) === String(viewerId);
     var wrap = el("div", "sheet-wrap");
     var sheet = el("div", "sheet quick-sheet");
@@ -3381,18 +3441,43 @@
   var VISIT_KEY = "last_visit_v1";
   var SINCE_MIN_GAP_MS = 2 * 3600 * 1000;
   var sinceChecked = false;
+  // v2.192.0: при старте из снимка главной (v2.180.0) ответ мог прийти раньше,
+  // чем главная перерисуется свежими данными, — карточка исчезала вместе со
+  // снимком. Теперь данные запоминаются, и карточка ставится на каждую
+  // отрисовку главной, пока её не закрыли и пока игрок не ушёл с главной.
+  var sinceState = null;
+
+  // Картинка заставки (v2.188.0) — та же, что в index.html, с тем же адресом
+  // (версия из ссылки preload), поэтому уже в кэше браузера
+  function splashUrl() {
+    var pre = document.querySelector('link[rel="preload"][as="image"]');
+    return pre ? pre.getAttribute("href") : "static/splash.webp";
+  }
 
   function sinceCard(c, d) {
     var card = el("div", "card since");
-    var top = el("div", "pair-top");
+    // v2.192.0: «С возвращением» с картинкой заставки — её почти никто не видел,
+    // повторный запуск слишком быстрый
+    var hero = el("div", "since-hero");
+    var txt = el("div", "since-hero-text");
+    txt.appendChild(el("div", "since-hello", "С возвращением!"));
+    var top = el("div", "since-meta");
     top.appendChild(el("span", "eyebrow", d.title));
     top.appendChild(el("span", "eyebrow-meta", d.since));
-    card.appendChild(top);
+    txt.appendChild(top);
+    hero.appendChild(txt);
+    var pic = el("img", "since-pic");
+    pic.alt = "";
+    pic.decoding = "async";
+    pic.addEventListener("error", function () { pic.remove(); });
+    pic.src = splashUrl();
+    hero.appendChild(pic);
+    card.appendChild(hero);
     var close = el("button", "hint-close");
     close.type = "button";
     close.setAttribute("aria-label", "Скрыть");
     close.appendChild(useIcon("x"));
-    close.addEventListener("click", function () { haptic("select"); card.remove(); });
+    close.addEventListener("click", function () { haptic("select"); if (sinceState) sinceState.closed = true; card.remove(); });
     card.appendChild(close);
     var list = el("ul", "list list-plain");
     d.items.forEach(function (it) { list.appendChild(itemRow(it)); });
@@ -3403,8 +3488,14 @@
   }
 
   function checkSince(c) {
+    if (sinceState && !sinceState.closed && !c.querySelector(".since")) sinceCard(c, sinceState.d);
     if (sinceChecked) return;
     sinceChecked = true;
+    window.addEventListener("hashchange", function leave() {
+      if (location.hash.replace(/^#\/?/, "") === "") return;
+      if (sinceState) sinceState.closed = true;
+      window.removeEventListener("hashchange", leave);
+    });
     var now = Date.now();
     storageGet(VISIT_KEY, function (raw) {
       if (raw === undefined) return;                  // памяти нет — без карточки
@@ -3412,7 +3503,9 @@
       var last = parseInt(raw, 10);
       if (!last || now - last < SINCE_MIN_GAP_MS) return;
       api("since?t=" + Math.floor(last / 1000)).then(function (d) {
-        if (d && d.items && d.items.length && c.isConnected) sinceCard(c, d);
+        if (!d || !d.items || !d.items.length) return;
+        sinceState = { d: d, closed: false };
+        if (c.isConnected && !c.querySelector(".since")) sinceCard(c, d);
       }, function () { /* не вышло — просто без карточки */ });
     });
   }

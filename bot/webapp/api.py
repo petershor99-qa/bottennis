@@ -9,7 +9,7 @@ v2.161.0: профиль, графики, достижения, рекорды, 
 и HTML), графики — те же ряды, что уходят в картинки бота. Здесь только сборка
 JSON, чтобы русские строки приложения жили на сервере и проверялись тестами.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -283,6 +283,25 @@ async def home_payload(session: AsyncSession, viewer: Player) -> dict:
 
 # ── Профиль ───────────────────────────────────────────────────────────────────
 
+def play_day_streak(days: set[date], today: date) -> int:
+    """Игровых дней подряд (v2.192.0): дни по МСК, когда у игрока был матч. Клуб
+    играет в рабочие дни, поэтому суббота и воскресенье серию не рвут (а матч в
+    выходной её продлевает). Сегодня ещё не играл — серия жива со вчерашнего дня."""
+    streak, day = 0, today
+    if day not in days:
+        day -= timedelta(days=1)
+    for _ in range(400):
+        if day in days:
+            streak += 1
+        elif day.weekday() < 5:
+            break
+        day -= timedelta(days=1)
+    return streak
+
+
+STREAK_DAYS_MIN = 3
+
+
 def _week_delta(matches: list[Match], player_id: int) -> float | None:
     week_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
     recent = [m for m in matches if m.completed_at and m.completed_at >= week_ago]
@@ -335,6 +354,10 @@ async def player_payload(session: AsyncSession, player: Player, viewer: Player) 
         }
 
     s = stats_cached(player, matches)
+    played_days = {(m.completed_at + MSK_OFFSET).date() for m in matches if m.completed_at}
+    days_streak = play_day_streak(played_days, (datetime.now(timezone.utc).replace(tzinfo=None) + MSK_OFFSET).date())
+    if days_streak >= STREAK_DAYS_MIN:
+        head["days_streak"] = f"{_ru_plural(days_streak, 'игровой день', 'игровых дня', 'игровых дней')} подряд"
     week = _week_delta(matches, player.id)
     if week is not None:
         head["week"] = f"{_signed(week)} за неделю"

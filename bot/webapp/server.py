@@ -64,6 +64,7 @@ from bot.webapp import (
     api_month,
     api_personal,
     api_return,
+    menu,
     payload_cache,
     reactions,
 )
@@ -187,6 +188,8 @@ async def home(request, session, viewer):
     payload["links"].append({"route": "race", "title": "Гонка рейтинга", "value": "", "icon": "flag"})  # v2.184.0
     if is_admin(viewer.telegram_id):
         payload["links"].append({"route": "usage", "title": "Использование", "value": "", "icon": "chart-pie"})
+    # v2.192.0: частые плитки — сверху, редкие — под «Ещё» (bot/webapp/menu.py)
+    payload["links"] = await menu.ranked_links(session, payload["links"])
     return payload
 
 

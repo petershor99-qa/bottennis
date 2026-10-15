@@ -37,6 +37,13 @@
     line.appendChild(ratingNumber("hero-value", h.rating, playerId));   // табло (v2.183.0)
     if (h.week) line.appendChild(el("span", "hero-week " + (h.week_up ? "tone-win" : "tone-loss"), h.week));
     hero.appendChild(line);
+    if (h.days_streak) {
+      // v2.192.0: игровых дней подряд (выходные серию не рвут)
+      var streak = el("div", "hero-streak");
+      streak.appendChild(icon("flame", "ico-inline"));
+      streak.appendChild(document.createTextNode(h.days_streak));
+      hero.appendChild(streak);
+    }
     if (d.card) hero.appendChild(cardStats(d.card, playerId));
     if (d.chart) hero.appendChild(ratingChart(d.chart));
     if (h.photo_link && !d.empty) hero.appendChild(shareButton("profile", function () { return profileCardBlocks(d); }));
