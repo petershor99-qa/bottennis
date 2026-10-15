@@ -117,6 +117,11 @@
   // (пороги — внутри функции: в Node, где она проверяется, переменные модуля не заданы)
   var NAV_LOCK_MS = 400;
   var multiTouchAt = 0, navLockUntil = 0, lastTap = { node: null, at: 0 };
+  // После долгого нажатия (v2.190.0) отпускание того же пальца — не нажатие: ни
+  // по фону, ни по кнопке меню, всплывшего под пальцем. Новое касание сбрасывает.
+  var swallowClick = false;
+
+  function suppressClicks() { swallowClick = true; }
 
   function tapGuard(now, target, state) {
     if (now - state.multiTouchAt < 400) return false;
@@ -127,9 +132,10 @@
 
   if (typeof document !== "undefined") {
     var noteTouches = function (e) { if (e.touches && e.touches.length > 1) multiTouchAt = Date.now(); };
-    document.addEventListener("touchstart", noteTouches, { passive: true, capture: true });
+    document.addEventListener("touchstart", function (e) { swallowClick = false; noteTouches(e); }, { passive: true, capture: true });
     document.addEventListener("touchmove", noteTouches, { passive: true, capture: true });
     document.addEventListener("click", function (e) {
+      if (swallowClick) { swallowClick = false; e.stopPropagation(); e.preventDefault(); return; }
       var node = e.target && e.target.closest ? e.target.closest("button, .tap, a") : null;
       if (!node || node.closest(".story")) return;
       var state = { multiTouchAt: multiTouchAt, lastTap: lastTap };
@@ -149,6 +155,7 @@
 
   function clickable(node, route) {
     node.classList.add("tap");
+    node.setAttribute("data-route", route);   // долгое нажатие на игрока (v2.190.0)
     node.setAttribute("role", "button");
     node.tabIndex = 0;
     node.addEventListener("click", function () { go(route); });

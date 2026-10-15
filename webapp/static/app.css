@@ -1005,3 +1005,28 @@ html.has-fs-toggle .screen-head { padding-right: 40px; }
 @media (prefers-reduced-motion: reduce) {
   .race-row, .race-bar { transition: none; }
 }
+
+/* Жесты 2 (v2.190.0): «назад» от левого края, долгое нажатие на игрока, обновление вкладкой */
+.edge-back { position: fixed; left: -46px; top: 40%; z-index: 30; width: 44px; height: 44px; border-radius: 50%;
+  background: var(--card); color: var(--accent); display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .18); opacity: 0; pointer-events: none;
+  transition: background-color .15s, color .15s, opacity .2s, transform .2s cubic-bezier(.2, .8, .2, 1); }
+.edge-back-ico { width: 22px; height: 22px; transform: rotate(180deg); }
+.edge-back.is-ready { background: var(--button); color: var(--button-text); }
+.edge-back.is-going { transform: translateX(110px) scale(.9) !important; opacity: 0 !important; transition: transform .25s ease-in, opacity .25s ease-in; }
+[data-route] { -webkit-touch-callout: none; }
+[data-route^="player/"] { -webkit-user-select: none; user-select: none; }
+.tap.is-pressing { background-color: var(--selected); transform: scale(.97); transition: transform .45s ease-out, background-color .2s; }
+.quick-sheet { text-align: left; }
+.quick-head { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+.quick-who { min-width: 0; }
+.quick-who .sheet-title { overflow-wrap: anywhere; }
+.quick-sub { font-size: 14px; color: var(--hint); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.quick-actions { display: flex; flex-direction: column; gap: 8px; }
+.quick-actions .button { margin-top: 0; }
+.tab.is-refreshing .ico { animation: tab-spin .8s linear infinite; }
+@keyframes tab-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .edge-back, .tap.is-pressing { transition: none; }
+  .tab.is-refreshing .ico { animation: none; opacity: .5; }
+}
