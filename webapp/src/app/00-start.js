@@ -15,7 +15,8 @@
       filterMatches: filterMatches, recordLine: recordLine, compactDate: compactDate,
       toggledReactions: toggledReactions, matchMood: matchMood, tapGuard: tapGuard, chipSets: chipSets, isPhoneClient: isPhoneClient, replayTiming: replayTiming, ballHeight: ballHeight,
       nextNav: nextNav, sparkPoints: sparkPoints, odometerDigits: odometerDigits, raceOrder: raceOrder,
-      edgeProgress: edgeProgress, isRootRoute: isRootRoute, playerFromRoute: playerFromRoute
+      edgeProgress: edgeProgress, isRootRoute: isRootRoute, playerFromRoute: playerFromRoute,
+      reignClock: reignClock, timelineShares: timelineShares
     };
     return;
   }

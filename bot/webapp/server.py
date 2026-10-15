@@ -532,7 +532,11 @@ async def matches(request, session, viewer):
 
 
 async def throne(request, session, viewer):
-    return await api.hall_of_fame_payload(session)
+    payload = await api.hall_of_fame_payload(session)
+    assets = request.app.get(ASSETS_KEY) if request is not None else None
+    if assets is not None and (assets.dir / "throne.webp").exists():
+        payload["art"] = assets.url("throne.webp")   # v2.191.0: картинка трона, кэш навсегда
+    return payload
 
 
 @web.middleware
