@@ -1,6 +1,7 @@
 """
 Проверка прода bottennis одной командой: сервер, бот, Caddy, приложение снаружи,
-журнал загрузок Mini App. Только чтение — ничего не перезапускает и не меняет.
+сертификаты HTTPS, журнал загрузок Mini App. Только чтение — ничего не
+перезапускает и не меняет.
 
     py -3.13 .claude/skills/prod-check/scripts/check_prod.py <IP>
     py -3.13 .claude/skills/prod-check/scripts/check_prod.py <IP> --hours 72 --no-outside
@@ -14,15 +15,24 @@ IP можно задать и переменной BOTTENNIS_PROD_HOST. В ре�
 import argparse
 import json
 import os
+import socket
+import ssl
 import statistics
 import subprocess
 import sys
 import time
 import urllib.request
+from datetime import UTC, datetime
 
 # Порог «медленного» запуска приложения — тот же порядок, что в «Использовании»
 SLOW_BOOT_MS = 5000
 SSH_TIMEOUT_S = 25
+# Сертификаты (v2.200.1): приложение открывается по IP — сертификат Let's Encrypt
+# на IP живёт 6 дней, Caddy продлевает его сам примерно за 2–3 дня до конца.
+# Меньше полутора дней — продление не идёт. Старый адрес sslip.io (кнопки в
+# старых сообщениях чата) — обычный сертификат на 90 дней, продление за 30.
+CERT_IP_MIN_DAYS = 1.5
+CERT_NAME_MIN_DAYS = 14
 # check-host.net отвечает 403 на стандартный User-Agent Python
 UA = {"User-Agent": "bottennis-prod-check/1.0", "Accept": "application/json"}
 
@@ -157,8 +167,40 @@ def check_boots(lines: list[str], hours: int) -> None:
 
 # ── Снаружи: само приложение и проверка из других стран ───────────────────────
 
+def sslip_name(host: str) -> str:
+    return f"{host.replace('.', '-')}.sslip.io"
+
+
 def check_app_outside(host: str) -> None:
-    url = f"https://{host.replace('.', '-')}.sslip.io/"
+    # v2.200.1: приложение открывается по IP (без поиска адреса); sslip.io — для старых кнопок
+    for url in (f"https://{host}/", f"https://{sslip_name(host)}/"):
+        check_app_url(url)
+
+
+def cert_days_left(host: str, name: str) -> float:
+    """Сколько дней до конца сертификата, который сервер отдаёт для имени `name`."""
+    ctx = ssl.create_default_context()
+    with socket.create_connection((host, 443), timeout=15) as sock:
+        with ctx.wrap_socket(sock, server_hostname=name) as tls:
+            not_after = ssl.cert_time_to_seconds(tls.getpeercert()["notAfter"])
+    return (not_after - time.time()) / 86400
+
+
+def check_certificates(host: str) -> None:
+    for name, label, min_days in ((host, "по IP", CERT_IP_MIN_DAYS),
+                                  (sslip_name(host), "sslip.io", CERT_NAME_MIN_DAYS)):
+        try:
+            days = cert_days_left(host, name)
+        except Exception as e:
+            add("FAIL", f"Сертификат {label}", f"не проверить: {e}")
+            continue
+        until = datetime.fromtimestamp(time.time() + days * 86400, UTC).strftime("%d.%m %H:%M UTC")
+        level = "OK" if days >= min_days else "WARN" if days > 0 else "FAIL"
+        note = "" if level == "OK" else (" — Caddy не продлевает: journalctl -u caddy" if days > 0 else " — истёк")
+        add(level, f"Сертификат {label}", f"до {until}, осталось {days:.1f} дн{note}")
+
+
+def check_app_url(url: str) -> None:
     req = urllib.request.Request(url, headers={"Accept-Encoding": "gzip"})
     started = time.monotonic()
     try:
@@ -238,6 +280,7 @@ def main() -> int:
         check_boots(blocks.get("boots", []), args.hours)
         check_deployed_commit(blocks)
     check_app_outside(args.host)
+    check_certificates(args.host)
     if not args.no_outside:
         check_host_net(args.host)
     width = max(len(s) for _, s, _ in results)
