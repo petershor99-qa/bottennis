@@ -63,7 +63,7 @@ async def test_closed_current_week_counts_in_streak(db, monkeypatch):
     a, b, c = await _club(db)
     done_weeks = {MONDAY, MONDAY - timedelta(weeks=1)}
 
-    def fake(history, week, pid, start, names):
+    def fake(history, week, pid, start, names, chosen=None):
         ok = start in done_weeks
         return [{"key": "x", "title": "x", "target": 1, "progress": int(ok), "done": ok}]
 
@@ -76,7 +76,7 @@ async def test_closed_current_week_counts_in_streak(db, monkeypatch):
 
 def test_forward_navigation_starts_at_top():
     js = (SRC / "90-routes.js").read_text(encoding="utf-8")
-    assert 'if (dir === "forward") delete scrollPos[route];' in js
+    assert "currentNav.restore ? (scrollPos[currentNav.id] || 0) : 0" in js   # v2.201.0 — по записи истории
     assert js.count("enterScreen(route, quiet);") == 2
 
 

@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import AchievementEarned, ChampionReign, Match, MatchStatus, Player
+from bot.db.models import AchievementEarned, ChampionReign, GoalChoice, Match, MatchStatus, Player
 from bot.utils import MSK_OFFSET, _ru_plural, match_rating_delta
 from bot.webapp.api_day import _standings_at
 
@@ -204,6 +204,7 @@ PERSONAL_SKILLS_FROM = datetime(2026, 10, 18, 21, 0)
 FOCUS_WEEKS = 12
 FOCUS_MIN_TRIES = 4
 FOCUS_NOTE = "Здесь у тебя больше всего запаса — по последним матчам"
+CHOSEN_NOTE = "Ты выбрал эту цель сам"
 # v2.196.0: ориентир камбэков 0,15 — медиана клуба по прод-базе (было 0,3 на глаз: при нём
 # «слабой стороной» почти у всех выходили камбэки); дьюсы 0,5 и дожимание 0,75 совпали с
 # медианами клуба (48 и 76%)
@@ -261,7 +262,7 @@ def pick_skill(history: list[Match], pid: int, start: datetime) -> tuple[str, bo
 
 
 def _goals_for_week(history: list[Match], week: list[Match], pid: int, start: datetime,
-                    names: dict[int, str]) -> list[dict]:
+                    names: dict[int, str], chosen: str | None = None) -> list[dict]:
     """Три цели недели: по истории ДО начала недели, прогресс — по матчам недели."""
     recent = [m for m in history if m.completed_at >= start - timedelta(weeks=4)]
     per_week = len(recent) / 4
@@ -281,10 +282,15 @@ def _goals_for_week(history: list[Match], week: list[Match], pid: int, start: da
                       "target": wins_target, "progress": sum(1 for m in week if m.winner_id == pid)})
 
     skill, focused = pick_skill(history, pid, start)
+    if chosen in SKILL_BY_KEY:          # v2.201.0: игрок выбрал цель сам
+        skill, focused = chosen, False
     key, title, skill_target, progress = SKILL_BY_KEY[skill]
-    goal = {"key": key, "title": title, "target": skill_target, "progress": int(progress(week, pid))}
+    goal = {"key": key, "title": title, "target": skill_target, "progress": int(progress(week, pid)),
+            "skill": True}
     if focused:
         goal["note"] = FOCUS_NOTE
+    elif chosen in SKILL_BY_KEY:
+        goal["note"] = CHOSEN_NOTE
     goals.append(goal)
     for g in goals:
         g["progress"] = min(g["progress"], g["target"])
@@ -302,12 +308,14 @@ async def goals_payload(session: AsyncSession, viewer: Player) -> dict:
         ).order_by(Match.completed_at)
     )).scalars().all())
     names = {p.id: p.display_name for p in (await session.execute(select(Player))).scalars().all()}
+    choices = {c.week_start: c.skill for c in (await session.execute(
+        select(GoalChoice).where(GoalChoice.player_id == viewer.id))).scalars()}
 
     def for_week(ws: datetime) -> list[dict]:
         we = ws + timedelta(weeks=1)
         history = [m for m in matches if m.completed_at < ws]
         week = [m for m in matches if ws <= m.completed_at < we]
-        return _goals_for_week(history, week, viewer.id, ws, names)
+        return _goals_for_week(history, week, viewer.id, ws, names, choices.get(ws))
 
     goals = for_week(start)
     streak = 0
@@ -326,5 +334,25 @@ async def goals_payload(session: AsyncSession, viewer: Player) -> dict:
         streak += 1
     days_left = (start + timedelta(weeks=1) - now).days
     left = "последний день" if days_left == 0 else f"осталось {_ru_plural(days_left, 'день', 'дня', 'дней')}"
+    skill_goal = next((g for g in goals if g.get("skill")), None)
+    can_choose = start not in choices and skill_goal is not None and not skill_goal["done"]
+    options = [{"key": k, "title": t} for k, t, _target, _p in SKILLS
+               if skill_goal is None or k != skill_goal["key"]] if can_choose else []
     return {"title": "Цели недели", "left": left, "goals": goals, "all_done": all_done, "streak": streak,
-            "week": (start + MSK_OFFSET).strftime("%Y-%m-%d")}
+            "week": (start + MSK_OFFSET).strftime("%Y-%m-%d"), "skill_options": options}
+
+
+async def choose_skill(session: AsyncSession, viewer: Player, key: str) -> dict | None:
+    """Заменить цель на мастерство этой недели (один раз). None — нельзя."""
+    if key not in SKILL_BY_KEY:
+        return None
+    current = await goals_payload(session, viewer)
+    if not any(o["key"] == key for o in current["skill_options"]):
+        return None
+    session.add(GoalChoice(player_id=viewer.id, week_start=week_start(_now()), skill=key))
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        return None
+    return await goals_payload(session, viewer)

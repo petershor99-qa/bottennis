@@ -135,7 +135,7 @@
         b.appendChild(el("div", "name", p.name));
         b.appendChild(el("div", "sub", p.matches + " · " + p.record));
         li.appendChild(b);
-        li.appendChild(el("span", "value " + (p.delta.charAt(0) === "+" ? "tone-win" : "tone-loss"), p.delta));
+        li.appendChild(el("span", "value " + deltaTone(p.delta), p.delta));
         ps.list.appendChild(li);
       });
       c.appendChild(ps);

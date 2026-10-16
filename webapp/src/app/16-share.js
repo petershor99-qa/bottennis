@@ -42,7 +42,10 @@
     else g.fillRect(x, y, w, h);
   }
 
-  function signedColor(text) { return String(text).charAt(0) === "+" ? CARD.win : CARD.loss; }
+  function signedColor(text) {
+    var tone = deltaTone(text);
+    return tone === "tone-win" ? CARD.win : tone === "tone-loss" ? CARD.loss : CARD.hint;
+  }
 
   function titleBlock(title, sub) {
     return { h: 150, draw: function (g, y) {

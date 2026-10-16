@@ -387,3 +387,23 @@
 
   function num(cls, text) { var n = el("div", cls); countUp(n, text); return n; }
 
+  // v2.201.0: «+» — победа, «−» — поражение, «0.0» — без цвета (ничья с нулевой дельтой)
+  function deltaTone(text) {
+    var c = String(text || "").charAt(0);
+    return c === "+" ? "tone-win" : (c === "−" || c === "-") ? "tone-loss" : "";
+  }
+
+  // Досчитать число от одного значения до другого (рейтинг с прошлого захода)
+  function countBetween(node, from, to, decimals) {
+    if (reduceMotion) { node.textContent = to.toFixed(decimals); return; }
+    var start = null, duration = 1100;
+    function frame(ts) {
+      if (start === null) start = ts;
+      var p = Math.min(1, (ts - start) / duration);
+      node.textContent = (from + (to - from) * (1 - Math.pow(1 - p, 3))).toFixed(decimals);
+      if (p < 1) requestAnimationFrame(frame);
+    }
+    node.textContent = from.toFixed(decimals);
+    requestAnimationFrame(frame);
+  }
+

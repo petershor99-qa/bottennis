@@ -117,8 +117,11 @@ def test_reason_marathon():
 
 
 def test_reason_comeback():
+    # v2.201.0: как штамп в приложении — после 0:1 «отыгрался», «камбэк» — с 0:2
     sets = [{"w": 6, "l": 11}, {"w": 11, "l": 6}, {"w": 11, "l": 8}]
-    assert "камбэк" in match_drama_reason(make_match(sets, winner_id=1)).lower()
+    assert "отыгрался после проигранного старта" in match_drama_reason(make_match(sets, winner_id=1)).lower()
+    two_down = [{"w": 6, "l": 11}, {"w": 8, "l": 11}, {"w": 11, "l": 6}, {"w": 11, "l": 8}, {"w": 11, "l": 9}]
+    assert "камбэк после проигранного старта" in match_drama_reason(make_match(two_down, winner_id=1)).lower()
 
 
 def test_reason_draw():
