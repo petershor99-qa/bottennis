@@ -512,6 +512,8 @@
       body.platform = info.platform;
       body.version = info.version;
       body.tg_ms = telegramAt;
+      // v2.194.0: замер сети загрузчика — где ушло время у медленного запуска
+      if (window.__clubBoot && window.__clubBoot.timing) body.net = window.__clubBoot.timing();
       firstTrack = false;
       window.__clubBooted = true;
     }
@@ -779,18 +781,43 @@
   }
 
   // Меню клуба плиткой (v2.171.0): выше ленты, чтобы до него не листать
+  // v2.192.0: плитки — по тому, что клуб чаще открывает (порядок с сервера,
+  // bot/webapp/menu.py); редкие — под «Ещё», раскрытие запоминается на устройстве
+  var CLUB_MORE_KEY = "club_more_v1";
+
   function clubTiles(links) {
     var wrap = el("section", "group club-group");
     wrap.appendChild(el("h2", "group-title", "Клуб"));
     var grid = el("div", "club-tiles");
+    var extra = 0;
     links.forEach(function (l) {
-      var t = clickable(el("div", "club-tile"), l.route);
+      var t = clickable(el("div", "club-tile" + (l.more ? " club-tile-more" : "")), l.route);
       t.appendChild(icon(l.icon || "chevron", "ico-lead"));
       t.appendChild(el("div", "club-tile-title", l.title));
       if (l.value) t.appendChild(el("div", "club-tile-value", l.value));
+      if (l.more) extra += 1;
       grid.appendChild(t);
     });
     wrap.appendChild(grid);
+    if (extra) {
+      var open = false;
+      try { open = window.localStorage.getItem(CLUB_MORE_KEY) === "1"; } catch (e) { /* закрыто */ }
+      var btn = el("button", "more club-more");
+      btn.type = "button";
+      var setOpen = function (v) {
+        open = v;
+        wrap.classList.toggle("is-open", v);
+        btn.textContent = v ? "Свернуть" : "Ещё " + extra;
+        btn.setAttribute("aria-expanded", v ? "true" : "false");
+      };
+      btn.addEventListener("click", function () {
+        haptic("select");
+        setOpen(!open);
+        try { window.localStorage.setItem(CLUB_MORE_KEY, open ? "1" : "0"); } catch (e) { /* без памяти */ }
+      });
+      setOpen(open);
+      wrap.appendChild(btn);
+    }
     return wrap;
   }
 
@@ -1076,6 +1103,30 @@
     return seg;
   }
 
+  // Подсказка про жесты (v2.192.0): один раз, на сенсорном экране; пропадает и
+  // сама, как только быстрое меню открыто долгим нажатием
+  var GESTURE_HINT_KEY = "gesture_hint_v1";
+
+  function gestureHint(c, before) {
+    if (!("ontouchstart" in window)) return;
+    storageGet(GESTURE_HINT_KEY, function (seen) {
+      if (seen !== null || !before.isConnected) return;
+      var card = el("div", "card hint gesture-hint");
+      card.appendChild(useIcon("hand-finger", "ico-lead"));
+      var b = el("div", "body");
+      b.appendChild(el("div", "name", "Подержи палец на игроке"));
+      b.appendChild(el("div", "sub", "Откроется быстрое меню: вызвать на матч, «Ты против …», профиль. А провести от левого края экрана — назад."));
+      card.appendChild(b);
+      var close = el("button", "hint-close");
+      close.type = "button";
+      close.setAttribute("aria-label", "Закрыть подсказку");
+      close.appendChild(useIcon("x"));
+      close.addEventListener("click", function () { haptic("select"); storageSet(GESTURE_HINT_KEY, "1"); card.remove(); });
+      card.appendChild(close);
+      c.insertBefore(card, before);
+    });
+  }
+
   function renderLeaderboard(c, d) {
     c.appendChild(header(d.title, d.players_label));
     if (d.empty) { emptyState(c, d.empty); return; }
@@ -1107,6 +1158,7 @@
     });
     area.appendChild(board);
     if (d.gap) { gapNote = el("p", "footnote", d.gap); area.appendChild(gapNote); }
+    gestureHint(c, area);
     var ids = d.rows.map(function (row) { return row.player_id; });
     if (pendingRise && mine && pendingRise > myRow.rank) {
       animateRise(c, mine, pendingRise, myRow.rank);
@@ -1156,6 +1208,13 @@
     line.appendChild(ratingNumber("hero-value", h.rating, playerId));   // табло (v2.183.0)
     if (h.week) line.appendChild(el("span", "hero-week " + (h.week_up ? "tone-win" : "tone-loss"), h.week));
     hero.appendChild(line);
+    if (h.days_streak) {
+      // v2.192.0: игровых дней подряд (выходные серию не рвут)
+      var streak = el("div", "hero-streak");
+      streak.appendChild(icon("flame", "ico-inline"));
+      streak.appendChild(document.createTextNode(h.days_streak));
+      hero.appendChild(streak);
+    }
     if (d.card) hero.appendChild(cardStats(d.card, playerId));
     if (d.chart) hero.appendChild(ratingChart(d.chart));
     if (h.photo_link && !d.empty) hero.appendChild(shareButton("profile", function () { return profileCardBlocks(d); }));
@@ -1245,6 +1304,41 @@
     });
   }
 
+  // «Сравнить с …» (v2.193.0): выбрать второго игрока — экран пары «A против B»;
+  // выбрал себя — обычное «Ты против …». Список — из таблицы рейтинга (обычно в кэше).
+  function comparePicker(playerId, name) {
+    var old = document.querySelector(".sheet-wrap");
+    if (old) old.remove();
+    var wrap = el("div", "sheet-wrap");
+    var sheet = el("div", "sheet quick-sheet");
+    sheet.appendChild(el("div", "sheet-title", "С кем сравнить?"));
+    sheet.appendChild(el("div", "quick-sub", name + " против…"));
+    var list = el("ul", "list list-plain compare-list");
+    sheet.appendChild(list);
+    sheet.addEventListener("click", function (e) { e.stopPropagation(); });
+    wrap.addEventListener("click", function () { wrap.remove(); });
+    wrap.appendChild(sheet);
+    document.body.appendChild(wrap);
+    api("leaderboard").then(function (lb) {
+      (lb.rows || []).forEach(function (r) {
+        if (String(r.player_id) === String(playerId)) return;
+        var own = String(r.player_id) === String(viewerId);
+        var li = el("li", "row tap");
+        li.setAttribute("role", "button");
+        li.appendChild(avatar({ id: r.player_id, initial: r.name.charAt(0).toUpperCase() }, "md"));
+        var b = el("div", "body");
+        b.appendChild(el("div", "name", own ? "Ты" : r.name));
+        b.appendChild(el("div", "sub", "#" + r.rank + " · " + r.rating));
+        li.appendChild(b);
+        li.addEventListener("click", function () {
+          wrap.remove();
+          go(own ? "h2h/" + playerId : "pair/" + playerId + "/" + r.player_id);
+        });
+        list.appendChild(li);
+      });
+    }, function (err) { list.appendChild(el("li", "row sub", err.message)); });
+  }
+
   function renderOverview(c, d, playerId) {
     if (d.empty) { emptyState(c, d.empty); return; }
     var tiles = el("div", "tiles");
@@ -1296,6 +1390,12 @@
       btn.appendChild(document.createTextNode(d.versus));
       btn.addEventListener("click", function () { go("h2h/" + playerId); });
       c.appendChild(btn);
+      var cmp = el("button", "button button-quiet");
+      cmp.type = "button";
+      cmp.appendChild(icon("users", "ico-btn"));
+      cmp.appendChild(document.createTextNode("Сравнить с другим игроком"));
+      cmp.addEventListener("click", function () { haptic("select"); comparePicker(playerId, d.head.name); });
+      c.appendChild(cmp);
     }
 
     if (String(playerId) === String(viewerId)) {
@@ -1778,17 +1878,20 @@
     return s;
   }
 
-  function duelCard(duel, them) {
+  function duelCard(duel, them, meName) {
     var wrap = el("section", "group");
     wrap.appendChild(el("h2", "group-title", "История дуэли"));
     var card = el("div", "card duel");
     var top = el("div", "pair-top");
-    top.appendChild(el("span", "eyebrow", "Кто вёл: выше нуля — ты"));
-    if (duel.points_share !== null) top.appendChild(el("span", "eyebrow-meta", "твоих очков " + duel.points_share + "%"));
+    top.appendChild(el("span", "eyebrow", "Кто вёл: выше нуля — " + (meName || "ты")));
+    if (duel.points_share !== null) {
+      top.appendChild(el("span", "eyebrow-meta", meName ? meName + ": " + duel.points_share + "% очков" : "твоих очков " + duel.points_share + "%"));
+    }
     card.appendChild(top);
     card.appendChild(balanceSvg(duel.balance));
     var tiles = el("div", "tiles duel-tiles");
-    [["Твоя лучшая серия", duel.best_streak_me, "win"], ["Лучшая серия соперника", duel.best_streak_them, "loss"]].forEach(function (t) {
+    [[meName ? "Лучшая серия: " + meName : "Твоя лучшая серия", duel.best_streak_me, "win"],
+     [meName ? "Лучшая серия: " + them : "Лучшая серия соперника", duel.best_streak_them, "loss"]].forEach(function (t) {
       var tile = el("div", "tile tile-" + t[2]);
       tile.appendChild(el("div", "tile-label", t[0]));
       tile.appendChild(num("tile-value", String(t[1])));
@@ -1831,9 +1934,10 @@
   function renderVersus(c, d) {
     var card = el("div", "card versus");
     var row = el("div", "versus-row");
-    var me = el("div", "versus-side");
+    var meName = d.pair ? d.me.name : "Ты";   // v2.193.0: пара глазами третьего
+    var me = d.pair ? clickable(el("div", "versus-side"), "player/" + d.me.id) : el("div", "versus-side");
     me.appendChild(avatar(d.me, "lg"));
-    me.appendChild(el("div", "versus-name", "Ты"));
+    me.appendChild(el("div", "versus-name", meName));
     var them = clickable(el("div", "versus-side"), "player/" + d.them.id);
     them.appendChild(avatar(d.them, "lg"));
     them.appendChild(el("div", "versus-name", d.them.name));
@@ -1854,7 +1958,7 @@
 
     var fc = el("div", "card forecast");
     var ft = el("div", "pair-top");
-    ft.appendChild(el("span", "eyebrow", "Шанс победы сейчас"));
+    ft.appendChild(el("span", "eyebrow", d.pair ? "Шанс победы — " + d.me.name : "Шанс победы сейчас"));
     ft.appendChild(num("forecast-num", d.forecast.chance + "%"));
     fc.appendChild(ft);
     fc.appendChild(progressBar(d.forecast.chance / 100));
@@ -1863,14 +1967,14 @@
     wl.appendChild(el("span", "tone-loss", "Поражение " + d.forecast.lose));
     fc.appendChild(wl);
     c.appendChild(fc);
-    c.appendChild(challengeButton(d.them.id));
+    if (!d.pair) c.appendChild(challengeButton(d.them.id));
 
     if (d.axes.length) {
-      var ax = section("Стиль: ты и " + d.them.name);
+      var ax = section("Стиль: " + (d.pair ? d.me.name : "ты") + " и " + d.them.name);
       var key = el("li", "row axis-key");
       var k1 = el("span", "legend-item");
       k1.appendChild(el("i", "swatch swatch-me"));
-      k1.appendChild(document.createTextNode("Ты"));
+      k1.appendChild(document.createTextNode(meName));
       var k2 = el("span", "legend-item");
       k2.appendChild(el("i", "swatch swatch-them"));
       k2.appendChild(document.createTextNode(d.them.name));
@@ -1896,12 +2000,17 @@
     }
 
     if (d.empty) { emptyState(c, d.empty); return; }
-    if (d.duel) c.appendChild(duelCard(d.duel, d.them.name));
+    if (d.duel) c.appendChild(duelCard(d.duel, d.them.name, d.pair ? d.me.name : null));
     var m = section("Итог встреч");
     d.metrics.forEach(function (it) { m.list.appendChild(itemRow(it)); });
     c.appendChild(m);
     var s = section("Все встречи");
-    appendInChunks(s.list, d.matches, function (x) { return matchRow(x, true); });
+    appendInChunks(s.list, d.matches, function (x) {
+      var row = matchRow(x, true);
+      if (d.pair) row.querySelector(".name").textContent = x.result === "d" ? "Ничья"
+        : "Победа: " + (x.result === "w" ? d.me.name : d.them.name);
+      return row;
+    });
     c.appendChild(s);
   }
 
@@ -2880,11 +2989,12 @@
     }
     if (d.reactions) c.appendChild(reactionBar(d.id, d.reactions));
     var h = section("Личные встречи");
-    h.list.appendChild(itemRow({
+    // v2.193.0: строка ведёт на экран пары (для участника — «Ты против …»)
+    h.list.appendChild(clickable(itemRow({
       label: d.a.name + " — " + d.b.name,
       value: d.h2h.a + " : " + d.h2h.b + (d.h2h.draws ? ", ничьих " + d.h2h.draws : ""),
       note: d.h2h.total
-    }));
+    }), "pair/" + d.a.id + "/" + d.b.id));
     c.appendChild(h);
     var share = el("div", "share-row");
     share.appendChild(shareButton("match", function () { return matchCardBlocks(d); }));
@@ -2966,6 +3076,15 @@
   // назад, полоски сверху показывают, где ты. Открывается только самим игроком.
   function storyCard(card) {
     var box = el("div", "story-card story-" + card.kind);
+    if (card.art) {
+      // v2.194.0: прощальная карточка — картинка заставки (тот же адрес, что у
+      // заставки, — уже в кэше, лишней загрузки нет)
+      var art = el("img", "story-art");
+      art.src = splashUrl();
+      art.alt = "";
+      art.decoding = "async";
+      box.appendChild(art);
+    }
     box.appendChild(el("div", "story-title", card.title));
     if (card.player) {
       var who = el("div", "story-who");
@@ -3276,6 +3395,9 @@
   function playerSheet(id) {
     var old = document.querySelector(".sheet-wrap");
     if (old) old.remove();
+    storageSet("gesture_hint_v1", "1");   // жест освоен — подсказка больше не нужна (v2.192.0)
+    var hint = document.querySelector(".gesture-hint");
+    if (hint) hint.remove();
     var own = String(id) === String(viewerId);
     var wrap = el("div", "sheet-wrap");
     var sheet = el("div", "sheet quick-sheet");
@@ -3381,18 +3503,43 @@
   var VISIT_KEY = "last_visit_v1";
   var SINCE_MIN_GAP_MS = 2 * 3600 * 1000;
   var sinceChecked = false;
+  // v2.192.0: при старте из снимка главной (v2.180.0) ответ мог прийти раньше,
+  // чем главная перерисуется свежими данными, — карточка исчезала вместе со
+  // снимком. Теперь данные запоминаются, и карточка ставится на каждую
+  // отрисовку главной, пока её не закрыли и пока игрок не ушёл с главной.
+  var sinceState = null;
+
+  // Картинка заставки (v2.188.0) — та же, что в index.html, с тем же адресом
+  // (версия из ссылки preload), поэтому уже в кэше браузера
+  function splashUrl() {
+    var pre = document.querySelector('link[rel="preload"][as="image"]');
+    return pre ? pre.getAttribute("href") : "static/splash.webp";
+  }
 
   function sinceCard(c, d) {
     var card = el("div", "card since");
-    var top = el("div", "pair-top");
+    // v2.192.0: «С возвращением» с картинкой заставки — её почти никто не видел,
+    // повторный запуск слишком быстрый
+    var hero = el("div", "since-hero");
+    var txt = el("div", "since-hero-text");
+    txt.appendChild(el("div", "since-hello", "С возвращением!"));
+    var top = el("div", "since-meta");
     top.appendChild(el("span", "eyebrow", d.title));
     top.appendChild(el("span", "eyebrow-meta", d.since));
-    card.appendChild(top);
+    txt.appendChild(top);
+    hero.appendChild(txt);
+    var pic = el("img", "since-pic");
+    pic.alt = "";
+    pic.decoding = "async";
+    pic.addEventListener("error", function () { pic.remove(); });
+    pic.src = splashUrl();
+    hero.appendChild(pic);
+    card.appendChild(hero);
     var close = el("button", "hint-close");
     close.type = "button";
     close.setAttribute("aria-label", "Скрыть");
     close.appendChild(useIcon("x"));
-    close.addEventListener("click", function () { haptic("select"); card.remove(); });
+    close.addEventListener("click", function () { haptic("select"); if (sinceState) sinceState.closed = true; card.remove(); });
     card.appendChild(close);
     var list = el("ul", "list list-plain");
     d.items.forEach(function (it) { list.appendChild(itemRow(it)); });
@@ -3403,8 +3550,14 @@
   }
 
   function checkSince(c) {
+    if (sinceState && !sinceState.closed && !c.querySelector(".since")) sinceCard(c, sinceState.d);
     if (sinceChecked) return;
     sinceChecked = true;
+    window.addEventListener("hashchange", function leave() {
+      if (location.hash.replace(/^#\/?/, "") === "") return;
+      if (sinceState) sinceState.closed = true;
+      window.removeEventListener("hashchange", leave);
+    });
     var now = Date.now();
     storageGet(VISIT_KEY, function (raw) {
       if (raw === undefined) return;                  // памяти нет — без карточки
@@ -3412,7 +3565,9 @@
       var last = parseInt(raw, 10);
       if (!last || now - last < SINCE_MIN_GAP_MS) return;
       api("since?t=" + Math.floor(last / 1000)).then(function (d) {
-        if (d && d.items && d.items.length && c.isConnected) sinceCard(c, d);
+        if (!d || !d.items || !d.items.length) return;
+        sinceState = { d: d, closed: false };
+        if (c.isConnected && !c.querySelector(".since")) sinceCard(c, d);
       }, function () { /* не вышло — просто без карточки */ });
     });
   }
@@ -3621,14 +3776,16 @@
           var other = d.matrix[ci][ri] ? d.matrix[ci][ri].wins : 0;
           var text = cell.n ? matchesCount(cell.n) + " · счёт " + cell.wins + "–" + other : "Ещё не играли";
           sheetOpen(null, rowP.name + " — " + colP.name, text, "");
-          if (String(rowP.id) === String(viewerId)) {
-            var wrap = document.querySelector(".sheet");
-            if (wrap) {
-              var go2 = el("button", "button button-quiet", "Ты против " + colP.name);
-              go2.type = "button";
-              go2.addEventListener("click", function () { document.querySelector(".sheet-wrap").remove(); go("h2h/" + colP.id); });
-              wrap.appendChild(go2);
-            }
+          var wrap = document.querySelector(".sheet");
+          if (wrap) {
+            var mine = String(rowP.id) === String(viewerId);
+            var go2 = el("button", "button button-quiet", (mine ? "Ты" : rowP.name) + " против " + colP.name);
+            go2.type = "button";
+            go2.addEventListener("click", function () {
+              document.querySelector(".sheet-wrap").remove();
+              go(mine ? "h2h/" + colP.id : "pair/" + rowP.id + "/" + colP.id);   // v2.193.0: любая пара
+            });
+            wrap.appendChild(go2);
           }
         });
         grid.appendChild(b);
@@ -3850,6 +4007,8 @@
     [/^$/, "home", one("home"), renderHome, "home"],
     [/^rating$/, "rating", one("leaderboard"), renderLeaderboard, "rating"],
     [/^h2h\/(\d+)$/, null, function (m) { return api("h2h/" + m[1]); }, function (c, d) { renderVersus(c, d); }, "h2h"],
+    // v2.193.0: любая пара — «A против B» глазами третьего
+    [/^pair\/(\d+)\/(\d+)$/, null, function (m) { return api("pair/" + m[1] + "/" + m[2]); }, function (c, d) { renderVersus(c, d); }, "h2h"],
     [/^records$/, "home", one("records"), renderRecords, "records"],
     [/^matches$/, "home", one("matches"), renderClubMatches, "matches"],
     [/^activity\/club$/, "home", one("activity/club"), renderClubActivity, "activity"],

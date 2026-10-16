@@ -144,18 +144,43 @@
   }
 
   // Меню клуба плиткой (v2.171.0): выше ленты, чтобы до него не листать
+  // v2.192.0: плитки — по тому, что клуб чаще открывает (порядок с сервера,
+  // bot/webapp/menu.py); редкие — под «Ещё», раскрытие запоминается на устройстве
+  var CLUB_MORE_KEY = "club_more_v1";
+
   function clubTiles(links) {
     var wrap = el("section", "group club-group");
     wrap.appendChild(el("h2", "group-title", "Клуб"));
     var grid = el("div", "club-tiles");
+    var extra = 0;
     links.forEach(function (l) {
-      var t = clickable(el("div", "club-tile"), l.route);
+      var t = clickable(el("div", "club-tile" + (l.more ? " club-tile-more" : "")), l.route);
       t.appendChild(icon(l.icon || "chevron", "ico-lead"));
       t.appendChild(el("div", "club-tile-title", l.title));
       if (l.value) t.appendChild(el("div", "club-tile-value", l.value));
+      if (l.more) extra += 1;
       grid.appendChild(t);
     });
     wrap.appendChild(grid);
+    if (extra) {
+      var open = false;
+      try { open = window.localStorage.getItem(CLUB_MORE_KEY) === "1"; } catch (e) { /* закрыто */ }
+      var btn = el("button", "more club-more");
+      btn.type = "button";
+      var setOpen = function (v) {
+        open = v;
+        wrap.classList.toggle("is-open", v);
+        btn.textContent = v ? "Свернуть" : "Ещё " + extra;
+        btn.setAttribute("aria-expanded", v ? "true" : "false");
+      };
+      btn.addEventListener("click", function () {
+        haptic("select");
+        setOpen(!open);
+        try { window.localStorage.setItem(CLUB_MORE_KEY, open ? "1" : "0"); } catch (e) { /* без памяти */ }
+      });
+      setOpen(open);
+      wrap.appendChild(btn);
+    }
     return wrap;
   }
 

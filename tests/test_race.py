@@ -12,11 +12,18 @@ from aiohttp.test_utils import TestClient, TestServer
 from bot.utils import MSK_OFFSET
 from bot.webapp import api_insights
 from bot.webapp.server import create_app
-from tests.conftest import _completed, _player
+from tests.conftest import _completed, _player, freeze_clock
 from tests.test_webapp import ADMIN, TOKEN, _init_data
 
 NOW = datetime.now(timezone.utc).replace(tzinfo=None)
 SRC = Path(__file__).resolve().parent.parent / "webapp" / "src" / "app"
+
+
+@pytest.fixture(autouse=True)
+def _clock_at_now(monkeypatch):
+    """Часы кода под тестом стоят на NOW: последний день гонки — день NOW, даже
+    если прогон пересёк полночь МСК между импортом модуля и тестом."""
+    freeze_clock(monkeypatch, NOW)
 
 
 def _midday(days_ago: int) -> datetime:

@@ -116,6 +116,8 @@ UI_ICONS = [
     "device-mobile",
     # v2.186.0: «Во весь экран» на компьютере
     "maximize", "minimize",
+    # v2.192.0: подсказка про долгое нажатие
+    "hand-finger",
 ]
 
 

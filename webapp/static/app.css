@@ -776,12 +776,20 @@ html, body {
 .story-chips { justify-content: center; }
 .story-badges { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; width: 100%; margin-top: 6px; }
 .story-badge { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12px; }
+/* v2.194.0: прощальная карточка «Твоего месяца» — картинка заставки */
+.story-outro { justify-content: flex-end; padding-top: 18px; gap: 6px; }
+.story-art { width: 230px; max-width: 64vw; height: auto; margin-bottom: 4px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 74%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 74%, transparent 100%);
+  animation: story-art-in .6s ease-out both; }
+@keyframes story-art-in { from { opacity: 0; transform: translateY(14px) scale(.96); } }
+.story-outro .story-line:last-child { color: var(--text); font-weight: 700; font-size: 18px; }
 .story-hint { text-align: center; font-size: 12px; color: var(--hint); margin-top: 10px; transition: opacity .3s; }
 .story-hint.is-hidden { opacity: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   .mood-stamp, .mood-comeback .versus-score, .mood-blowout .versus-num, .mood-boss .versus-row,
-  .table-art .art-ball, .boot-pic, .story-card, .story-bars i.is-now b, .chronicle-item { animation: none; }
+  .table-art .art-ball, .boot-pic, .story-card, .story-art, .story-bars i.is-now b, .chronicle-item { animation: none; }
 }
 .challenge-btn { margin-top: 12px; }
 
@@ -1060,3 +1068,23 @@ html.has-fs-toggle .screen-head { padding-right: 40px; }
   .throne-img, .throne-glow, .timeline-seg, .is-new-king .throne-sitter .crown-big, .throne-news { animation: none; }
   .throne-spark { display: none; }
 }
+
+/* v2.192.0: меню клуба «частые / Ещё», серия игровых дней, «С возвращением» с картинкой */
+.club-group:not(.is-open) .club-tile-more { display: none; }
+.club-group.is-open .club-tile-more { animation: since-in .3s ease-out both; }
+.club-more { margin-top: 6px; }
+.hero-streak { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; margin-top: 8px; padding: 5px 10px;
+  border-radius: 999px; background: color-mix(in srgb, var(--loss) 12%, transparent); color: var(--loss); font-size: 13px; font-weight: 700; }
+.hero-streak .ico { width: 16px; height: 16px; }
+.since-hero { display: flex; align-items: flex-end; gap: 8px; margin: -6px 0 4px; }
+.since-hero-text { flex: 1; min-width: 0; padding-bottom: 6px; }
+.since-hello { font-size: 20px; font-weight: 800; letter-spacing: -0.01em; margin-bottom: 4px; }
+.since-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.since-pic { width: 96px; height: auto; flex: none; margin-right: -6px; animation: boot-in .5s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .club-group.is-open .club-tile-more, .since-pic { animation: none; }
+}
+
+/* v2.193.0: выбор второго игрока для сравнения */
+.compare-list { margin-top: 12px; max-height: 55vh; overflow-y: auto; }
+.compare-list .row { padding-left: 0; padding-right: 0; }

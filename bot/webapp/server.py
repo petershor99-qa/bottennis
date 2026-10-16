@@ -64,6 +64,7 @@ from bot.webapp import (
     api_month,
     api_personal,
     api_return,
+    menu,
     payload_cache,
     reactions,
 )
@@ -106,9 +107,14 @@ def _json_error(status: int, message: str) -> web.Response:
 
 
 async def index(request: web.Request) -> web.Response:
-    """Страница со ссылками на текущие версии app.js и app.css (v2.172.0)."""
-    return web.Response(body=request.app[ASSETS_KEY].index_html(), content_type="text/html",
-                        charset="utf-8", headers=_SECURITY_HEADERS)
+    """Страница со ссылками на текущие версии app.js и app.css (v2.172.0).
+    Сжата gzip (v2.194.0): она не кэшируется и приходит при каждом запуске —
+    9,5 КБ без сжатия, ~4 КБ со сжатием."""
+    response = web.Response(body=request.app[ASSETS_KEY].index_html(), content_type="text/html",
+                            charset="utf-8", headers=_SECURITY_HEADERS)
+    if accepts_gzip(request):
+        response.enable_compression(web.ContentCoding.gzip)
+    return response
 
 
 async def static_asset(request: web.Request) -> web.Response:
@@ -187,6 +193,8 @@ async def home(request, session, viewer):
     payload["links"].append({"route": "race", "title": "Гонка рейтинга", "value": "", "icon": "flag"})  # v2.184.0
     if is_admin(viewer.telegram_id):
         payload["links"].append({"route": "usage", "title": "Использование", "value": "", "icon": "chart-pie"})
+    # v2.192.0: частые плитки — сверху, редкие — под «Ещё» (bot/webapp/menu.py)
+    payload["links"] = await menu.ranked_links(session, payload["links"])
     return payload
 
 
@@ -519,6 +527,24 @@ async def h2h(request, session, viewer):
     return await api.h2h_payload(session, viewer, target)
 
 
+async def pair(request, session, viewer):
+    """Любая пара игроков (v2.193.0): /api/pair/{a}/{b} — «A против B» глазами
+    третьего. Если смотрит один из пары — обычное «Ты против …» с его стороны."""
+    try:
+        ids = int(request.match_info["a"]), int(request.match_info["b"])
+    except (KeyError, ValueError):
+        return None
+    if ids[0] == ids[1]:
+        return None
+    players = {p.id: p for p in (await session.execute(select(Player).where(Player.id.in_(ids)))).scalars().all()}
+    if len(players) != 2:
+        return None
+    a, b = players[ids[0]], players[ids[1]]
+    if viewer.id in ids:
+        return await api.h2h_payload(session, viewer, b if viewer.id == a.id else a)
+    return await api.h2h_payload(session, a, b, third=True)
+
+
 async def records(request, session, viewer):
     return await payload_cache.cached(session, ("records",), lambda: api.records_payload(session))
 
@@ -594,6 +620,7 @@ def create_app(bot_token: str, session_factory, bot=None, storage=None) -> web.A
         ("/api/player/{player_id}/activity", player_activity),
         ("/api/player/{player_id}/history", history),
         ("/api/h2h/{player_id}", h2h),
+        ("/api/pair/{a}/{b}", pair),
         ("/api/activity/club", club_activity),
         ("/api/records", records),
         ("/api/summary/{kind}", summary),

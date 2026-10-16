@@ -24,14 +24,16 @@
           var other = d.matrix[ci][ri] ? d.matrix[ci][ri].wins : 0;
           var text = cell.n ? matchesCount(cell.n) + " · счёт " + cell.wins + "–" + other : "Ещё не играли";
           sheetOpen(null, rowP.name + " — " + colP.name, text, "");
-          if (String(rowP.id) === String(viewerId)) {
-            var wrap = document.querySelector(".sheet");
-            if (wrap) {
-              var go2 = el("button", "button button-quiet", "Ты против " + colP.name);
-              go2.type = "button";
-              go2.addEventListener("click", function () { document.querySelector(".sheet-wrap").remove(); go("h2h/" + colP.id); });
-              wrap.appendChild(go2);
-            }
+          var wrap = document.querySelector(".sheet");
+          if (wrap) {
+            var mine = String(rowP.id) === String(viewerId);
+            var go2 = el("button", "button button-quiet", (mine ? "Ты" : rowP.name) + " против " + colP.name);
+            go2.type = "button";
+            go2.addEventListener("click", function () {
+              document.querySelector(".sheet-wrap").remove();
+              go(mine ? "h2h/" + colP.id : "pair/" + rowP.id + "/" + colP.id);   // v2.193.0: любая пара
+            });
+            wrap.appendChild(go2);
           }
         });
         grid.appendChild(b);

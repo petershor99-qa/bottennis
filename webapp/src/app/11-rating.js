@@ -71,6 +71,30 @@
     return seg;
   }
 
+  // Подсказка про жесты (v2.192.0): один раз, на сенсорном экране; пропадает и
+  // сама, как только быстрое меню открыто долгим нажатием
+  var GESTURE_HINT_KEY = "gesture_hint_v1";
+
+  function gestureHint(c, before) {
+    if (!("ontouchstart" in window)) return;
+    storageGet(GESTURE_HINT_KEY, function (seen) {
+      if (seen !== null || !before.isConnected) return;
+      var card = el("div", "card hint gesture-hint");
+      card.appendChild(useIcon("hand-finger", "ico-lead"));
+      var b = el("div", "body");
+      b.appendChild(el("div", "name", "Подержи палец на игроке"));
+      b.appendChild(el("div", "sub", "Откроется быстрое меню: вызвать на матч, «Ты против …», профиль. А провести от левого края экрана — назад."));
+      card.appendChild(b);
+      var close = el("button", "hint-close");
+      close.type = "button";
+      close.setAttribute("aria-label", "Закрыть подсказку");
+      close.appendChild(useIcon("x"));
+      close.addEventListener("click", function () { haptic("select"); storageSet(GESTURE_HINT_KEY, "1"); card.remove(); });
+      card.appendChild(close);
+      c.insertBefore(card, before);
+    });
+  }
+
   function renderLeaderboard(c, d) {
     c.appendChild(header(d.title, d.players_label));
     if (d.empty) { emptyState(c, d.empty); return; }
@@ -102,6 +126,7 @@
     });
     area.appendChild(board);
     if (d.gap) { gapNote = el("p", "footnote", d.gap); area.appendChild(gapNote); }
+    gestureHint(c, area);
     var ids = d.rows.map(function (row) { return row.player_id; });
     if (pendingRise && mine && pendingRise > myRow.rank) {
       animateRise(c, mine, pendingRise, myRow.rank);

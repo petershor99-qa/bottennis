@@ -25,11 +25,18 @@ from bot.webapp.photos import PhotoCache, photo_etag, pick_photo_size
 from bot.webapp.reactions import most_discussed_line, reactions_for, toggle_reaction
 from bot.webapp.server import create_app
 from bot.webapp.text import plain
-from tests.conftest import _callback, _completed, _player, _state
+from tests.conftest import _callback, _completed, _player, _state, freeze_clock
 from tests.test_webapp import ADMIN, TOKEN, _init_data
 
 # «Сегодня» с запасом от полуночи по МСК (соглашение после v2.170.1)
 TODAY = msk_day_start() + timedelta(hours=1)
+
+
+@pytest.fixture(autouse=True)
+def _clock_after_today(monkeypatch):
+    """Часы кода под тестом стоят на TODAY + 2 ч: итоги дня считают «сегодня» по
+    тем же суткам, что и данные теста, даже если прогон пересёк полночь МСК."""
+    freeze_clock(monkeypatch, TODAY + timedelta(hours=2))
 
 
 async def _pair(db):

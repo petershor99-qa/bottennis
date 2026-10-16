@@ -106,10 +106,15 @@ EOF
 PR descriptions are in Russian — this project's established convention (see the
 `feedback_pr_language` memory note if you have it loaded). Then:
 ```bash
+gh pr merge <N> --auto --merge --delete-branch
 gh pr checks <N> --watch
-gh pr merge <N> --merge --delete-branch
 git checkout develop && git pull
 ```
+Since 2026-10-16 `develop` has a ruleset like `main` (PR only, required `lint` +
+`pytest`) and repo auto-merge is on, so `--auto` makes GitHub merge the PR itself
+once CI is green. Don't weaken the ruleset: without required checks `--auto`
+merges instantly, before CI finishes (that is how #311 went in early). Direct
+pushes to `develop` are rejected — even small fixes go through a `feature/` PR.
 This repo's default is: **you merge feature→develop** without asking each time —
 that's already the agreed convention. Only develop→main (step 6) needs a
 judgment call about who clicks merge.
@@ -167,14 +172,12 @@ half-do and the one CLAUDE.md explicitly calls out as mandatory):
    - If a file's responsibilities changed, touch its row in "Карта файлов" too.
    - Never write the VPS host/IP/password here — see the warning above.
 
-Commit these four together as a small doc-only commit directly to `develop` (no
-feature branch, no PR — this project treats doc sync as the "small fix" case that
-goes straight to develop):
+Commit these four in the feature branch, before its PR into `develop` (since
+2026-10-16 direct pushes to `develop` are rejected by the ruleset). If the feature
+PR is already merged, open a small `docs/<version>` branch and PR with `--auto`:
 ```bash
-git add -A && git commit -m "docs: <version> release notes и синхронизация доков
-
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
-git push origin develop
+git add -A && git commit -m "docs: <version> release notes и синхронизация доков"
+git push origin <branch>
 ```
 
 ## Step 5 — Open the develop → main PR yourself, don't wait to be asked

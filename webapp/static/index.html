@@ -5,63 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>Клуб</title>
-  <!-- v2.180.0: без запроса favicon.ico (его нет — был 404 на каждом первом
-       запуске); app.js и шрифт качаются сразу, вместе со стилями, а не когда до
-       них дойдёт загрузчик внизу страницы -->
-  <link rel="icon" href="data:,">
-  <link rel="preload" href="static/app.js" as="script">
-  <link rel="preload" href="static/fonts/Raleway-Subset.woff2" as="font" type="font/woff2" crossorigin>
-  <!-- v2.188.0: картинка заставки — сразу, вместе со стилями -->
-  <link rel="preload" href="static/splash.webp" as="image" fetchpriority="high">
-  <link rel="stylesheet" href="static/app.css">
-  <!-- v2.188.0: тёмная тема Telegram — сразу, до app.js, иначе заставка мелькала
-       белым. Тот же порог, что isColorDark в app.js -->
   <script>
-    (function earlyTheme() {
-      try {
-        var m = /[#&?]tgWebAppThemeParams=([^&]+)/.exec(location.hash);
-        var hex = m ? JSON.parse(decodeURIComponent(m[1])).bg_color : null;
-        var c = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ""));
-        if (!c) return;
-        var r = parseInt(c[1], 16), g = parseInt(c[2], 16), b = parseInt(c[3], 16);
-        if (Math.sqrt(0.299 * r * r + 0.587 * g * g + 0.114 * b * b) < 120) {
-          document.documentElement.setAttribute("data-theme", "dark");
-        }
-      } catch (e) { /* без темы — светлая, app.js поправит */ }
-    })();
-  </script>
-</head>
-<body>
-  <main class="screen" id="app">
-    <div class="state boot" id="boot-state" role="status">
-      <img class="boot-pic" src="static/splash.webp" alt="" width="240" height="245" decoding="async" fetchpriority="high">
-      <div class="boot-title">Клуб настольного тенниса</div>
-      <div class="boot-sub">Загрузка…</div>
-    </div>
-  </main>
-  <nav class="tabbar" id="tabbar" aria-label="Разделы"></nav>
-  <!-- Скрипт Telegram — своя копия (v2.178.0, scripts/update_telegram_js.py),
-       не с telegram.org: висящий telegram.org не давал Telegram убрать заставку. -->
-  <script src="static/telegram-web-app.js"></script>
-  <script>
-    // Загрузчик (v2.164.2, v2.175.0, v2.178.0). Telegram держит свою заставку с
-    // полоской загрузки, пока приложение не скажет «готово» (web_app_ready) или
-    // пока страница не загрузится целиком. До v2.178.0 и то и другое ждало скрипт
-    // с telegram.org: если он у игрока отвечал медленно или висел, полоска
-    // вставала «на первых процентах», хотя приложение под ней уже было готово.
-    // Теперь скрипт свой, а «готово» уходит сразу, как только страница
-    // нарисована, — даже если скрипт не загрузился (тогда — напрямую через мост
-    // Telegram, как это делает сам скрипт). Дальше — наша «Загрузка…» и сторож:
-    // если за WATCHDOG_MS первый экран не показался — сообщение с кнопкой
-    // «Обновить» и отчёт на сервер (в лог).
+    // Загрузчик (v2.164.2, v2.175.0, v2.178.0, v2.194.0). Telegram держит свою
+    // заставку с полоской загрузки, пока приложение не скажет «готово»
+    // (web_app_ready). До v2.194.0 загрузчик стоял внизу страницы и запускался
+    // только после стилей и скрипта Telegram (120 КБ): на медленной сети телефон
+    // ждал их до 30 с, а полоска Telegram всё это время «шла и вставала» (15.10).
+    // Теперь он первый в <head>, до любых файлов: «готово» уходит напрямую через
+    // мост Telegram (как это делает сам скрипт), сразу запускается сторож — если
+    // за WATCHDOG_MS первый экран не показался, сообщение с кнопкой «Обновить» и
+    // отчёт на сервер, в том числе с замером сети: сколько заняли адрес,
+    // соединение и ответ и какие файлы так и не пришли.
     (function () {
       var WATCHDOG_MS = 12000;
-      var appLoaded = false, appFailed = false, lastError = "";
+      var boot = window.__clubBoot = { started: false, appLoaded: false, appFailed: false, lastError: "" };
       var launchHash = location.hash;
-      var w = window.Telegram && window.Telegram.WebApp;
 
       window.addEventListener("error", function (e) {
-        if (e && e.message) lastError = e.message + (e.filename ? " @ " + e.filename.split("/").pop() + ":" + e.lineno : "");
+        if (e && e.message) boot.lastError = e.message + (e.filename ? " @ " + e.filename.split("/").pop() + ":" + e.lineno : "");
       });
 
       // Событие для Telegram в обход скрипта — тем же путём, что и telegram-web-app.js
@@ -78,10 +39,8 @@
       }
 
       // «Готово» — сразу: игрок видит нашу «Загрузку…» и сторожа, а не заставку
-      try {
-        if (w) { w.ready(); w.expand(); }
-        else { postEvent("web_app_ready"); postEvent("web_app_expand"); }
-      } catch (e) { postEvent("web_app_ready"); }
+      postEvent("web_app_ready");
+      postEvent("web_app_expand");
 
       function param(name) {
         var m = new RegExp("[#&?]" + name + "=([^&]*)").exec(launchHash);
@@ -89,13 +48,39 @@
         try { return decodeURIComponent(m[1].replace(/\+/g, "%20")); } catch (e) { return m[1]; }
       }
 
-      function bootApp() {
+      // Замер сети (мс от начала запуска): адрес (DNS), соединение, TLS, первый
+      // байт и вся страница; для файлов — когда пришли. Не пришедшего файла в
+      // замере нет — по этому видно, на чём встало.
+      boot.timing = function () {
+        var out = {};
+        try {
+          var n = performance.getEntriesByType("navigation")[0];
+          if (n) {
+            out.dns = n.domainLookupEnd - n.domainLookupStart;
+            out.conn = n.connectEnd - n.connectStart;
+            out.tls = n.secureConnectionStart > 0 ? n.connectEnd - n.secureConnectionStart : 0;
+            out.ttfb = n.responseStart;
+            out.html = n.responseEnd;
+          }
+          performance.getEntriesByType("resource").forEach(function (r) {
+            var key = /static\/app\.css/.test(r.name) ? "css" :
+              /static\/telegram-web-app\.js/.test(r.name) ? "tg" :
+              /static\/app\.js/.test(r.name) ? "app" : null;
+            if (key && out[key] === undefined) out[key] = r.responseEnd;
+          });
+          for (var k in out) out[k] = out[k] >= 0 ? Math.round(out[k]) : null;
+        } catch (e) { /* без замера — не страшно */ }
+        return out;
+      };
+
+      boot.start = function () {
+        boot.started = true;
         var s = document.createElement("script");
         s.src = "static/app.js";
-        s.onload = function () { appLoaded = true; };
-        s.onerror = function () { appFailed = true; };
+        s.onload = function () { boot.appLoaded = true; };
+        s.onerror = function () { boot.appFailed = true; };
         document.body.appendChild(s);
-      }
+      };
 
       function report(stage) {
         var initData = param("tgWebAppData");
@@ -107,16 +92,18 @@
           fetch("api/boot_fail", {
             method: "POST", keepalive: true,
             headers: { "Authorization": "tma " + initData, "Content-Type": "application/json" },
-            body: JSON.stringify({ stage: stage, error: lastError, tg: !!w,
-              platform: param("tgWebAppPlatform"), version: param("tgWebAppVersion") })
+            body: JSON.stringify({ stage: stage, error: boot.lastError,
+              tg: !!(window.Telegram && window.Telegram.WebApp),
+              platform: param("tgWebAppPlatform"), version: param("tgWebAppVersion"), net: boot.timing() })
           }).catch(function () {});
         } catch (e) { /* отчёт не должен мешать */ }
       }
 
-      function watchdog() {
+      // Сообщение — на место «Загрузки…»; если страница сама ещё не дошла до неё,
+      // ждём, пока дойдёт
+      function showFail() {
         var node = document.getElementById("boot-state");
-        if (!node) return;  // первый экран показан
-        report(appFailed ? "app_js_failed" : appLoaded ? "no_first_screen" : "app_js_pending");
+        if (!node) { if (!document.getElementById("app")) setTimeout(showFail, 500); return; }
         node.textContent = "Приложение не запустилось. Проверьте соединение. ";
         var b = document.createElement("button");
         b.type = "button";
@@ -126,9 +113,57 @@
         node.parentNode.appendChild(b);
       }
 
-      bootApp();
+      function watchdog() {
+        // первый экран показан: «Загрузка…» заменена приложением
+        if (window.__clubBooted || (document.getElementById("app") && !document.getElementById("boot-state"))) return;
+        report(boot.appFailed ? "app_js_failed" : boot.appLoaded ? "no_first_screen" :
+          boot.started ? "app_js_pending" : "page_pending");
+        showFail();
+      }
+
       setTimeout(watchdog, WATCHDOG_MS);
     })();
   </script>
+  <!-- v2.188.0: тёмная тема Telegram — сразу, до стилей и app.js, иначе заставка
+       мелькала белым. Тот же порог, что isColorDark в app.js -->
+  <script>
+    (function earlyTheme() {
+      try {
+        var m = /[#&?]tgWebAppThemeParams=([^&]+)/.exec(location.hash);
+        var hex = m ? JSON.parse(decodeURIComponent(m[1])).bg_color : null;
+        var c = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ""));
+        if (!c) return;
+        var r = parseInt(c[1], 16), g = parseInt(c[2], 16), b = parseInt(c[3], 16);
+        if (Math.sqrt(0.299 * r * r + 0.587 * g * g + 0.114 * b * b) < 120) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      } catch (e) { /* без темы — светлая, app.js поправит */ }
+    })();
+  </script>
+  <!-- v2.180.0: без запроса favicon.ico (его нет — был 404 на каждом первом
+       запуске); app.js и шрифт качаются сразу, вместе со стилями, а не когда до
+       них дойдёт загрузчик внизу страницы -->
+  <link rel="icon" href="data:,">
+  <link rel="preload" href="static/app.js" as="script">
+  <link rel="preload" href="static/fonts/Raleway-Subset.woff2" as="font" type="font/woff2" crossorigin>
+  <!-- v2.188.0: картинка заставки — сразу, вместе со стилями -->
+  <link rel="preload" href="static/splash.webp" as="image" fetchpriority="high">
+  <link rel="stylesheet" href="static/app.css">
+</head>
+<body>
+  <main class="screen" id="app">
+    <div class="state boot" id="boot-state" role="status">
+      <img class="boot-pic" src="static/splash.webp" alt="" width="240" height="245" decoding="async" fetchpriority="high">
+      <div class="boot-title">Клуб настольного тенниса</div>
+      <div class="boot-sub">Загрузка…</div>
+    </div>
+  </main>
+  <nav class="tabbar" id="tabbar" aria-label="Разделы"></nav>
+  <!-- Скрипт Telegram — своя копия (v2.178.0, scripts/update_telegram_js.py), не
+       с telegram.org. С v2.194.0 — defer: страница его не ждёт, приложение
+       работает и без него, а когда он придёт, подключает кнопку «Назад»,
+       вибрацию и тему (__clubOnTelegram, attachTelegram в app.js). -->
+  <script src="static/telegram-web-app.js" defer onload="window.__clubOnTelegram &amp;&amp; window.__clubOnTelegram()"></script>
+  <script>window.__clubBoot.start();</script>
 </body>
 </html>
