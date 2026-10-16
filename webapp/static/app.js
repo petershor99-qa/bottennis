@@ -1302,6 +1302,41 @@
     });
   }
 
+  // «Сравнить с …» (v2.193.0): выбрать второго игрока — экран пары «A против B»;
+  // выбрал себя — обычное «Ты против …». Список — из таблицы рейтинга (обычно в кэше).
+  function comparePicker(playerId, name) {
+    var old = document.querySelector(".sheet-wrap");
+    if (old) old.remove();
+    var wrap = el("div", "sheet-wrap");
+    var sheet = el("div", "sheet quick-sheet");
+    sheet.appendChild(el("div", "sheet-title", "С кем сравнить?"));
+    sheet.appendChild(el("div", "quick-sub", name + " против…"));
+    var list = el("ul", "list list-plain compare-list");
+    sheet.appendChild(list);
+    sheet.addEventListener("click", function (e) { e.stopPropagation(); });
+    wrap.addEventListener("click", function () { wrap.remove(); });
+    wrap.appendChild(sheet);
+    document.body.appendChild(wrap);
+    api("leaderboard").then(function (lb) {
+      (lb.rows || []).forEach(function (r) {
+        if (String(r.player_id) === String(playerId)) return;
+        var own = String(r.player_id) === String(viewerId);
+        var li = el("li", "row tap");
+        li.setAttribute("role", "button");
+        li.appendChild(avatar({ id: r.player_id, initial: r.name.charAt(0).toUpperCase() }, "md"));
+        var b = el("div", "body");
+        b.appendChild(el("div", "name", own ? "Ты" : r.name));
+        b.appendChild(el("div", "sub", "#" + r.rank + " · " + r.rating));
+        li.appendChild(b);
+        li.addEventListener("click", function () {
+          wrap.remove();
+          go(own ? "h2h/" + playerId : "pair/" + playerId + "/" + r.player_id);
+        });
+        list.appendChild(li);
+      });
+    }, function (err) { list.appendChild(el("li", "row sub", err.message)); });
+  }
+
   function renderOverview(c, d, playerId) {
     if (d.empty) { emptyState(c, d.empty); return; }
     var tiles = el("div", "tiles");
@@ -1353,6 +1388,12 @@
       btn.appendChild(document.createTextNode(d.versus));
       btn.addEventListener("click", function () { go("h2h/" + playerId); });
       c.appendChild(btn);
+      var cmp = el("button", "button button-quiet");
+      cmp.type = "button";
+      cmp.appendChild(icon("users", "ico-btn"));
+      cmp.appendChild(document.createTextNode("Сравнить с другим игроком"));
+      cmp.addEventListener("click", function () { haptic("select"); comparePicker(playerId, d.head.name); });
+      c.appendChild(cmp);
     }
 
     if (String(playerId) === String(viewerId)) {
@@ -1835,17 +1876,20 @@
     return s;
   }
 
-  function duelCard(duel, them) {
+  function duelCard(duel, them, meName) {
     var wrap = el("section", "group");
     wrap.appendChild(el("h2", "group-title", "История дуэли"));
     var card = el("div", "card duel");
     var top = el("div", "pair-top");
-    top.appendChild(el("span", "eyebrow", "Кто вёл: выше нуля — ты"));
-    if (duel.points_share !== null) top.appendChild(el("span", "eyebrow-meta", "твоих очков " + duel.points_share + "%"));
+    top.appendChild(el("span", "eyebrow", "Кто вёл: выше нуля — " + (meName || "ты")));
+    if (duel.points_share !== null) {
+      top.appendChild(el("span", "eyebrow-meta", meName ? meName + ": " + duel.points_share + "% очков" : "твоих очков " + duel.points_share + "%"));
+    }
     card.appendChild(top);
     card.appendChild(balanceSvg(duel.balance));
     var tiles = el("div", "tiles duel-tiles");
-    [["Твоя лучшая серия", duel.best_streak_me, "win"], ["Лучшая серия соперника", duel.best_streak_them, "loss"]].forEach(function (t) {
+    [[meName ? "Лучшая серия: " + meName : "Твоя лучшая серия", duel.best_streak_me, "win"],
+     [meName ? "Лучшая серия: " + them : "Лучшая серия соперника", duel.best_streak_them, "loss"]].forEach(function (t) {
       var tile = el("div", "tile tile-" + t[2]);
       tile.appendChild(el("div", "tile-label", t[0]));
       tile.appendChild(num("tile-value", String(t[1])));
@@ -1888,9 +1932,10 @@
   function renderVersus(c, d) {
     var card = el("div", "card versus");
     var row = el("div", "versus-row");
-    var me = el("div", "versus-side");
+    var meName = d.pair ? d.me.name : "Ты";   // v2.193.0: пара глазами третьего
+    var me = d.pair ? clickable(el("div", "versus-side"), "player/" + d.me.id) : el("div", "versus-side");
     me.appendChild(avatar(d.me, "lg"));
-    me.appendChild(el("div", "versus-name", "Ты"));
+    me.appendChild(el("div", "versus-name", meName));
     var them = clickable(el("div", "versus-side"), "player/" + d.them.id);
     them.appendChild(avatar(d.them, "lg"));
     them.appendChild(el("div", "versus-name", d.them.name));
@@ -1911,7 +1956,7 @@
 
     var fc = el("div", "card forecast");
     var ft = el("div", "pair-top");
-    ft.appendChild(el("span", "eyebrow", "Шанс победы сейчас"));
+    ft.appendChild(el("span", "eyebrow", d.pair ? "Шанс победы — " + d.me.name : "Шанс победы сейчас"));
     ft.appendChild(num("forecast-num", d.forecast.chance + "%"));
     fc.appendChild(ft);
     fc.appendChild(progressBar(d.forecast.chance / 100));
@@ -1920,14 +1965,14 @@
     wl.appendChild(el("span", "tone-loss", "Поражение " + d.forecast.lose));
     fc.appendChild(wl);
     c.appendChild(fc);
-    c.appendChild(challengeButton(d.them.id));
+    if (!d.pair) c.appendChild(challengeButton(d.them.id));
 
     if (d.axes.length) {
-      var ax = section("Стиль: ты и " + d.them.name);
+      var ax = section("Стиль: " + (d.pair ? d.me.name : "ты") + " и " + d.them.name);
       var key = el("li", "row axis-key");
       var k1 = el("span", "legend-item");
       k1.appendChild(el("i", "swatch swatch-me"));
-      k1.appendChild(document.createTextNode("Ты"));
+      k1.appendChild(document.createTextNode(meName));
       var k2 = el("span", "legend-item");
       k2.appendChild(el("i", "swatch swatch-them"));
       k2.appendChild(document.createTextNode(d.them.name));
@@ -1953,12 +1998,17 @@
     }
 
     if (d.empty) { emptyState(c, d.empty); return; }
-    if (d.duel) c.appendChild(duelCard(d.duel, d.them.name));
+    if (d.duel) c.appendChild(duelCard(d.duel, d.them.name, d.pair ? d.me.name : null));
     var m = section("Итог встреч");
     d.metrics.forEach(function (it) { m.list.appendChild(itemRow(it)); });
     c.appendChild(m);
     var s = section("Все встречи");
-    appendInChunks(s.list, d.matches, function (x) { return matchRow(x, true); });
+    appendInChunks(s.list, d.matches, function (x) {
+      var row = matchRow(x, true);
+      if (d.pair) row.querySelector(".name").textContent = x.result === "d" ? "Ничья"
+        : "Победа: " + (x.result === "w" ? d.me.name : d.them.name);
+      return row;
+    });
     c.appendChild(s);
   }
 
@@ -2937,11 +2987,12 @@
     }
     if (d.reactions) c.appendChild(reactionBar(d.id, d.reactions));
     var h = section("Личные встречи");
-    h.list.appendChild(itemRow({
+    // v2.193.0: строка ведёт на экран пары (для участника — «Ты против …»)
+    h.list.appendChild(clickable(itemRow({
       label: d.a.name + " — " + d.b.name,
       value: d.h2h.a + " : " + d.h2h.b + (d.h2h.draws ? ", ничьих " + d.h2h.draws : ""),
       note: d.h2h.total
-    }));
+    }), "pair/" + d.a.id + "/" + d.b.id));
     c.appendChild(h);
     var share = el("div", "share-row");
     share.appendChild(shareButton("match", function () { return matchCardBlocks(d); }));
@@ -3714,14 +3765,16 @@
           var other = d.matrix[ci][ri] ? d.matrix[ci][ri].wins : 0;
           var text = cell.n ? matchesCount(cell.n) + " · счёт " + cell.wins + "–" + other : "Ещё не играли";
           sheetOpen(null, rowP.name + " — " + colP.name, text, "");
-          if (String(rowP.id) === String(viewerId)) {
-            var wrap = document.querySelector(".sheet");
-            if (wrap) {
-              var go2 = el("button", "button button-quiet", "Ты против " + colP.name);
-              go2.type = "button";
-              go2.addEventListener("click", function () { document.querySelector(".sheet-wrap").remove(); go("h2h/" + colP.id); });
-              wrap.appendChild(go2);
-            }
+          var wrap = document.querySelector(".sheet");
+          if (wrap) {
+            var mine = String(rowP.id) === String(viewerId);
+            var go2 = el("button", "button button-quiet", (mine ? "Ты" : rowP.name) + " против " + colP.name);
+            go2.type = "button";
+            go2.addEventListener("click", function () {
+              document.querySelector(".sheet-wrap").remove();
+              go(mine ? "h2h/" + colP.id : "pair/" + rowP.id + "/" + colP.id);   // v2.193.0: любая пара
+            });
+            wrap.appendChild(go2);
           }
         });
         grid.appendChild(b);
@@ -3943,6 +3996,8 @@
     [/^$/, "home", one("home"), renderHome, "home"],
     [/^rating$/, "rating", one("leaderboard"), renderLeaderboard, "rating"],
     [/^h2h\/(\d+)$/, null, function (m) { return api("h2h/" + m[1]); }, function (c, d) { renderVersus(c, d); }, "h2h"],
+    // v2.193.0: любая пара — «A против B» глазами третьего
+    [/^pair\/(\d+)\/(\d+)$/, null, function (m) { return api("pair/" + m[1] + "/" + m[2]); }, function (c, d) { renderVersus(c, d); }, "h2h"],
     [/^records$/, "home", one("records"), renderRecords, "records"],
     [/^matches$/, "home", one("matches"), renderClubMatches, "matches"],
     [/^activity\/club$/, "home", one("activity/club"), renderClubActivity, "activity"],

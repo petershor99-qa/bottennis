@@ -8,7 +8,7 @@ import pytest
 from tests.e2e.conftest import open_page, wait_screen
 
 ROUTES = ["", "rating", "player/1", "player/1/matches", "player/1/achievements", "player/1/style",
-          "player/3", "h2h/3", "records", "matches", "activity/club", "throne", "summary/day",
+          "player/3", "h2h/3", "pair/2/3", "pairs", "race", "records", "matches", "activity/club", "throne", "summary/day",
           "summary/week", "summary/month", "when", "chronicle", "scores", "month", "usage"]
 
 

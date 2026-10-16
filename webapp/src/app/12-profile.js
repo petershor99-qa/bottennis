@@ -133,6 +133,41 @@
     });
   }
 
+  // «Сравнить с …» (v2.193.0): выбрать второго игрока — экран пары «A против B»;
+  // выбрал себя — обычное «Ты против …». Список — из таблицы рейтинга (обычно в кэше).
+  function comparePicker(playerId, name) {
+    var old = document.querySelector(".sheet-wrap");
+    if (old) old.remove();
+    var wrap = el("div", "sheet-wrap");
+    var sheet = el("div", "sheet quick-sheet");
+    sheet.appendChild(el("div", "sheet-title", "С кем сравнить?"));
+    sheet.appendChild(el("div", "quick-sub", name + " против…"));
+    var list = el("ul", "list list-plain compare-list");
+    sheet.appendChild(list);
+    sheet.addEventListener("click", function (e) { e.stopPropagation(); });
+    wrap.addEventListener("click", function () { wrap.remove(); });
+    wrap.appendChild(sheet);
+    document.body.appendChild(wrap);
+    api("leaderboard").then(function (lb) {
+      (lb.rows || []).forEach(function (r) {
+        if (String(r.player_id) === String(playerId)) return;
+        var own = String(r.player_id) === String(viewerId);
+        var li = el("li", "row tap");
+        li.setAttribute("role", "button");
+        li.appendChild(avatar({ id: r.player_id, initial: r.name.charAt(0).toUpperCase() }, "md"));
+        var b = el("div", "body");
+        b.appendChild(el("div", "name", own ? "Ты" : r.name));
+        b.appendChild(el("div", "sub", "#" + r.rank + " · " + r.rating));
+        li.appendChild(b);
+        li.addEventListener("click", function () {
+          wrap.remove();
+          go(own ? "h2h/" + playerId : "pair/" + playerId + "/" + r.player_id);
+        });
+        list.appendChild(li);
+      });
+    }, function (err) { list.appendChild(el("li", "row sub", err.message)); });
+  }
+
   function renderOverview(c, d, playerId) {
     if (d.empty) { emptyState(c, d.empty); return; }
     var tiles = el("div", "tiles");
@@ -184,6 +219,12 @@
       btn.appendChild(document.createTextNode(d.versus));
       btn.addEventListener("click", function () { go("h2h/" + playerId); });
       c.appendChild(btn);
+      var cmp = el("button", "button button-quiet");
+      cmp.type = "button";
+      cmp.appendChild(icon("users", "ico-btn"));
+      cmp.appendChild(document.createTextNode("Сравнить с другим игроком"));
+      cmp.addEventListener("click", function () { haptic("select"); comparePicker(playerId, d.head.name); });
+      c.appendChild(cmp);
     }
 
     if (String(playerId) === String(viewerId)) {

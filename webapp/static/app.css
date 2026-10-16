@@ -1076,3 +1076,7 @@ html.has-fs-toggle .screen-head { padding-right: 40px; }
 @media (prefers-reduced-motion: reduce) {
   .club-group.is-open .club-tile-more, .since-pic { animation: none; }
 }
+
+/* v2.193.0: выбор второго игрока для сравнения */
+.compare-list { margin-top: 12px; max-height: 55vh; overflow-y: auto; }
+.compare-list .row { padding-left: 0; padding-right: 0; }

@@ -8,6 +8,8 @@
     [/^$/, "home", one("home"), renderHome, "home"],
     [/^rating$/, "rating", one("leaderboard"), renderLeaderboard, "rating"],
     [/^h2h\/(\d+)$/, null, function (m) { return api("h2h/" + m[1]); }, function (c, d) { renderVersus(c, d); }, "h2h"],
+    // v2.193.0: любая пара — «A против B» глазами третьего
+    [/^pair\/(\d+)\/(\d+)$/, null, function (m) { return api("pair/" + m[1] + "/" + m[2]); }, function (c, d) { renderVersus(c, d); }, "h2h"],
     [/^records$/, "home", one("records"), renderRecords, "records"],
     [/^matches$/, "home", one("matches"), renderClubMatches, "matches"],
     [/^activity\/club$/, "home", one("activity/club"), renderClubActivity, "activity"],
