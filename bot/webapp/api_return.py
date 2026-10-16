@@ -319,7 +319,12 @@ async def goals_payload(session: AsyncSession, viewer: Player) -> dict:
         streak += 1
         ws -= timedelta(weeks=1)
 
+    # v2.200.0: закрытая текущая неделя тоже входит в «недель подряд» — иначе
+    # счётчик прибавлялся бы только в понедельник, а не в момент закрытия
+    all_done = all(g["done"] for g in goals)
+    if all_done:
+        streak += 1
     days_left = (start + timedelta(weeks=1) - now).days
     left = "последний день" if days_left == 0 else f"осталось {_ru_plural(days_left, 'день', 'дня', 'дней')}"
-    return {"title": "Цели недели", "left": left, "goals": goals,
-            "all_done": all(g["done"] for g in goals), "streak": streak}
+    return {"title": "Цели недели", "left": left, "goals": goals, "all_done": all_done, "streak": streak,
+            "week": (start + MSK_OFFSET).strftime("%Y-%m-%d")}

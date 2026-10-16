@@ -232,3 +232,27 @@ test("timelineShares: доли по длительности, не меньше 
   assert.ok(s[0] > s[2]);
   assert.ok(Math.abs(s.reduce((a, b) => a + b, 0) - 100) < 0.05);
 });
+
+test("goalsFresh: праздник один раз на цель за неделю, новая неделя — заново", () => {
+  const goals = [{ key: "matches", done: true }, { key: "wins", done: false }, { key: "deuce", done: true }];
+  let r = app.goalsFresh(null, "2026-10-12", goals, false);
+  assert.deepEqual(r.fresh, ["matches", "deuce"]);
+  assert.equal(r.all, false);
+  assert.equal(r.store, "2026-10-12|matches,deuce|");
+  r = app.goalsFresh(r.store, "2026-10-12", goals, false);
+  assert.deepEqual(r.fresh, []);
+  const all = goals.map((g) => ({ key: g.key, done: true }));
+  r = app.goalsFresh("2026-10-12|matches,deuce|", "2026-10-12", all, true);
+  assert.deepEqual(r.fresh, ["wins"]);
+  assert.equal(r.all, true);
+  assert.equal(app.goalsFresh(r.store, "2026-10-12", all, true).all, false);
+  assert.deepEqual(app.goalsFresh(r.store, "2026-10-19", all, true).fresh, ["matches", "wins", "deuce"]);
+});
+
+test("desktopFullscreenDefault: компьютер — во весь экран, пока не выбрали окно", () => {
+  assert.equal(app.desktopFullscreenDefault("tdesktop", null), true);
+  assert.equal(app.desktopFullscreenDefault("macos", null), true);
+  assert.equal(app.desktopFullscreenDefault("tdesktop", "0"), false);
+  assert.equal(app.desktopFullscreenDefault("weba", null), false);
+  assert.equal(app.desktopFullscreenDefault("weba", "1"), true);
+});

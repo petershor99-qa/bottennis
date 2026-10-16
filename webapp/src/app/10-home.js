@@ -1,19 +1,30 @@
   // ── Клуб (главная) ─────────────────────────────────────────────────────────
+  // Подиум — советская тумба (v2.200.0, картинка владельца webapp/static/podium.webp,
+  // адрес с версией подставляет сервер). Колонки сетки совпадают со ступенями
+  // картинки, высота «ступеньки» под игроком — до заднего края верхней грани.
+  var PODIUM_ART = "static/podium.webp";
+
   function podium(items) {
-    var wrap = el("div", "podium");
+    var wrap = el("div", "podium podium-stand");
+    var art = el("img", "podium-art");
+    art.alt = "";
+    art.setAttribute("aria-hidden", "true");
+    art.decoding = "async";
+    art.src = PODIUM_ART;
+    wrap.appendChild(art);
     [1, 0, 2].forEach(function (idx) {
       var p = items[idx];
-      if (!p) return;
-      var col = clickable(el("div", "podium-col podium-" + p.rank), "player/" + p.id);
-      var crownSlot = el("div", "crown-slot");
-      if (p.champion) crownSlot.appendChild(icon("crown", "crown"));
-      col.appendChild(crownSlot);
-      col.appendChild(avatar(p, p.rank === 1 ? "xl" : "lg"));
-      col.appendChild(el("div", "podium-name", p.name));
-      var block = el("div", "podium-block");
-      block.appendChild(el("div", "podium-rank", String(p.rank)));
-      block.appendChild(num("podium-rating", p.rating));
-      col.appendChild(block);
+      var place = idx + 1;
+      var col = p ? clickable(el("div", "podium-col podium-" + place), "player/" + p.id) : el("div", "podium-col podium-" + place);
+      if (p) {
+        var crownSlot = el("div", "crown-slot");
+        if (p.champion) crownSlot.appendChild(icon("crown", "crown"));
+        col.appendChild(crownSlot);
+        col.appendChild(avatar(p, place === 1 ? "xl" : "lg"));
+        col.appendChild(el("div", "podium-name", p.name));
+        col.appendChild(num("podium-rating", p.rating));
+      }
+      col.appendChild(el("div", "podium-step"));
       wrap.appendChild(col);
     });
     return wrap;
