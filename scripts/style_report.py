@@ -2,9 +2,10 @@
 
 Для калибровки (v2.195.0): по каждому игроку от 5 матчей — все шесть
 показателей карточки (ВИН, КЛЧ, ДОЖ, КМБ, ДОМ, СТБ) теми же функциями, что
-приложение, выборка под каждым, цвет на карточке и архетип. Плюс камбэки по
-новой формуле («из матчей с проигранной первой партией — доля выигранных»)
-рядом со старой («победы с 0:2 от всех побед»). Внизу — сводка по осям
+приложение, выборка под каждым, цвет на карточке и архетип. v2.196.0: камбэки
+уже по новой формуле (в КМБ); рядом — кандидат на замену ДОМ: «разгромные
+партии» — доля выигранных партий, где соперник набрал 6 очков и меньше (у
+нынешнего ДОМ весь клуб в 56–61). Внизу — сводка по осям
 (мин / медиана / макс, сколько каких цветов) и сколько у кого какой архетип.
 По выводу подбираются пороги архетипов и «коридоры» цветов так, чтобы
 показатели различали игроков.
@@ -31,6 +32,22 @@ from export_usage import db_path_from_url, load_env  # noqa: E402
 AXES = [("Винрейт", "ВИН"), ("Клатч", "КЛЧ"), ("Дожимание", "ДОЖ"), ("Камбэки", "КМБ"),
         ("Доминирование", "ДОМ"), ("Стабильность", "СТБ")]
 COLOR = {"gray": "сер", "white": "бел", "green": "зел", "gold": "зол", "red": "крас"}
+
+
+CRUSH_MAX = 6   # «разгромная» партия: соперник набрал не больше 6 очков
+
+
+def crushing_sets(matches, pid: int) -> tuple[int, int]:
+    """(разгромных, всего выигранных) партий игрока — кандидат на замену ДОМ."""
+    crush = won = 0
+    for m in matches:
+        persp = m.winner_id if m.winner_id is not None else m.challenger_id
+        for st in m.sets_data or []:
+            mine, theirs = (st["w"], st["l"]) if persp == pid else (st["l"], st["w"])
+            if mine > theirs:
+                won += 1
+                crush += theirs <= CRUSH_MAX
+    return crush, won
 
 
 def comeback_after_lost_first(matches, pid: int) -> tuple[int, int]:
@@ -74,12 +91,12 @@ async def report(db_path: Path) -> str:
             tiers = {a: style_tiers.tier(a, radar[a], s, p.id, ref)[0] for a, _ in AXES}
             samples = {a: style_tiers._sample(a, s)[0] for a, _ in AXES}
             rows.append((len(matches), radar, tiers, samples, _style_archetype(radar, s),
-                         comeback_after_lost_first(matches, p.id)))
+                         crushing_sets(matches, p.id)))
     rows.sort(key=lambda r: -r[0])
 
     out = [f"Игроков от {style_tiers.MIN_MATCHES_FOR_RADAR} матчей: {len(rows)}", ""]
     out.append("Игрок матчей | " + " | ".join(f"{short} знач/выборка/цвет" for _, short in AXES)
-               + " | КМБ новая | архетип")
+               + " | ДОМ-кандидат: разгромные партии | архетип")
     for i, (n, radar, tiers, samples, arch, (cw, ct)) in enumerate(rows, 1):
         cells = [f"{short} {radar[a]:.0f}/{samples[a]}/{COLOR[tiers[a]]}" for a, short in AXES]
         new = f"{round(cw / ct * 100)}% ({cw} из {ct})" if ct else "—"
@@ -92,8 +109,8 @@ async def report(db_path: Path) -> str:
         out.append(f"{short}: {spread}; " + ", ".join(f"{c} {k}" for c, k in colors.most_common()))
     new_vals = [round(cw / ct * 100) for *_, (cw, ct) in rows if ct >= 10]
     if new_vals:
-        out.append(f"КМБ новая (от 10 проигранных первых партий): {min(new_vals)} / {median(new_vals):.0f} / "
-                   f"{max(new_vals)}")
+        out.append(f"ДОМ-кандидат, разгромные партии (от 10 выигранных партий): {min(new_vals)} / "
+                   f"{median(new_vals):.0f} / {max(new_vals)}")
     out += ["", "Архетипы: " + ", ".join(f"{a} {k}" for a, k in Counter(r[4] for r in rows).most_common())]
     return "\n".join(out)
 

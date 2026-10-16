@@ -187,6 +187,10 @@ def _compute_player_stats(player, all_matches: list) -> dict:
     total_sets_played = sum(len(m.sets_data) for m in all_matches if m.sets_data)
 
     first_set_wins = first_set_then_match_wins = 0
+    # v2.196.0: камбэк для радара — матч от двух партий, где проиграна первая;
+    # ось «Камбэки» — доля выигранных из них (было: победы с 0:2 от всех побед —
+    # в формате до двух побед так не отыграться, у всего клуба выходило 0–5%)
+    lost_first_total = lost_first_won = 0
     for m in all_matches:
         if not m.sets_data:
             continue
@@ -203,6 +207,10 @@ def _compute_player_stats(player, all_matches: list) -> dict:
             first_set_wins += 1
             if m.winner_id == player.id:
                 first_set_then_match_wins += 1
+        elif my_s0 < op_s0 and len(m.sets_data) >= 2:
+            lost_first_total += 1
+            if m.winner_id == player.id:
+                lost_first_won += 1
 
     beaten_opponents_count = sum(1 for v in opp_stats.values() if v["wins"] > 0)
 
@@ -348,6 +356,7 @@ def _compute_player_stats(player, all_matches: list) -> dict:
         "total_sets_played": total_sets_played,
         "first_set_conv": int(first_set_then_match_wins / first_set_wins * 100) if first_set_wins else None,
         "first_set_wins": first_set_wins,
+        "lost_first_total": lost_first_total, "lost_first_won": lost_first_won,
         "fav_format": fav_format,
         "best_day": best_day, "best_day_count": best_day_count,
         "fav_hour": fav_hour,
@@ -379,7 +388,8 @@ def _build_style_radar(s: dict) -> dict[str, float] | None:
     if s["total_sets_played"] == 0:
         return None
     clutch_rate = round(s["deuce_won"] / s["deuce_total"] * 100) if s["deuce_total"] else 0
-    comeback_rate = round(s["comeback_wins"] / s["wins"] * 100) if s["wins"] else 0
+    lost_first = s.get("lost_first_total", 0)
+    comeback_rate = round(s.get("lost_first_won", 0) / lost_first * 100) if lost_first else 0
     conversion = s["first_set_conv"] if s["first_set_conv"] is not None else 0
     return {
         "Винрейт": float(s["win_rate"]),
@@ -424,11 +434,14 @@ def _build_style_narrative(radar: dict[str, float], s: dict) -> str | None:
         elif conv < 40:
             parts.append(f"Выиграв первую партию, часто упускаешь матч — дожимаешь лишь {round(conv)}% раз.")
 
+    # v2.196.0: камбэки — доля побед после проигранной первой партии (тексты утверждены владельцем)
     comeback = radar["Камбэки"]
-    if comeback >= 20:
-        parts.append("Каждая пятая победа — камбэк с 0:2, характер не подводит.")
-    elif comeback == 0:
-        parts.append("Камбэков пока не случалось — если ведут 0:2, обычно так и остаётся.")
+    if s.get("lost_first_total", 0) >= COMEBACK_MIN_TRIES:
+        if comeback >= 35:
+            parts.append(f"Проиграв первую партию, выигрываешь матч в {round(comeback)}% случаев — характер не подводит.")
+        elif comeback <= 10:
+            parts.append("Если первая партия проиграна, матч обычно уходит сопернику — "
+                         f"отыгрываешься лишь в {round(comeback)}% случаев.")
 
     if s["dominance_matches"] >= 3:
         dom = radar["Доминирование"]
@@ -478,16 +491,20 @@ def _build_style_narrative(radar: dict[str, float], s: dict) -> str | None:
 # Каток >=60, Нервы стальные >=55, Финишер >=80, Метроном >=75, Донор <=35, Сдувается
 # <=65 (нижние пороги включительно); «Точка невозврата» убрана. Нет ни одного срабатывания — «Универсал» (не пустота).
 NEUTRAL_ARCHETYPE = "Универсал"
+# v2.196.0 (по прод-базе 2026-10-16, 7 игроков): новая ось «Камбэки» 0–42%, медиана 15;
+# «Феникс» от 30, «Донор рейтинга» до 35 (при 40 выпадал троим из семи). Камбэки
+# считаются от COMEBACK_MIN_TRIES матчей с проигранной первой партией.
+COMEBACK_MIN_TRIES = 10
 
 _ARCHETYPE_RULES: list[tuple[str, float, bool, str]] = [
     ("Винрейт", 60.0, False, "Терминатор"),
     ("Клатч", 55.0, False, "Нервы стальные"),
     ("Дожимание", 80.0, False, "Финишер"),
     ("Доминирование", 60.0, False, "Каток"),
-    ("Камбэки", 8.0, False, "Феникс"),
+    ("Камбэки", 30.0, False, "Феникс"),          # v2.196.0: новая формула оси, было 8
     ("Стабильность", 75.0, False, "Метроном"),
     ("Стабильность", 40.0, True, "🎢 Американские горки"),
-    ("Винрейт", 40.0, True, "Донор рейтинга"),
+    ("Винрейт", 35.0, True, "Донор рейтинга"),   # v2.196.0: было 40 — выпадал троим из семи
     ("Клатч", 35.0, True, "Мандраж"),
     ("Дожимание", 55.0, True, "Сдувается"),
 ]
@@ -500,7 +517,7 @@ _AXIS_SAMPLE_GATES: dict[str, tuple[str, int]] = {
     "Клатч": ("deuce_total", 5),            # дьюсов
     "Дожимание": ("first_set_wins", 5),     # побед в 1-й партии
     "Доминирование": ("dominance_matches", 5),  # выигранных матчей
-    "Камбэки": ("wins", 10),                # побед
+    "Камбэки": ("lost_first_total", COMEBACK_MIN_TRIES),  # матчей с проигранной 1-й партией (v2.196.0)
 }
 _MATCHES_FOR_STABILITY = 10                  # матчей для «Метронома»/«Американских горок»
 
@@ -511,7 +528,7 @@ def _axis_has_sample(axis: str, s: dict | None) -> bool:
     if axis == "Стабильность":
         return s["wins"] + s["draws"] + s["losses"] >= _MATCHES_FOR_STABILITY
     gate = _AXIS_SAMPLE_GATES.get(axis)
-    return gate is None or s[gate[0]] >= gate[1]
+    return gate is None or s.get(gate[0], 0) >= gate[1]
 
 
 def _style_archetype(radar: dict[str, float], s: dict | None = None) -> str:
@@ -568,7 +585,7 @@ _ARCHETYPE_DESCRIPTIONS: dict[str, str] = {
     "Нервы стальные": "на дьюсе почти не дрогнешь — берёшь верх в решающие моменты",
     "Финишер": "взял первую партию — матч почти всегда за тобой",
     "Каток": "побеждаешь уверенно, с большим перевесом по очкам",
-    "Феникс": "умеешь отыгрываться с 0:2 — характер решает исход",
+    "Феникс": "умеешь отыгрываться после проигранной первой партии — характер решает исход",
     "Метроном": "рейтинг двигается ровно, без резких качелей",
     "🎢 Американские горки": "рейтинг штормит — взлёты и падения через игру",
     "Донор рейтинга": "проигрываешь чаще, чем выигрываешь",
@@ -592,7 +609,7 @@ AXIS_GLOSSARY: dict[str, str] = {
     "Винрейт": "доля побед",
     "Клатч": "винрейт на дьюсе",
     "Дожимание": "довёл матч после победы в 1-й партии",
-    "Камбэки": "победы, начатые с 0:2",
+    "Камбэки": "доля побед в матчах, где проиграна первая партия",
     "Доминирование": "перевес по очкам в победах",
     "Стабильность": "ровность рейтинга",
 }

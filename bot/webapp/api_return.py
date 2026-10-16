@@ -204,7 +204,10 @@ PERSONAL_SKILLS_FROM = datetime(2026, 10, 18, 21, 0)
 FOCUS_WEEKS = 12
 FOCUS_MIN_TRIES = 4
 FOCUS_NOTE = "Здесь у тебя больше всего запаса — по последним матчам"
-FOCUS_ANCHORS = {"deuce": 0.5, "convert": 0.75, "comeback": 0.3, "decider": 0.5, "dry": 0.3}
+# v2.196.0: ориентир камбэков 0,15 — медиана клуба по прод-базе (было 0,3 на глаз: при нём
+# «слабой стороной» почти у всех выходили камбэки); дьюсы 0,5 и дожимание 0,75 совпали с
+# медианами клуба (48 и 76%)
+FOCUS_ANCHORS = {"deuce": 0.5, "convert": 0.75, "comeback": 0.15, "decider": 0.5, "dry": 0.3}
 
 
 def _focus_rates(history: list[Match], pid: int) -> dict[str, float]:

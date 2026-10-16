@@ -53,6 +53,17 @@ def test_comeback_after_lost_first():
     assert style_report.comeback_after_lost_first(ms, 2) == (0, 0)     # первую партию не проигрывал
 
 
+def test_crushing_sets():
+    """v2.196.0: кандидат на ДОМ — выигранные партии, где соперник набрал не больше 6."""
+    class M:
+        def __init__(self, a, b, w, sets):
+            self.challenger_id, self.challenged_id, self.winner_id = a, b, w
+            self.sets_data = [{"w": x, "l": y} for x, y in sets]
+    ms = [M(1, 2, 1, [(11, 6), (9, 11), (11, 9)]), M(1, 2, 2, [(11, 4), (7, 11), (11, 2)])]
+    assert style_report.crushing_sets(ms, 1) == (1, 3)     # 11:6 разгромная; 11:9 и 11:7 — нет
+    assert style_report.crushing_sets(ms, 2) == (2, 3)     # 9:11 нет; 11:4 и 11:2 — да
+
+
 def test_report_runs_read_only_and_anonymized(tmp_path):
     db = tmp_path / "club.db"
     _seed(db)
@@ -62,6 +73,6 @@ def test_report_runs_read_only_and_anonymized(tmp_path):
     out = subprocess.run([sys.executable, str(ROOT / "scripts" / "style_report.py"), "--db", str(db)],
                          capture_output=True, text=True, encoding="utf-8", env=env, check=True).stdout
     assert "Игроков от 5 матчей: 4" in out and "u1" in out and "u4" in out
-    assert "КМБ новая" in out and "Архетипы:" in out and "ДОМ" in out
+    assert "разгромные партии" in out and "Архетипы:" in out and "ДОМ" in out
     assert not any(n in out for n in ("Алиса", "Боб", "Вика", "Гоша"))
     assert db.stat().st_mtime_ns == before                     # база не тронута
