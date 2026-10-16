@@ -117,7 +117,7 @@ async def test_personal_payload_dates_from_record_history(db):
     stranger = _player(9, "Пусто")
     db.add(stranger)
     await db.commit()
-    assert await personal_payload(db, stranger) == {"bests": [], "signature": None, "rival": None}
+    assert await personal_payload(db, stranger) == {"bests": [], "signature": None, "rival": None, "best_day": None}
 
 
 # ── История дуэли ────────────────────────────────────────────────────────────

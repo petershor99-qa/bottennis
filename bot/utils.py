@@ -992,14 +992,18 @@ def match_drama_reason(m: Match) -> str:
     w_sets = sum(1 for s in sets if s["w"] > s["l"])
     l_sets = n - w_sets
     comeback = m.winner_id is not None and bool(sets) and sets[0]["w"] < sets[0]["l"]
+    # v2.201.0: как штамп в приложении — «камбэк» только с 0:2, иначе «отыгрался»
+    from_two_down = comeback and len(sets) >= 2 and sets[1]["w"] < sets[1]["l"]
 
     reasons: list[str] = []
     if m.winner_id is None:
         reasons.append("ничья в равной борьбе")
     if n >= 5:
         reasons.append(f"марафон на {n} партий")
-    if comeback:
+    if from_two_down:
         reasons.append("камбэк после проигранного старта")
+    elif comeback:
+        reasons.append("отыгрался после проигранного старта")
     if deuces >= 1:
         reasons.append("дьюсы" if deuces > 1 else "дьюс на тоненького")
     if m.winner_id is not None and (m.rating_change or 0) >= 20:

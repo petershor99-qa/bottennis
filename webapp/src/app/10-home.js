@@ -4,6 +4,85 @@
   // картинки, высота «ступеньки» под игроком — до заднего края верхней грани.
   var PODIUM_ART = "static/podium.webp";
 
+  // v2.201.0: серия от трёх побед — огонь вокруг аватара (рейтинг, подиум)
+  var HOT_STREAK = 3;
+
+  function hotAvatar(p, size, id) {
+    var a = avatar(id ? { id: id, initial: p.initial } : p, size);
+    if (p.streak >= HOT_STREAK) {
+      a.classList.add("is-hot");
+      a.title = "Серия побед: " + p.streak;
+    }
+    return a;
+  }
+
+  // v2.201.0: место на подиуме сменилось с прошлого захода — аватар переезжает
+  // со старой ступени на новую, новичок подиума поднимается снизу
+  var PODIUM_SEEN_KEY = "podium_seen_v1";
+
+  function podiumMoves(wrap, items) {
+    storageGet(PODIUM_SEEN_KEY, function (raw) {
+      if (raw === undefined) return;
+      var now = {};
+      items.forEach(function (p, i) { if (p && i < 3) now[p.id] = i + 1; });
+      var prev = null;
+      try { prev = JSON.parse(raw || "null"); } catch (e) { prev = null; }
+      setTimeout(function () {
+        if (!wrap.isConnected) return;
+        storageSet(PODIUM_SEEN_KEY, JSON.stringify(now));
+        if (!prev || reduceMotion || !wrap.animate) return;
+        Object.keys(now).forEach(function (id) {
+          var from = prev[id], to = now[id];
+          if (from === to) return;
+          var av = wrap.querySelector(".podium-" + to + " .avatar");
+          if (!av || !av.animate) return;
+          var frames;
+          if (from) {
+            var anchor = wrap.querySelector(".podium-" + from + " .avatar") || wrap.querySelector(".podium-" + from + " .podium-step");
+            if (!anchor) return;
+            var a = av.getBoundingClientRect(), b = anchor.getBoundingClientRect();
+            var dx = (b.left + b.width / 2) - (a.left + a.width / 2), dy = (b.top + b.height / 2) - (a.top + a.height / 2);
+            frames = [{ transform: "translate(" + dx + "px," + dy + "px)" },
+              { transform: "translate(" + dx / 2 + "px," + (dy / 2 - 30) + "px)", offset: 0.5 }, { transform: "none" }];
+          } else {
+            frames = [{ transform: "translateY(60px) scale(.5)", opacity: 0 }, { transform: "none", opacity: 1 }];
+          }
+          av.animate(frames, { duration: 900, delay: 700, easing: "cubic-bezier(.3, .9, .3, 1)", fill: "backwards" });
+        });
+      }, 400);
+    });
+  }
+
+  // v2.201.0: рейтинг изменился с прошлого захода — число досчитывается от старого
+  // значения, над ним всплывает разница
+  var ME_RATING_KEY = "me_rating_seen_v1";
+
+  function meRating(card, rating) {
+    var node = el("div", "me-rating");
+    var done = false;
+    function plain() { if (!done) { done = true; countUp(node, rating); } }
+    var fallback = setTimeout(plain, 800);
+    storageGet(ME_RATING_KEY, function (raw) {
+      clearTimeout(fallback);
+      var before = parseFloat(raw), after = parseFloat(rating);
+      var changed = raw && !isNaN(before) && !isNaN(after) && Math.abs(after - before) >= 0.05 &&
+        !app.classList.contains("quiet");
+      if (!changed || done) plain();
+      else {
+        done = true;
+        countBetween(node, before, after, 1);
+        var diff = after - before;
+        var bubble = el("span", "me-bubble " + (diff > 0 ? "tone-win" : "tone-loss"),
+          (diff > 0 ? "+" : "−") + Math.abs(diff).toFixed(1));
+        card.appendChild(bubble);
+        setTimeout(function () { bubble.remove(); }, 2600);
+      }
+      if (raw === undefined) return;
+      setTimeout(function () { if (card.isConnected) storageSet(ME_RATING_KEY, rating); }, 400);
+    });
+    return node;
+  }
+
   function podium(items) {
     var wrap = el("div", "podium podium-stand");
     var art = el("img", "podium-art");
@@ -20,7 +99,7 @@
         var crownSlot = el("div", "crown-slot");
         if (p.champion) crownSlot.appendChild(icon("crown", "crown"));
         col.appendChild(crownSlot);
-        col.appendChild(avatar(p, place === 1 ? "xl" : "lg"));
+        col.appendChild(hotAvatar(p, place === 1 ? "xl" : "lg"));
         col.appendChild(el("div", "podium-name", p.name));
         col.appendChild(num("podium-rating", p.rating));
       }
@@ -73,7 +152,8 @@
     var tags = [];
     var mood = matchMood({ winner: it.winner, boss: it.boss, sets: chipSets(it.sets) });
     if (featured && featured.id === it.id) tags.push(["feed-tag", featured.title]);
-    if (mood) tags.push(["feed-tag mood-tag mood-" + mood, MOOD_LABELS[mood]]);
+    // v2.201.0: «Отыгрался» в ленте — почти у каждого 2:1, поэтому только на экране матча
+    if (mood && mood !== "rally") tags.push(["feed-tag mood-tag mood-" + mood, MOOD_LABELS[mood]]);
     if (!tags.length) return null;
     var wrap = el("div", "feed-tags");
     tags.forEach(function (t) { wrap.appendChild(el("span", t[0], t[1])); });
@@ -370,7 +450,10 @@
     var homeCols = twoCols(c, false);
     var outer = c;
     c = homeCols.main;
-    c.appendChild(podium(d.podium));
+    var podiumNode = podium(d.podium);
+    c.appendChild(podiumNode);
+    podiumMoves(podiumNode, d.podium);
+    checkMeDot(d.me);
 
     var me = clickable(el("div", "card me-card"), "player/" + d.me.id);
     me.appendChild(avatar({ id: d.me.id, initial: d.me.initial }, "md"));
@@ -379,7 +462,7 @@
     if (d.me.week) mb.appendChild(el("div", "sub " + (d.me.week_up ? "tone-win" : "tone-loss"), d.me.week));
     if (d.me.today) mb.appendChild(el("div", "sub", d.me.today));
     me.appendChild(mb);
-    me.appendChild(num("me-rating", d.me.rating));
+    me.appendChild(meRating(me, d.me.rating));
     c.appendChild(me);
     c.appendChild(challengeButton(null));
     if (d.goals) c.appendChild(goalsBlock(d.goals));

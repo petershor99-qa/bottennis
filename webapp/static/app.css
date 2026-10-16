@@ -1182,3 +1182,48 @@ html.has-fs-toggle .screen-head { padding-right: 40px; }
 /* v2.193.0: выбор второго игрока для сравнения */
 .compare-list { margin-top: 12px; max-height: 55vh; overflow-y: auto; }
 .compare-list .row { padding-left: 0; padding-right: 0; }
+
+/* ── v2.201.0: исправления по обходу и новые анимации ─────────────────── */
+/* Узкий телефон (320 px): плитки профиля не вылезают вбок */
+.tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.tile { min-width: 0; }
+.tile-value { font-size: clamp(21px, 7vw, 28px); overflow-wrap: anywhere; }
+/* Тумба на компьютере — не на всю колонку */
+@media (min-width: 760px) { .podium-stand { max-width: 440px; margin-left: auto; margin-right: auto; } }
+/* Пара в плитке рекорда — имена переносятся, а не обрезаются */
+.rec-tile .rec-holders.is-pair { flex-wrap: wrap; }
+.rec-tile .rec-holders.is-pair .rec-name { white-space: normal; overflow: visible; }
+/* Рейтинг с прошлого захода: разница всплывает над числом */
+.me-card { position: relative; }
+.me-bubble { position: absolute; right: 14px; top: -6px; font-weight: 800; font-size: 14px; pointer-events: none;
+  font-family: var(--score-font); animation: me-bubble 2.4s ease-out forwards; }
+@keyframes me-bubble { 0% { transform: translateY(10px); opacity: 0; } 15% { transform: none; opacity: 1; }
+  70% { opacity: 1; } 100% { transform: translateY(-14px); opacity: 0; } }
+/* Огонь серии: от трёх побед подряд */
+.avatar.is-hot { box-shadow: 0 0 0 2px var(--ball), 0 0 10px 2px color-mix(in srgb, var(--ball) 55%, transparent);
+  animation: hot-pulse 1.6s ease-in-out infinite; }
+.podium-stand .avatar.is-hot { animation: stand-drop .45s cubic-bezier(.34, 1.4, .64, 1) both, hot-pulse 1.6s ease-in-out 1s infinite; }
+@keyframes hot-pulse { 50% { box-shadow: 0 0 0 2px var(--ball), 0 0 16px 5px color-mix(in srgb, var(--ball) 30%, transparent); } }
+/* Победитель «подпрыгивает», когда счёт досчитался */
+.avatar.is-jump { animation: win-jump .6s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes win-jump { 40% { transform: translateY(-14px) scale(1.06); } 70% { transform: translateY(2px); } }
+/* Точка на вкладке «Я» */
+.tab { position: relative; }
+.tab.has-dot::after { content: ""; position: absolute; top: 3px; left: calc(50% + 9px); width: 8px; height: 8px;
+  border-radius: 50%; background: var(--loss); box-shadow: 0 0 0 2px var(--bg); animation: dot-in .4s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes dot-in { from { transform: scale(0); } }
+/* Отметки на графике: трон, личный рекорд, ачивка */
+.chart-mark { stroke: var(--card); stroke-width: 1.5; }
+.chart-mark.mark-throne { fill: var(--gold); }
+.chart-mark.mark-record { fill: var(--win); }
+.chart-mark.mark-ach { fill: var(--accent); }
+/* Своя цель на мастерство */
+.goal-switch { margin-top: 4px; padding: 0; border: 0; background: none; color: var(--accent); font: 600 13px var(--font); cursor: pointer; }
+/* Лучший день */
+.best-day { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.best-day .body { flex: 1; min-width: 0; }
+.best-day-delta { font-size: 26px; }
+@media (prefers-reduced-motion: reduce) {
+  .me-bubble, .avatar.is-hot, .avatar.is-jump, .tab.has-dot::after { animation: none; }
+  .podium-stand .avatar.is-hot { animation: none; }
+}

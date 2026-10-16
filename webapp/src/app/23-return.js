@@ -76,6 +76,40 @@
     });
   }
 
+  // v2.201.0: цель на мастерство можно заменить сам — один раз за неделю
+  function skillSwitch(block, g) {
+    var b = el("button", "goal-switch", "Сменить цель");
+    b.type = "button";
+    b.addEventListener("click", function (e) {
+      e.stopPropagation();
+      haptic("select");
+      var wrap = el("div", "sheet-wrap");
+      var sheet = el("div", "sheet quick-sheet");
+      sheet.appendChild(el("div", "sheet-title", "Цель на мастерство"));
+      sheet.appendChild(el("div", "quick-sub", "Поменять можно один раз за неделю"));
+      var list = el("ul", "list list-plain compare-list");
+      g.skill_options.forEach(function (o) {
+        var li = el("li", "row tap");
+        li.setAttribute("role", "button");
+        li.appendChild(el("div", "body name", o.title));
+        li.addEventListener("click", function () {
+          wrap.remove();
+          post("goals/skill", { key: o.key }).then(function (r) {
+            apiCache = {};
+            if (block.isConnected && r.goals) block.parentNode.replaceChild(goalsBlock(r.goals), block);
+          }, function (err) { sheetOpen(null, "Не получилось", err.message, ""); });
+        });
+        list.appendChild(li);
+      });
+      sheet.appendChild(list);
+      sheet.addEventListener("click", function (ev) { ev.stopPropagation(); });
+      wrap.addEventListener("click", function () { wrap.remove(); });
+      wrap.appendChild(sheet);
+      document.body.appendChild(wrap);
+    });
+    return b;
+  }
+
   function goalsBlock(g) {
     var wrap = el("section", "group goals");
     var head = el("div", "group-head");
@@ -93,6 +127,7 @@
       if (goal.note) body.appendChild(el("div", "sub", goal.note));
       li.appendChild(body);
       li.appendChild(el("div", "meta goal-count", goal.done ? "готово" : goal.progress + " / " + goal.target));
+      if (goal.skill && g.skill_options && g.skill_options.length) body.appendChild(skillSwitch(wrap, g));
       list.appendChild(li);
     });
     wrap.appendChild(list);
@@ -107,6 +142,48 @@
     }
     celebrateGoals(wrap, g);
     return wrap;
+  }
+
+  // Точка на вкладке «Я» (v2.201.0): есть ачивка или личный рекорд, которых игрок
+  // ещё не видел. Ачивки — та же память, что подсветка новых (SEEN_KEY), рекорды —
+  // время последнего, увиденного на своём профиле. Первый раз — только запомнить.
+  var REC_SEEN_KEY = "seen_record_ts_v1";
+  var meDot = false;
+  var lastMe = null;
+
+  function setMeDot(on) {
+    meDot = on;
+    var tab = document.querySelector(".tab-me");
+    if (tab) tab.classList.toggle("has-dot", on);
+  }
+
+  function checkMeDot(me) {
+    if (me) lastMe = me;
+    me = lastMe;
+    if (!me || !me.achievements) return;
+    storageGet(SEEN_KEY, function (rawA) {
+      if (rawA === undefined) return;
+      storageGet(REC_SEEN_KEY, function (rawR) {
+        var seen = null;
+        try { seen = JSON.parse(rawA || "null"); } catch (e) { seen = null; }
+        if (!Array.isArray(seen)) {
+          seen = me.achievements.slice();
+          storageSet(SEEN_KEY, JSON.stringify(seen.slice().sort()));
+        }
+        var recSeen = parseInt(rawR || "", 10);
+        if (rawR === null || isNaN(recSeen)) {
+          recSeen = me.record_ts || 0;
+          storageSet(REC_SEEN_KEY, String(recSeen));
+        }
+        setMeDot(me.achievements.some(function (id) { return seen.indexOf(id) < 0; }) || (me.record_ts || 0) > recSeen);
+      });
+    });
+  }
+
+  function markRecordsSeen() {
+    if (!lastMe) return;
+    storageSet(REC_SEEN_KEY, String(lastMe.record_ts || 0));
+    setTimeout(function () { checkMeDot(null); }, 50);
   }
 
   // «Пока тебя не было»: что изменилось с прошлого захода. Время захода —

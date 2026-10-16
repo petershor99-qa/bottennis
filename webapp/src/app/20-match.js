@@ -120,6 +120,21 @@
     return blocks;
   }
 
+  // v2.201.0: когда счёт досчитался, победитель «подпрыгивает»; апсет (победа над
+  // тем, кто сильно выше) при первом просмотре — с конфетти
+  function winnerJump(row, d, replay) {
+    if (!d.winner || reduceMotion || app.classList.contains("quiet")) return;
+    var side = row.children[d.winner === "a" ? 0 : 2];
+    var t = replayTiming(d.sets.length);
+    var wait = replay ? t.start + d.sets.length * (t.per + t.gap) + 150 : 700;
+    setTimeout(function () {
+      var av = side && side.querySelector(".avatar");
+      if (!av || !av.isConnected) return;
+      av.classList.add("is-jump");
+      if (d.upset && replay) { confetti(av); hapticSuccess(); }
+    }, wait);
+  }
+
   function renderMatch(c, d) {
     var mood = matchMood(d);
     // штамп — над победителем (v2.185.0; раньше всегда справа)
@@ -130,7 +145,7 @@
       var s = clickable(el("div", "versus-side" + (d.winner === mine ? " is-winner" : "")), "player/" + p.id);
       s.appendChild(avatar(p, "lg"));
       s.appendChild(el("div", "versus-name", p.name));
-      if (p.delta) s.appendChild(el("div", "sub " + (p.delta.charAt(0) === "+" ? "tone-win" : "tone-loss"), p.delta));
+      if (p.delta) s.appendChild(el("div", "sub " + deltaTone(p.delta), p.delta));
       return s;
     }
     var aSets = d.sets.filter(function (x) { return x.a > x.b; }).length;
@@ -176,6 +191,7 @@
     });
     c.appendChild(sets);
     if (replay) replaySets(card, rows, aNum, bNum, d);
+    winnerJump(row, d, replay);
 
     if (d.reason || d.report) {
       var story = el("div", "card");

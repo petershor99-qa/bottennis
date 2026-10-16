@@ -209,6 +209,24 @@ class FeedReaction(Base):
     )
 
 
+class GoalChoice(Base):
+    """Цель на мастерство, выбранная игроком сам (v2.201.0): одна замена на неделю.
+    week_start — понедельник 00:00 МСК в UTC (как `api_return.week_start`).
+    Прошлые недели «недель подряд» считаются с этим выбором. Таблица — `create_all`."""
+    __tablename__ = "goal_choices"
+    __table_args__ = (
+        UniqueConstraint("player_id", "week_start", name="uq_goal_choice_week"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
+    week_start: Mapped[datetime]
+    skill: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+
+
 class MatchReaction(Base):
     """Реакция игрока на матч в Mini App (v2.169.0, эксперимент). С v2.174.0 одна
     строка на (match_id, player_id): другая реакция заменяет прежнюю, та же —

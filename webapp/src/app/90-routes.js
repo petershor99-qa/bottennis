@@ -39,7 +39,7 @@
   function drawTabbar(active) {
     tabbar.textContent = "";
     TABS.forEach(function (t) {
-      var b = el("button", "tab" + (t[0] === active ? " is-active" : ""));
+      var b = el("button", "tab tab-" + t[0] + (t[0] === active ? " is-active" : "") + (t[0] === "me" && meDot ? " has-dot" : ""));
       b.type = "button";
       b.appendChild(icon(t[3]));
       b.appendChild(el("span", "tab-label", t[2]));
@@ -61,30 +61,43 @@
 
   function currentRoute() { return location.hash.replace(/^#\/?/, ""); }
 
-  // Позиция прокрутки по адресу: возврат «назад» попадает на то же место
+  // Позиция прокрутки — по записи истории (v2.201.0), а не по адресу. Переход по
+  // ссылке создаёт новую запись — экран сверху, даже если этот адрес уже был в
+  // истории (матч → профиль → тот же матч открывался с середины). «Назад»
+  // (кнопка Telegram, свайп) возвращает на запись со своим id — на то же место.
   var scrollPos = {};
   var renderedRoute = null;
+  var renderedNav = null;
+  var currentNav = { id: null, restore: false };
+  var navCounter = 0;
+  try { if ("scrollRestoration" in history) history.scrollRestoration = "manual"; } catch (e) { /* старый браузер */ }
 
-  // v2.200.0: место прокрутки восстанавливается только при возврате «назад»;
-  // новый заход на экран (вглубь) — сверху. Раньше «Зал славы» при повторном
-  // открытии оказывался там, где его бросили в прошлый раз.
+  function navEntry() {
+    var st = history.state;
+    if (st && st.navId) return { id: st.navId, restore: true };
+    var id = Date.now().toString(36) + "-" + (++navCounter);
+    try { history.replaceState({ navId: id }, "", location.href); } catch (e) { /* без истории — всегда сверху */ }
+    return { id: id, restore: false };
+  }
+
   function enterScreen(route, quiet) {
-    var dir = quiet === true ? "none" : navDirection(route);
-    if (dir === "forward") delete scrollPos[route];
-    app.setAttribute("data-enter", dir);
+    app.setAttribute("data-enter", quiet === true ? "none" : navDirection(route));
   }
 
   function finishRender(route, keepScroll) {
     renderedRoute = route;
+    renderedNav = currentNav.id;
     track(route);
     if (keepScroll) return;
-    window.scrollTo(0, scrollPos[route] || 0);
+    window.scrollTo(0, currentNav.restore ? (scrollPos[currentNav.id] || 0) : 0);
   }
 
   function render(quiet) {
     var route = currentRoute();
     app.classList.toggle("quiet", quiet === true);
-    if (renderedRoute !== null && renderedRoute !== route) scrollPos[renderedRoute] = window.scrollY;
+    var nav = navEntry();
+    if (renderedNav !== null && renderedNav !== nav.id) scrollPos[renderedNav] = window.scrollY;
+    currentNav = nav;
     if (route === "me") { location.replace("#/player/" + viewerId); return; }
     // «Твой месяц» во весь экран (v2.183.0); остальные экраны — если так выбрано (v2.186.0)
     if (!/^month/.test(route) && !wantFullscreen()) leaveFullscreen();
@@ -103,6 +116,7 @@
         setSegment(tab);
         loadTab(tab, token);
         renderedRoute = route;
+        renderedNav = currentNav.id;
         track(route);
         return;
       }
@@ -182,7 +196,7 @@
     return Promise.all(routeJobs(route)).then(function () {
       if (currentRoute() !== route || document.querySelector(".sheet-wrap")) return;
       shell = null;
-      scrollPos[route] = y;
+      if (renderedNav !== null) scrollPos[renderedNav] = y;
       render(true);
       requestAnimationFrame(function () { window.scrollTo(0, y); });
     }, function () { /* нет связи — оставляем как было */ });

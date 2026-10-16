@@ -68,6 +68,14 @@ def usual_line(count: int, usual: float | None) -> str:
     usual_text = f"обычно {round(usual, 1):g}".replace(".", ",")
     if abs(pct) < USUAL_SAME_PCT:
         return f"Как обычно ({usual_text})"
+    if count >= 2 * usual:
+        # v2.201.0: «на 264%» читалось тяжело — с двух раз и больше во сколько раз
+        x = round(count / usual, 1)
+        if x == int(x):
+            n = int(x)
+            word = "раза" if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14) else "раз"
+            return f"Жарче обычного в {n} {word} ({usual_text})"
+        return f"Жарче обычного в {x:g} раза ({usual_text})".replace(".", ",", 1)
     if pct > 0:
         return f"Жарче обычного на {pct}% ({usual_text})"
     return f"Тише обычного на {-pct}% ({usual_text})"

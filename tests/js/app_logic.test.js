@@ -256,3 +256,10 @@ test("desktopFullscreenDefault: компьютер — во весь экран,
   assert.equal(app.desktopFullscreenDefault("weba", null), false);
   assert.equal(app.desktopFullscreenDefault("weba", "1"), true);
 });
+
+test("deltaTone: плюс — победа, минус — поражение, ноль — без цвета", () => {
+  assert.equal(app.deltaTone("+12.3"), "tone-win");
+  assert.equal(app.deltaTone("−5.0"), "tone-loss");
+  assert.equal(app.deltaTone("0.0"), "");
+  assert.equal(app.deltaTone(""), "");
+});

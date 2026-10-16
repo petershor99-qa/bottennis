@@ -68,6 +68,8 @@ def test_day_label():
 def test_usual_line():
     assert usual_line(5, None) == ""
     assert usual_line(7, 5.0) == "Жарче обычного на 40% (обычно 5)"
+    assert usual_line(4, 1.1) == "Жарче обычного в 3,6 раза (обычно 1,1)"
+    assert usual_line(10, 2.0) == "Жарче обычного в 5 раз (обычно 2)"
     assert usual_line(3, 6.0) == "Тише обычного на 50% (обычно 6)"
     assert usual_line(5, 4.8) == "Как обычно (обычно 4,8)"
 
@@ -85,7 +87,7 @@ async def test_day_payload_board_heroes_and_navigation(db):
     d = await day_payload(db, a, None)
     assert d["label"].startswith("Сегодня") and d["empty"] == ""
     assert d["board"]["matches"] == 2 and d["board"]["sets"] == 2 and d["board"]["points"] == 32
-    assert d["board"]["usual"] == "Жарче обычного на 100% (обычно 1)"
+    assert d["board"]["usual"] == "Жарче обычного в 2 раза (обычно 1)"   # v2.201.0
     assert d["hero"]["name"] == "Боб" and d["hero"]["delta"] == "+21.0" and d["hero"]["record"] == "2–0"
     assert d["slump"]["name"] == "Вика" and d["slump"]["delta"] == "−12.0"
     assert d["next"] is None and d["prev"] == (_today() - timedelta(days=2)).isoformat()
