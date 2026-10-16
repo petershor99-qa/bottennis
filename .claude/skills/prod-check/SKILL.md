@@ -5,8 +5,9 @@ description: >
   server (uptime, memory, disk), bot and Caddy services, deployed commit vs
   origin/main, bot journal errors, database, nightly backups, Mini App boot
   times from the journal (median, slow ≥5 s, failed launches with network
-  timing), the app page from here and port 443 from several countries
-  (check-host.net). Use when the user says "проверь прод", "всё ли живо",
+  timing), the app page from here (by IP and by the old sslip.io name), HTTPS
+  certificate expiry (the IP certificate lives 6 days) and port 443 from
+  several countries (check-host.net). Use when the user says "проверь прод", "всё ли живо",
   "бот не отвечает", "приложение не грузится / зависает", "что с сервером",
   after a deploy, or before blaming the network.
 ---
@@ -44,8 +45,14 @@ py -3.13 .claude/skills/prod-check/scripts/check_prod.py <IP из памяти>
 - **Бэкапы: меньше 3 шт.** — ночной бэкап (`/opt/bottennis/backup.sh`, cron
   03:00) не копит копии. До 16.10.2026 скрипт перезаписывал один файл с датой,
   вписанной буквально.
+- **Сертификат по IP: осталось меньше 1,5 дня** — с v2.200.1 приложение
+  открывается по IP (`https://<IP>/`), сертификат Let's Encrypt на IP живёт
+  6 дней, Caddy (не ниже 2.10, профиль `shortlived`) продлевает его сам. Если
+  срок подходит к концу — продление не идёт: попросить пользователя прислать
+  `journalctl -u caddy -n 60 --no-pager`. Временный откат — `WEBAPP_URL` на
+  адрес sslip.io (`docs/MINIAPP.md`, «Вход по IP»).
 - **Медленные загрузки приложения** — в строке журнала с v2.194.0 есть замер
-  сети: «адрес» (DNS `sslip.io`), «соединение», «первый байт», когда пришли
+  сети: «адрес» (DNS; с переходом на IP должен быть 0), «соединение», «первый байт», когда пришли
   стили, скрипт Telegram и `app.js`, и «не пришли: …». По нему видно, где
   встало: DNS, сеть до сервера или конкретный файл. Сервер отвечает за доли
   секунды — долгие «соединение»/«первый байт» означают сеть телефона.

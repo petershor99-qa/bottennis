@@ -67,6 +67,36 @@
    и перезапустить бота: `systemctl restart bottennis`.
 5. Проверить: `curl -sI https://1-2-3-4.sslip.io/` отвечает `200`, в логе бота есть «Mini App: веб-сервер слушает 127.0.0.1:8081». В боте у администратора под «Рейтингом клуба» появляется кнопка «Открыть приложение».
 
+## Вход по IP без имени (v2.200.1)
+
+С именем `*.sslip.io` телефон перед каждым запуском ищет адрес у серверов sslip.io за границей; на Wi-Fi владельца это заняло 18,8 с из 20 (замер в журнале запуска, v2.194.0). Let's Encrypt с 15.01.2026 выдаёт сертификаты прямо на IP — тогда искать нечего. Сертификат на IP живёт 6 дней, Caddy продлевает его сам; срок проверяет скилл `prod-check`.
+
+1. Caddy не ниже 2.10 (в Ubuntu 24.04 — 2.6.2, профили ACME он не знает). Официальный репозиторий Caddy:
+   ```bash
+   cp /etc/caddy/Caddyfile /root/Caddyfile.bak
+   apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+   apt update && apt install caddy
+   ```
+   На вопрос о файле настроек — оставить свой (N).
+2. В `/etc/caddy/Caddyfile` рядом с блоком sslip.io (его не убирать: кнопки в старых сообщениях чата ведут туда) — блок по IP:
+   ```
+   1.2.3.4 {
+       tls {
+           issuer acme {
+               profile shortlived
+           }
+       }
+       reverse_proxy 127.0.0.1:8081
+   }
+   ```
+   `caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`, затем `systemctl reload caddy`; в `journalctl -u caddy` — «certificate obtained successfully».
+3. В `/opt/bottennis/.env`: `WEBAPP_URL=https://1.2.3.4/`, затем `systemctl restart bottennis` (кнопка меню «Клуб» обновится при старте).
+4. Откат: вернуть в `.env` адрес sslip.io и перезапустить бота; Caddy — `cp /root/Caddyfile.bak /etc/caddy/Caddyfile && systemctl reload caddy`.
+
+Для Telegram новый адрес — новый сайт: память браузера (снимок главной, выбор «во весь экран» на компьютере) начинается заново; память Telegram (цели, подсказки) остаётся.
+
 ## Если приложение «вешается» на загрузке
 
 Шкала встаёт на первых процентах, помогает только перезапуск. Две причины, обе учтены:
