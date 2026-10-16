@@ -20,13 +20,21 @@ from bot.utils import get_career_matches, msk_day_start
 from bot.webapp import api_club
 from bot.webapp.server import create_app
 from bot.webapp.text import plain
-from tests.conftest import _completed, _player
+from tests.conftest import _completed, _player, freeze_clock
 from tests.test_webapp import ADMIN, TOKEN, _init_data
 
 # «Сейчас», но не раньше часа после полуночи МСК: события «N минут назад» в
 # первый час суток иначе уехали бы во «вчера» (CI, запущенный в 00:00 МСК, падал).
 # Запросы «сегодня» ограничены только снизу, событие чуть в будущем им не мешает.
 NOW = max(datetime.now(timezone.utc).replace(tzinfo=None), msk_day_start() + timedelta(hours=1))
+
+
+@pytest.fixture(autouse=True)
+def _clock_at_now(monkeypatch):
+    """Часы кода под тестом стоят на NOW: NOW считается при импорте, и если прогон
+    пересёк полночь МСК до теста, лента и итоги дня видели данные «вчерашними»
+    (CI 15.10, 00:00 МСК)."""
+    freeze_clock(monkeypatch, NOW)
 
 DAY_TEXT = (
     "📅 <b>Итоги дня — 13.10</b>\n\n"

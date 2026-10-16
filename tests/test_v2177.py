@@ -19,7 +19,6 @@ import bot.webapp.api as api_mod
 import bot.webapp.usage as usage
 from bot.db.models import AchievementEarned, AppBoot, ChampionReign, ClubRecordPing, PersonalRecordEarned
 from bot.utils import msk_day_start
-from bot.webapp import api_club, api_day, api_month
 from bot.webapp.api_chronicle import chronicle_payload, duel_history, scores_payload
 from bot.webapp.api_insights import boot_summary
 from bot.webapp.api_month import month_payload
@@ -27,7 +26,7 @@ from bot.webapp.api_personal import main_rival, personal_bests, personal_payload
 from bot.webapp.server import USAGE_KEY, create_app
 from bot.webapp.share import SHARE_CAPTIONS
 from bot.webapp.usage import log_client_error
-from tests.conftest import _completed, _player
+from tests.conftest import _completed, _player, freeze_clock
 from tests.test_webapp import ADMIN, TOKEN, _init_data
 
 TODAY = msk_day_start() + timedelta(hours=1)
@@ -35,16 +34,14 @@ TODAY = msk_day_start() + timedelta(hours=1)
 
 @pytest.fixture(autouse=True)
 def _clock_after_today(monkeypatch):
-    """Часы приложения — не раньше TODAY + 2 ч (v2.178.0). TODAY — полночь по МСК
-    + 1 ч, а экраны дня и месяца берут матчи «до сейчас»: в первый час суток
-    «сегодняшние» матчи теста оказывались в будущем и тест падал (15.10, 00:48 МСК)."""
-    real = api_club._now
+    """Часы кода под тестом стоят на TODAY + 2 ч. TODAY — полночь по МСК + 1 ч,
+    а экраны дня и месяца берут матчи «до сейчас»: в первый час суток
+    «сегодняшние» матчи теста оказывались в будущем (15.10, 00:48 МСК). Было
+    max(сейчас, TODAY + 2 ч) — не спасало, если прогон пересёк полночь МСК между
+    импортом и тестом: «сейчас» уже следующий день, а TODAY — вчера (CI 15.10, 00:00 МСК)."""
+    freeze_clock(monkeypatch, TODAY + timedelta(hours=2))
 
-    def clock():
-        return max(real(), TODAY + timedelta(hours=2))
 
-    for mod in (api_club, api_day, api_month):
-        monkeypatch.setattr(mod, "_now", clock)
 STATIC = Path(__file__).resolve().parent.parent / "webapp" / "static"
 
 
