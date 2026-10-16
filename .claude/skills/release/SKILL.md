@@ -106,10 +106,15 @@ EOF
 PR descriptions are in Russian — this project's established convention (see the
 `feedback_pr_language` memory note if you have it loaded). Then:
 ```bash
+gh pr merge <N> --auto --merge --delete-branch
 gh pr checks <N> --watch
-gh pr merge <N> --merge --delete-branch
 git checkout develop && git pull
 ```
+Since 2026-10-16 `develop` has a ruleset like `main` (PR only, required `lint` +
+`pytest`) and repo auto-merge is on, so `--auto` makes GitHub merge the PR itself
+once CI is green. Don't weaken the ruleset: without required checks `--auto`
+merges instantly, before CI finishes (that is how #311 went in early). Direct
+pushes to `develop` are rejected — even small fixes go through a `feature/` PR.
 This repo's default is: **you merge feature→develop** without asking each time —
 that's already the agreed convention. Only develop→main (step 6) needs a
 judgment call about who clicks merge.
