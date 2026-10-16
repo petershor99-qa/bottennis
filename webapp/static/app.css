@@ -1060,3 +1060,19 @@ html.has-fs-toggle .screen-head { padding-right: 40px; }
   .throne-img, .throne-glow, .timeline-seg, .is-new-king .throne-sitter .crown-big, .throne-news { animation: none; }
   .throne-spark { display: none; }
 }
+
+/* v2.192.0: меню клуба «частые / Ещё», серия игровых дней, «С возвращением» с картинкой */
+.club-group:not(.is-open) .club-tile-more { display: none; }
+.club-group.is-open .club-tile-more { animation: since-in .3s ease-out both; }
+.club-more { margin-top: 6px; }
+.hero-streak { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; margin-top: 8px; padding: 5px 10px;
+  border-radius: 999px; background: color-mix(in srgb, var(--loss) 12%, transparent); color: var(--loss); font-size: 13px; font-weight: 700; }
+.hero-streak .ico { width: 16px; height: 16px; }
+.since-hero { display: flex; align-items: flex-end; gap: 8px; margin: -6px 0 4px; }
+.since-hero-text { flex: 1; min-width: 0; padding-bottom: 6px; }
+.since-hello { font-size: 20px; font-weight: 800; letter-spacing: -0.01em; margin-bottom: 4px; }
+.since-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.since-pic { width: 96px; height: auto; flex: none; margin-right: -6px; animation: boot-in .5s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .club-group.is-open .club-tile-more, .since-pic { animation: none; }
+}

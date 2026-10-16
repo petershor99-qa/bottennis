@@ -54,18 +54,43 @@
   var VISIT_KEY = "last_visit_v1";
   var SINCE_MIN_GAP_MS = 2 * 3600 * 1000;
   var sinceChecked = false;
+  // v2.192.0: при старте из снимка главной (v2.180.0) ответ мог прийти раньше,
+  // чем главная перерисуется свежими данными, — карточка исчезала вместе со
+  // снимком. Теперь данные запоминаются, и карточка ставится на каждую
+  // отрисовку главной, пока её не закрыли и пока игрок не ушёл с главной.
+  var sinceState = null;
+
+  // Картинка заставки (v2.188.0) — та же, что в index.html, с тем же адресом
+  // (версия из ссылки preload), поэтому уже в кэше браузера
+  function splashUrl() {
+    var pre = document.querySelector('link[rel="preload"][as="image"]');
+    return pre ? pre.getAttribute("href") : "static/splash.webp";
+  }
 
   function sinceCard(c, d) {
     var card = el("div", "card since");
-    var top = el("div", "pair-top");
+    // v2.192.0: «С возвращением» с картинкой заставки — её почти никто не видел,
+    // повторный запуск слишком быстрый
+    var hero = el("div", "since-hero");
+    var txt = el("div", "since-hero-text");
+    txt.appendChild(el("div", "since-hello", "С возвращением!"));
+    var top = el("div", "since-meta");
     top.appendChild(el("span", "eyebrow", d.title));
     top.appendChild(el("span", "eyebrow-meta", d.since));
-    card.appendChild(top);
+    txt.appendChild(top);
+    hero.appendChild(txt);
+    var pic = el("img", "since-pic");
+    pic.alt = "";
+    pic.decoding = "async";
+    pic.addEventListener("error", function () { pic.remove(); });
+    pic.src = splashUrl();
+    hero.appendChild(pic);
+    card.appendChild(hero);
     var close = el("button", "hint-close");
     close.type = "button";
     close.setAttribute("aria-label", "Скрыть");
     close.appendChild(useIcon("x"));
-    close.addEventListener("click", function () { haptic("select"); card.remove(); });
+    close.addEventListener("click", function () { haptic("select"); if (sinceState) sinceState.closed = true; card.remove(); });
     card.appendChild(close);
     var list = el("ul", "list list-plain");
     d.items.forEach(function (it) { list.appendChild(itemRow(it)); });
@@ -76,8 +101,14 @@
   }
 
   function checkSince(c) {
+    if (sinceState && !sinceState.closed && !c.querySelector(".since")) sinceCard(c, sinceState.d);
     if (sinceChecked) return;
     sinceChecked = true;
+    window.addEventListener("hashchange", function leave() {
+      if (location.hash.replace(/^#\/?/, "") === "") return;
+      if (sinceState) sinceState.closed = true;
+      window.removeEventListener("hashchange", leave);
+    });
     var now = Date.now();
     storageGet(VISIT_KEY, function (raw) {
       if (raw === undefined) return;                  // памяти нет — без карточки
@@ -85,7 +116,9 @@
       var last = parseInt(raw, 10);
       if (!last || now - last < SINCE_MIN_GAP_MS) return;
       api("since?t=" + Math.floor(last / 1000)).then(function (d) {
-        if (d && d.items && d.items.length && c.isConnected) sinceCard(c, d);
+        if (!d || !d.items || !d.items.length) return;
+        sinceState = { d: d, closed: false };
+        if (c.isConnected && !c.querySelector(".since")) sinceCard(c, d);
       }, function () { /* не вышло — просто без карточки */ });
     });
   }

@@ -217,6 +217,9 @@
   function playerSheet(id) {
     var old = document.querySelector(".sheet-wrap");
     if (old) old.remove();
+    storageSet("gesture_hint_v1", "1");   // жест освоен — подсказка больше не нужна (v2.192.0)
+    var hint = document.querySelector(".gesture-hint");
+    if (hint) hint.remove();
     var own = String(id) === String(viewerId);
     var wrap = el("div", "sheet-wrap");
     var sheet = el("div", "sheet quick-sheet");
