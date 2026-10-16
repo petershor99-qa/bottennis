@@ -5,17 +5,21 @@
     if (!d.winner || !d.sets.length) return "";
     var w = d.winner, l = w === "a" ? "b" : "a";
     var lostFirst = d.sets[0][l] > d.sets[0][w];
+    // v2.198.0: «Камбэк» — только с 0:2 по партиям (редкий, золотой); проиграл
+    // одну первую и выиграл — «Отыгрался» (было «Камбэк» и за 0:1)
+    var lostTwo = d.sets.length >= 3 && lostFirst && d.sets[1][l] > d.sets[1][w];
     var allWon = d.sets.every(function (s) { return s[w] > s[l]; });
     var margin = d.sets.reduce(function (sum, s) { return sum + (s[w] - s[l]); }, 0) / d.sets.length;
     var deuces = d.sets.filter(function (s) { return Math.max(s.a, s.b) > 11; }).length;
     if (d.boss) return "boss";
-    if (lostFirst && d.sets.length >= 3) return "comeback";
+    if (lostTwo) return "comeback";
+    if (lostFirst && d.sets.length >= 3) return "rally";
     if (allWon && margin >= 6) return "blowout";
     if (deuces >= 2) return "deuce";
     return "";
   }
 
-  var MOOD_LABELS = { boss: "Боссфайт", comeback: "Камбэк", blowout: "Разгром", deuce: "Дьюсы" };
+  var MOOD_LABELS = { boss: "Боссфайт", comeback: "Камбэк", rally: "Отыгрался", blowout: "Разгром", deuce: "Дьюсы" };
 
   // Счёт партий из ленты («5:11») — в вид экрана матча ({a, b}) для matchMood
   function chipSets(sets) {

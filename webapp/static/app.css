@@ -697,11 +697,14 @@ html, body {
   transform: rotate(var(--rot)); animation: stamp-in .5s cubic-bezier(.2, 1.4, .4, 1) both .3s; }
 /* v2.185.0: штамп над победителем — слева, если выиграл левый */
 .stamp-a .mood-stamp { --rot: -6deg; right: auto; left: 12px; }
-.mood-comeback .mood-stamp { color: var(--win); }
+/* v2.198.0: «Камбэк» (с 0:2) — золотой и заметнее, «Отыгрался» (после 0:1) — зелёный */
+.mood-comeback .mood-stamp { color: var(--gold); font-size: 13px; }
+.mood-rally .mood-stamp { color: var(--win); }
 .mood-blowout .mood-stamp { color: var(--loss); }
 .mood-deuce .mood-stamp { color: var(--ball); }
 .mood-boss .mood-stamp { color: var(--gold); }
-.mood-comeback .versus-score { animation: shake .5s ease-in-out .5s both; }
+.mood-comeback .versus-score { animation: shake .5s ease-in-out .5s 2 both; }
+.mood-rally .versus-score { animation: shake .5s ease-in-out .5s both; }
 .mood-blowout .versus-num.tone-win { animation: punch .45s ease-out .4s both; }
 .mood-boss .versus-row { animation: crown-pulse 1.6s ease-in-out .4s 2; border-radius: 12px; }
 @keyframes stamp-in { from { opacity: 0; transform: rotate(var(--rot)) scale(1.8); } to { opacity: 1; transform: rotate(var(--rot)) scale(1); } }
@@ -710,7 +713,8 @@ html, body {
 .feed-tag { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 2px 7px; border-radius: 6px;
   background: var(--soft); color: var(--hint); }
 .mood-tag { background: transparent; border: 1.5px solid currentColor; text-transform: uppercase; padding: 1px 6px; }
-.mood-tag.mood-comeback { color: var(--win); }
+.mood-tag.mood-comeback { color: var(--gold); }
+.mood-tag.mood-rally { color: var(--win); }
 .mood-tag.mood-blowout { color: var(--loss); }
 .mood-tag.mood-deuce { color: var(--ball); }
 .mood-tag.mood-boss { color: var(--gold); }
@@ -788,7 +792,7 @@ html, body {
 .story-hint.is-hidden { opacity: 0; }
 
 @media (prefers-reduced-motion: reduce) {
-  .mood-stamp, .mood-comeback .versus-score, .mood-blowout .versus-num, .mood-boss .versus-row,
+  .mood-stamp, .mood-comeback .versus-score, .mood-rally .versus-score, .mood-blowout .versus-num, .mood-boss .versus-row,
   .table-art .art-ball, .boot-pic, .story-card, .story-art, .story-bars i.is-now b, .chronicle-item { animation: none; }
 }
 .challenge-btn { margin-top: 12px; }
