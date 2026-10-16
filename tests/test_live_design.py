@@ -71,7 +71,7 @@ def test_page_wiring_and_reduced_motion():
     routes = (SRC / "90-routes.js").read_text(encoding="utf-8")
     rating = (SRC / "11-rating.js").read_text(encoding="utf-8")
     profile = (SRC / "12-profile.js").read_text(encoding="utf-8")
-    assert routes.count('app.setAttribute("data-enter"') == 2        # список и профиль
+    assert routes.count("enterScreen(route, quiet);") == 2           # список и профиль (v2.200.0 — через enterScreen)
     assert "app.appendChild(skeletonFor(route));" in routes
     assert "boardFlip(board.list, ids)" in rating and "sparkline(row.spark)" in rating
     assert '" frame frame-" + h.rank' in profile and "celebrateTitle(h)" in profile

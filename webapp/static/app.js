@@ -17,7 +17,7 @@
       toggledReactions: toggledReactions, matchMood: matchMood, tapGuard: tapGuard, chipSets: chipSets, isPhoneClient: isPhoneClient, replayTiming: replayTiming, ballHeight: ballHeight,
       nextNav: nextNav, sparkPoints: sparkPoints, odometerDigits: odometerDigits, raceOrder: raceOrder,
       edgeProgress: edgeProgress, isRootRoute: isRootRoute, playerFromRoute: playerFromRoute,
-      reignClock: reignClock, timelineShares: timelineShares
+      reignClock: reignClock, timelineShares: timelineShares, goalsFresh: goalsFresh, desktopFullscreenDefault: desktopFullscreenDefault
     };
     return;
   }
@@ -636,21 +636,32 @@
   }
 
   // ── Клуб (главная) ─────────────────────────────────────────────────────────
+  // Подиум — советская тумба (v2.200.0, картинка владельца webapp/static/podium.webp,
+  // адрес с версией подставляет сервер). Колонки сетки совпадают со ступенями
+  // картинки, высота «ступеньки» под игроком — до заднего края верхней грани.
+  var PODIUM_ART = "static/podium.webp";
+
   function podium(items) {
-    var wrap = el("div", "podium");
+    var wrap = el("div", "podium podium-stand");
+    var art = el("img", "podium-art");
+    art.alt = "";
+    art.setAttribute("aria-hidden", "true");
+    art.decoding = "async";
+    art.src = PODIUM_ART;
+    wrap.appendChild(art);
     [1, 0, 2].forEach(function (idx) {
       var p = items[idx];
-      if (!p) return;
-      var col = clickable(el("div", "podium-col podium-" + p.rank), "player/" + p.id);
-      var crownSlot = el("div", "crown-slot");
-      if (p.champion) crownSlot.appendChild(icon("crown", "crown"));
-      col.appendChild(crownSlot);
-      col.appendChild(avatar(p, p.rank === 1 ? "xl" : "lg"));
-      col.appendChild(el("div", "podium-name", p.name));
-      var block = el("div", "podium-block");
-      block.appendChild(el("div", "podium-rank", String(p.rank)));
-      block.appendChild(num("podium-rating", p.rating));
-      col.appendChild(block);
+      var place = idx + 1;
+      var col = p ? clickable(el("div", "podium-col podium-" + place), "player/" + p.id) : el("div", "podium-col podium-" + place);
+      if (p) {
+        var crownSlot = el("div", "crown-slot");
+        if (p.champion) crownSlot.appendChild(icon("crown", "crown"));
+        col.appendChild(crownSlot);
+        col.appendChild(avatar(p, place === 1 ? "xl" : "lg"));
+        col.appendChild(el("div", "podium-name", p.name));
+        col.appendChild(num("podium-rating", p.rating));
+      }
+      col.appendChild(el("div", "podium-step"));
       wrap.appendChild(col);
     });
     return wrap;
@@ -3570,6 +3581,60 @@
     return s;
   }
 
+  // Праздник закрытой цели (v2.200.0): один раз на цель за неделю — галочка
+  // прочерчивается, от кольца разлетаются мячики; все три закрыты — конфетти
+  // и счётчик недель подряд щёлкает на +1. Что уже показано — в памяти устройства.
+  var GOALS_SEEN_KEY = "goals_seen_v1";
+
+  // Чистая часть (проверяется в Node): что праздновать и что запомнить
+  function goalsFresh(stored, week, goals, allDone) {
+    var parts = String(stored || "").split("|");
+    var same = parts[0] === week;
+    var seen = same && parts[1] ? parts[1].split(",") : [];
+    var seenAll = same && parts[2] === "all";
+    var fresh = goals.filter(function (g) { return g.done && seen.indexOf(g.key) < 0; })
+      .map(function (g) { return g.key; });
+    var done = goals.filter(function (g) { return g.done; }).map(function (g) { return g.key; });
+    return { fresh: fresh, all: !!allDone && !seenAll,
+             store: week + "|" + done.join(",") + "|" + (allDone ? "all" : "") };
+  }
+
+  function celebrateGoals(wrap, g) {
+    if (!g.week) return;
+    storageGet(GOALS_SEEN_KEY, function (raw) {
+      if (raw === undefined) return;                  // памяти нет — без праздника
+      var r = goalsFresh(raw, g.week, g.goals, g.all_done);
+      if (!r.fresh.length && !r.all) return;
+      // главная могла сразу перерисоваться свежими данными (старт из снимка) —
+      // празднуем только то, что осталось на экране
+      setTimeout(function () {
+        if (!wrap.isConnected) return;
+        storageSet(GOALS_SEEN_KEY, r.store);
+        r.fresh.forEach(function (key, i) {
+          var row = wrap.querySelector('[data-goal="' + key + '"]');
+          if (!row) return;
+          row.classList.add("is-fresh");
+          setTimeout(function () {
+            hapticSuccess();
+            ballBurst(row.querySelector(".goal-ring"));
+          }, (reduceMotion ? 0 : 750) + i * 250);
+        });
+        if (!r.all) return;
+        var foot = wrap.querySelector(".goals-foot");
+        var count = wrap.querySelector(".goals-streak");
+        setTimeout(function () {
+          if (count) {
+            count.textContent = String(Math.max(0, g.streak - 1));
+            setTimeout(function () { count.textContent = String(g.streak); count.classList.add("is-flip"); },
+              reduceMotion ? 0 : 350);
+          }
+          if (foot) { foot.classList.add("is-fresh"); confetti(foot); }
+          hapticSuccess();
+        }, reduceMotion ? 0 : 900 + r.fresh.length * 250);
+      }, 400);
+    });
+  }
+
   function goalsBlock(g) {
     var wrap = el("section", "group goals");
     var head = el("div", "group-head");
@@ -3580,6 +3645,7 @@
     g.goals.forEach(function (goal) {
       var li = goal.player_id ? clickable(el("li", "row goal-row"), "player/" + goal.player_id) : el("li", "row goal-row");
       if (goal.done) li.classList.add("is-done");
+      li.setAttribute("data-goal", goal.key);
       li.appendChild(goalRing(goal.progress, goal.target, goal.done));
       var body = el("div", "body");
       body.appendChild(el("div", "name", goal.title));
@@ -3589,10 +3655,16 @@
       list.appendChild(li);
     });
     wrap.appendChild(list);
-    var foot = [];
-    if (g.all_done) foot.push("Неделя закрыта");
-    if (g.streak) foot.push("Закрыто недель подряд: " + g.streak);
-    if (foot.length) wrap.appendChild(el("p", "footnote goals-foot" + (g.all_done ? " is-done" : ""), foot.join(" · ")));
+    if (g.all_done || g.streak) {
+      var foot = el("p", "footnote goals-foot" + (g.all_done ? " is-done" : ""));
+      if (g.all_done) foot.appendChild(document.createTextNode("Неделя закрыта"));
+      if (g.streak) {
+        foot.appendChild(document.createTextNode((g.all_done ? " · " : "") + "Закрыто недель подряд: "));
+        foot.appendChild(el("span", "goals-streak", String(g.streak)));
+      }
+      wrap.appendChild(foot);
+    }
+    celebrateGoals(wrap, g);
     return wrap;
   }
 
@@ -3764,6 +3836,30 @@
     }
     document.body.appendChild(layer);
     setTimeout(function () { if (layer.parentNode) layer.parentNode.removeChild(layer); }, 1400);
+  }
+
+  // Мячики от кольца закрытой цели (v2.200.0)
+  function ballBurst(anchor) {
+    if (reduceMotion || !anchor || !anchor.getBoundingClientRect) return;
+    var box = anchor.getBoundingClientRect();
+    var layer = el("div", "confetti");
+    layer.style.left = (box.left + box.width / 2) + "px";
+    layer.style.top = (box.top + box.height / 2) + "px";
+    for (var i = 0; i < 10; i++) {
+      var ball = el("i", "ball-bit");
+      var angle = (Math.PI * 2 * i) / 10 + Math.random() * 0.4;
+      var dist = 26 + Math.random() * 26;
+      ball.style.setProperty("--dx", Math.round(Math.cos(angle) * dist) + "px");
+      ball.style.setProperty("--dy", Math.round(Math.sin(angle) * dist) + "px");
+      ball.style.animationDelay = Math.round(Math.random() * 60) + "ms";
+      layer.appendChild(ball);
+    }
+    document.body.appendChild(layer);
+    setTimeout(function () { if (layer.parentNode) layer.parentNode.removeChild(layer); }, 1000);
+  }
+
+  function hapticSuccess() {
+    try { if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success"); } catch (e) { /* нет вибрации */ }
   }
 
   // Заставка «Новое звание»: один раз, при первом заходе в свой профиль после повышения
@@ -3982,15 +4078,24 @@
   // Во весь экран всегда (v2.186.0): на телефоне — сразу при запуске (Telegram
   // 8.0+; кнопки Telegram «закрыть» и «⋮» остаются поверх, под них — отступ
   // safe area). На компьютере окно приложения Telegram не даёт «чуть увеличить»,
-  // только на весь монитор — поэтому там кнопка в углу, выбор запоминается на
-  // этом устройстве (localStorage, не CloudStorage: на телефоне свой режим).
+  // только на весь монитор — там кнопка в углу, выбор запоминается на этом
+  // устройстве (localStorage, не CloudStorage: на телефоне свой режим).
+  // v2.200.0: в Telegram для компьютера (Windows/Linux, macOS) по умолчанию
+  // во весь экран — узкое окно было неудобным; кнопкой можно вернуть окно.
   var FS_KEY = "fullscreen_desktop_v1";
   var fsButton = null;
 
   function isPhoneClient(platform) { return platform === "android" || platform === "ios"; }
 
+  function desktopFullscreenDefault(platform, saved) {
+    if (saved === "1" || saved === "0") return saved === "1";
+    return platform === "tdesktop" || platform === "macos";
+  }
+
   function desktopWantsFullscreen() {
-    try { return window.localStorage.getItem(FS_KEY) === "1"; } catch (e) { return false; }
+    var saved = null;
+    try { saved = window.localStorage.getItem(FS_KEY); } catch (e) { saved = null; }
+    return desktopFullscreenDefault(clientInfo().platform, saved);
   }
 
   function wantFullscreen() {
@@ -4163,6 +4268,15 @@
   var scrollPos = {};
   var renderedRoute = null;
 
+  // v2.200.0: место прокрутки восстанавливается только при возврате «назад»;
+  // новый заход на экран (вглубь) — сверху. Раньше «Зал славы» при повторном
+  // открытии оказывался там, где его бросили в прошлый раз.
+  function enterScreen(route, quiet) {
+    var dir = quiet === true ? "none" : navDirection(route);
+    if (dir === "forward") delete scrollPos[route];
+    app.setAttribute("data-enter", dir);
+  }
+
   function finishRender(route, keepScroll) {
     renderedRoute = route;
     track(route);
@@ -4198,7 +4312,7 @@
       shell = null;
       app.textContent = "";
       app.classList.remove("is-wide");
-      app.setAttribute("data-enter", quiet === true ? "none" : navDirection(route));
+      enterScreen(route, quiet);
       app.appendChild(skeleton("profile"));
       api("player/" + playerId).then(function (d) {
         if (token !== renderToken) return;
@@ -4227,7 +4341,7 @@
 
     app.textContent = "";
     app.classList.remove("is-wide");
-    app.setAttribute("data-enter", quiet === true ? "none" : navDirection(route));
+    enterScreen(route, quiet);
     app.appendChild(skeletonFor(route));
     entry[2](match).then(function (data) {
       if (token !== renderToken) return;

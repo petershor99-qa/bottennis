@@ -38,8 +38,10 @@ ASSET_TYPES = {
     "splash.webp": "image/webp",
     # Трон в «Зале славы» (v2.191.0, картинка владельца); адрес с версией — в ответе /api/throne
     "throne.webp": "image/webp",
+    # Тумба подиума на главной (v2.200.0, картинка владельца); версию в app.js подставляет get()
+    "podium.webp": "image/webp",
 }
-_NO_GZIP = {"splash.webp", "throne.webp"}   # уже сжато — gzip только тратит время
+_NO_GZIP = {"splash.webp", "throne.webp", "podium.webp"}   # уже сжато — gzip только тратит время
 IMMUTABLE = "public, max-age=31536000, immutable"
 _LINE_COMMENT = re.compile(rb"(?m)^[ \t]*//[^\n]*\n")
 
@@ -82,8 +84,10 @@ class Assets:
         """Файл из памяти; перечитывается, если поменялся на диске."""
         mtime = self._mtime(name)
         if name == "app.js":
-            # app.js ссылается на icons.svg — его версия входит в app.js
+            # app.js ссылается на icons.svg и podium.webp — их версии входят в app.js
             mtime = max(mtime, self._mtime("icons.svg"))
+            if (self.dir / "podium.webp").exists():
+                mtime = max(mtime, self._mtime("podium.webp"))
         cached = self._cache.get(name)
         if cached is not None and cached.mtime == mtime:
             return cached
@@ -92,6 +96,9 @@ class Assets:
             body = strip_line_comments(body)
             icons = self.get("icons.svg").version
             body = body.replace(b'"static/icons.svg#', f'"static/icons.svg?v={icons}#'.encode())
+            if (self.dir / "podium.webp").exists():
+                podium = self.get("podium.webp").version
+                body = body.replace(b'"static/podium.webp"', f'"static/podium.webp?v={podium}"'.encode())
         asset = Asset(body=body, gz=gzip.compress(body, 9, mtime=0), version=_version(body),
                       content_type=ASSET_TYPES[name], mtime=mtime)
         self._cache[name] = asset

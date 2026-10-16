@@ -208,6 +208,30 @@ html, body {
 .podium-2 .podium-rank { color: var(--silver); }
 .podium-3 .podium-rank { color: var(--bronze); }
 .podium-rating { font-size: 13px; color: var(--hint); margin-top: 4px; }
+/* v2.200.0: советская тумба. Колонки = ступени картинки (567 · 606 · 567 из 1740 px),
+   «ступенька» под игроком — от низа до заднего края верхней грани (328 · 456 · 284 px) */
+.podium-stand { position: relative; grid-template-columns: 567fr 606fr 567fr; gap: 0; margin: 4px 0 16px; }
+.podium-art { position: absolute; left: 0; bottom: 0; width: 100%; height: auto; pointer-events: none;
+  animation: stand-rise .55s cubic-bezier(.2, .8, .2, 1) both; }
+.podium-stand .podium-col { position: relative; padding: 0 4px; }
+.podium-stand .podium-name { margin: 4px 0 0; }
+.podium-stand .podium-rating { margin: 0 0 6px; }
+.podium-stand .crown-slot, .podium-stand .avatar, .podium-stand .podium-name, .podium-stand .podium-rating {
+  animation: stand-drop .45s cubic-bezier(.34, 1.4, .64, 1) both; }
+.podium-stand .podium-3 > * { animation-delay: .35s; }
+.podium-stand .podium-2 > * { animation-delay: .45s; }
+.podium-stand .podium-1 > * { animation-delay: .55s; }
+.podium-stand .podium-step { width: 100%; animation: none; }
+.podium-stand .podium-1 .podium-step { aspect-ratio: 606 / 456; }
+.podium-stand .podium-2 .podium-step { aspect-ratio: 567 / 328; }
+.podium-stand .podium-3 .podium-step { aspect-ratio: 567 / 284; }
+.podium-stand .crown-slot .crown { animation: crown-drop .55s cubic-bezier(.34, 1.56, .64, 1) 1s both; }
+@keyframes stand-rise { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes stand-drop { from { transform: translateY(-18px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .podium-art, .podium-stand .crown-slot, .podium-stand .avatar, .podium-stand .podium-name,
+  .podium-stand .podium-rating, .podium-stand .crown-slot .crown { animation: none; }
+}
 
 .me-card { display: flex; align-items: center; gap: 12px; }
 .me-rating { font-size: 22px; font-weight: 700; }
@@ -373,10 +397,13 @@ html, body {
 .rec-tile-value { display: flex; align-items: baseline; gap: 4px; margin: 2px 0 4px; }
 .rec-tile-value .scoreboard { font-size: 26px; line-height: 1.1; }
 .rec-tile .rec-name { font-size: 13px; }
-.rec-champs { display: flex; gap: 14px; overflow-x: auto; padding: 2px 4px 6px; }
-.rec-champ { text-align: center; min-width: 52px; }
-.rec-champ.is-top .avatar { box-shadow: 0 0 0 2px var(--gold); }
-.rec-champ-name { font-size: 12px; margin-top: 4px; max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* v2.200.0: ровная сетка одинаковых ячеек (было — ширина по длине имени) */
+.rec-champs { display: grid; grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); gap: 12px 6px;
+  padding: 12px 8px; background: var(--card); border-radius: 14px; margin-bottom: 12px; }
+.rec-champ { display: flex; flex-direction: column; align-items: center; min-width: 0; text-align: center; }
+.rec-champ .avatar { outline: 2px solid transparent; outline-offset: 2px; }
+.rec-champ.is-top .avatar { box-shadow: none; outline-color: var(--gold); }
+.rec-champ-name { font-size: 12px; margin-top: 6px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rec-champ-count { font-size: 13px; font-weight: 800; }
 @media (min-width: 760px) { .rec-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (prefers-reduced-motion: reduce) { .rec-bar-fill { animation: none; } }
@@ -897,6 +924,27 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   .goal-ring-arc { transition: none; }
   .since { animation: none; }
+}
+/* v2.200.0: праздник закрытой цели — галочка прочерчивается после кольца, мячики */
+.goal-row.is-fresh .goal-ring-check { stroke-dasharray: 20; stroke-dashoffset: 20; animation: goal-check .35s ease-out .75s forwards; }
+.goal-row.is-fresh .goal-ring { animation: goal-pop .45s cubic-bezier(.34, 1.56, .64, 1) .75s; }
+.goal-row.is-fresh .goal-count { animation: goal-pop .45s cubic-bezier(.34, 1.56, .64, 1) .8s; }
+@keyframes goal-check { to { stroke-dashoffset: 0; } }
+@keyframes goal-pop { 50% { scale: 1.18; } }
+.ball-bit { position: absolute; width: 8px; height: 8px; left: -4px; top: -4px; border-radius: 50%;
+  background: var(--ball); box-shadow: inset -1px -1px 0 rgba(0, 0, 0, .15);
+  animation: ball-fly .8s cubic-bezier(.15, .7, .3, 1) forwards; }
+@keyframes ball-fly {
+  from { transform: translate(0, 0) scale(.6); opacity: 1; }
+  to { transform: translate(var(--dx), calc(var(--dy) + 18px)) scale(1); opacity: 0; }
+}
+.goals-foot.is-fresh { animation: goal-pop .5s cubic-bezier(.34, 1.56, .64, 1); }
+.goals-streak { display: inline-block; font-weight: 800; }
+.goals-streak.is-flip { animation: streak-flip .45s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes streak-flip { from { transform: translateY(-70%) rotateX(80deg); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .goal-row.is-fresh .goal-ring-check { animation: none; stroke-dashoffset: 0; }
+  .goal-row.is-fresh .goal-ring, .goal-row.is-fresh .goal-count, .goals-foot.is-fresh, .goals-streak.is-flip { animation: none; }
 }
 
 /* ── v2.182.0: живой дизайн ──────────────────────────────────────────── */
