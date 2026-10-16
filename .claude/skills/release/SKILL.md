@@ -172,14 +172,12 @@ half-do and the one CLAUDE.md explicitly calls out as mandatory):
    - If a file's responsibilities changed, touch its row in "Карта файлов" too.
    - Never write the VPS host/IP/password here — see the warning above.
 
-Commit these four together as a small doc-only commit directly to `develop` (no
-feature branch, no PR — this project treats doc sync as the "small fix" case that
-goes straight to develop):
+Commit these four in the feature branch, before its PR into `develop` (since
+2026-10-16 direct pushes to `develop` are rejected by the ruleset). If the feature
+PR is already merged, open a small `docs/<version>` branch and PR with `--auto`:
 ```bash
-git add -A && git commit -m "docs: <version> release notes и синхронизация доков
-
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
-git push origin develop
+git add -A && git commit -m "docs: <version> release notes и синхронизация доков"
+git push origin <branch>
 ```
 
 ## Step 5 — Open the develop → main PR yourself, don't wait to be asked

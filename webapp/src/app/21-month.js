@@ -73,6 +73,15 @@
   // назад, полоски сверху показывают, где ты. Открывается только самим игроком.
   function storyCard(card) {
     var box = el("div", "story-card story-" + card.kind);
+    if (card.art) {
+      // v2.194.0: прощальная карточка — картинка заставки (тот же адрес, что у
+      // заставки, — уже в кэше, лишней загрузки нет)
+      var art = el("img", "story-art");
+      art.src = splashUrl();
+      art.alt = "";
+      art.decoding = "async";
+      box.appendChild(art);
+    }
     box.appendChild(el("div", "story-title", card.title));
     if (card.player) {
       var who = el("div", "story-who");

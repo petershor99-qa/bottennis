@@ -44,7 +44,7 @@ def test_loader_starts_app_without_waiting_for_telegram():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     body = html[html.index("(function () {"):]
     # app.js грузится сразу; скрипт Telegram — своя копия, без попыток к telegram.org (v2.178.0)
-    assert "bootApp();" in body and "attempt()" not in body
+    assert "window.__clubBoot.start();" in body and "attempt()" not in body
     # сторож: нет первого экрана — сообщение, «Обновить» и отчёт на сервер
     assert "WATCHDOG_MS" in body and "api/boot_fail" in body and "Обновить" in body
 
