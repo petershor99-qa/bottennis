@@ -845,7 +845,19 @@ async def records_payload(session: AsyncSession) -> dict:
             continue
         items = [g[0] for g in groups([line for r in records for line in (r, "")]) if g]
         categories.append({"key": key, "title": plain(title), "count": len(records), "items": items})
-    return {"title": "Рекорды клуба", "categories": categories, "empty": ""}
+    # v2.199.0: главные рекорды — карточками (api_records); их строки из списка убираются
+    from bot.webapp import api_records
+
+    shown = await api_records.showcase(session)
+    total = sum(len(c["items"]) for c in categories)
+    if shown:
+        carded = tuple(r["title"] for r in [shown["hero"], *shown["tiles"]] if r)
+        for c in categories:
+            c["items"] = [it for it in c["items"] if not str(it.get("label") or it.get("text") or "").startswith(carded)]
+            c["count"] = len(c["items"])
+        categories = [c for c in categories if c["items"]]
+    return {"title": "Рекорды клуба", "categories": categories, "empty": "", "showcase": shown,
+            "summary": api_records.summary_line(total, shown["holders"] if shown else [])}
 
 
 async def _reign_defenses(session: AsyncSession, reign: ChampionReign, end: datetime) -> int:
