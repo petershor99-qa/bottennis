@@ -776,12 +776,20 @@ html, body {
 .story-chips { justify-content: center; }
 .story-badges { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; width: 100%; margin-top: 6px; }
 .story-badge { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12px; }
+/* v2.194.0: прощальная карточка «Твоего месяца» — картинка заставки */
+.story-outro { justify-content: flex-end; padding-top: 18px; gap: 6px; }
+.story-art { width: 230px; max-width: 64vw; height: auto; margin-bottom: 4px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 74%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 74%, transparent 100%);
+  animation: story-art-in .6s ease-out both; }
+@keyframes story-art-in { from { opacity: 0; transform: translateY(14px) scale(.96); } }
+.story-outro .story-line:last-child { color: var(--text); font-weight: 700; font-size: 18px; }
 .story-hint { text-align: center; font-size: 12px; color: var(--hint); margin-top: 10px; transition: opacity .3s; }
 .story-hint.is-hidden { opacity: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   .mood-stamp, .mood-comeback .versus-score, .mood-blowout .versus-num, .mood-boss .versus-row,
-  .table-art .art-ball, .boot-pic, .story-card, .story-bars i.is-now b, .chronicle-item { animation: none; }
+  .table-art .art-ball, .boot-pic, .story-card, .story-art, .story-bars i.is-now b, .chronicle-item { animation: none; }
 }
 .challenge-btn { margin-top: 12px; }
 

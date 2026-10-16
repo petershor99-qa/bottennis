@@ -2,7 +2,8 @@
 «Твой месяц» в Mini App (v2.177.0): короткая история месяца игрока карточками,
 как сторис — открывается только самим игроком, без уведомлений. Считается на
 лету по базе: матчи и победы, рейтинг за месяц, лучший матч, соперник месяца,
-новые ачивки, место в таблице, сравнение с прошлым месяцем.
+новые ачивки, место в таблице, сравнение с прошлым месяцем; последней —
+прощальная карточка с картинкой заставки (v2.194.0).
 """
 from datetime import date, datetime, timedelta
 
@@ -148,4 +149,20 @@ async def month_payload(session: AsyncSession, player: Player, ym: str | None) -
         cards.append({"kind": "compare", "title": f"А в {MONTHS_PREP[pm - 1]}",
                       "lines": [f"Матчей: {len(prev)} → {len(matches)}", f"Побед: {prev_rate}% → {now_rate}%"],
                       "big": _signed(now_rate - prev_rate).replace(".0", "") + " п.п.", "up": now_rate >= prev_rate})
+
+    # Прощальная карточка (v2.194.0): картинка заставки и итог месяца одной строкой
+    cards.append(outro_card(len(matches), w, ny, nm, finished=end <= _now()))
     return {"title": title, **nav, "cards": cards, "empty": ""}
+
+
+def outro_card(played: int, won: int, next_year: int, next_month: int, finished: bool) -> dict:
+    """Последняя карточка «Твоего месяца»: картинка заставки (`art` — адрес
+    страница берёт свой, уже из кэша), итог и «до встречи». Закрытый месяц —
+    «До встречи в ноябре!», текущий — «Месяц ещё идёт»."""
+    summary = (f"{_ru_plural(played, 'матч', 'матча', 'матчей')} · "
+               f"{_ru_plural(won, 'победа', 'победы', 'побед')}")
+    if finished:
+        return {"kind": "outro", "art": True, "title": "Месяц закрыт",
+                "lines": [summary, f"До встречи в {MONTHS_PREP[next_month - 1]}!"]}
+    return {"kind": "outro", "art": True, "title": "Месяц ещё идёт",
+            "lines": [summary, "Увидимся за столом!"]}

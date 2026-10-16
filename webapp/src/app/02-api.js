@@ -78,6 +78,8 @@
       body.platform = info.platform;
       body.version = info.version;
       body.tg_ms = telegramAt;
+      // v2.194.0: замер сети загрузчика — где ушло время у медленного запуска
+      if (window.__clubBoot && window.__clubBoot.timing) body.net = window.__clubBoot.timing();
       firstTrack = false;
       window.__clubBooted = true;
     }

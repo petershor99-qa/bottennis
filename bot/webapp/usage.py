@@ -10,7 +10,8 @@ v2.157.2): ответ странице не ждёт базу, сбой запи
 пишется только в лог сервиса, не в базу (диагностика «зависаний» на старте).
 С v2.175.0 к нему добавлены клиент и версия Telegram и время, когда пришёл
 скрипт Telegram, а страница, которая не смогла запуститься, присылает отчёт
-(`log_boot_failure`) — тоже только в лог.
+(`log_boot_failure`) — тоже только в лог. С v2.194.0 оба приносят замер сети
+загрузчика (`net`): адрес, соединение, ответ и когда пришли файлы.
 """
 import asyncio
 import logging
@@ -83,6 +84,24 @@ def _ms(value) -> int | None:
     return None
 
 
+# Замер сети загрузчика (v2.194.0, index.html): ключ — подпись в журнале
+NET_PARTS = [("dns", "адрес"), ("conn", "соединение"), ("tls", "TLS"), ("ttfb", "первый байт"),
+             ("html", "страница"), ("css", "стили"), ("tg", "скрипт Telegram"), ("app", "app.js")]
+NET_FILES = ("css", "tg", "app")
+
+
+def net_line(net) -> str:
+    """Замер сети одной строкой для журнала: «сеть: адрес 12 мс, …; не пришли:
+    стили». Файл, которого нет в замере, — не пришёл к моменту отчёта. Мусор
+    от страницы отбрасывается; нет замера — пустая строка."""
+    if not isinstance(net, dict) or not net:
+        return ""
+    parts = [f"{label} {ms} мс" for key, label in NET_PARTS if (ms := _ms(net.get(key))) is not None]
+    missing = [label for key, label in NET_PARTS if key in NET_FILES and _ms(net.get(key)) is None]
+    line = "сеть: " + (", ".join(parts) or "—")
+    return line + ("; не пришли: " + ", ".join(missing) if missing else "")
+
+
 def client_name(value) -> str:
     """Безопасное имя клиента Telegram для записи (v2.180.0)."""
     return _client(value)
@@ -103,10 +122,11 @@ def log_boot_time(screen: str, boot_ms, info: dict | None = None) -> tuple[int, 
         return None
     info = info if isinstance(info, dict) else {}
     tg_ms = _ms(info.get("tg_ms"))
+    net = net_line(info.get("net"))
     logger.info(
-        "Mini App: загрузка %d мс до первого экрана (%s), клиент %s %s, скрипт Telegram %s",
+        "Mini App: загрузка %d мс до первого экрана (%s), клиент %s %s, скрипт Telegram %s%s",
         ms, screen, _client(info.get("platform")), _client(info.get("version")),
-        f"{tg_ms} мс" if tg_ms is not None else "не пришёл",
+        f"{tg_ms} мс" if tg_ms is not None else "не пришёл", f"; {net}" if net else "",
     )
     platform = _client(info.get("platform"))
     return ms, ("" if platform == "?" else platform)
@@ -148,9 +168,10 @@ def log_boot_failure(telegram_id: int, body) -> bool:
     body = body if isinstance(body, dict) else {}
     stage = str(body.get("stage", ""))[:40]
     error = " ".join(str(body.get("error", "")).split())[:BOOT_FAIL_TEXT_MAX]
+    net = net_line(body.get("net"))
     logger.warning(
-        "Mini App: не запустилось у игрока %s (клиент %s %s): этап «%s», скрипт Telegram %s, ошибка: %s",
+        "Mini App: не запустилось у игрока %s (клиент %s %s): этап «%s», скрипт Telegram %s, ошибка: %s%s",
         telegram_id, _client(body.get("platform")), _client(body.get("version")), stage or "?",
-        "пришёл" if body.get("tg") else "не пришёл", error or "нет",
+        "пришёл" if body.get("tg") else "не пришёл", error or "нет", f"; {net}" if net else "",
     )
     return True
