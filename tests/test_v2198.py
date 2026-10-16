@@ -3,7 +3,7 @@ v2.198.0: матчи после рассылки итогов дня (после
 итогов» в следующей рассылке; штамп «Камбэк» только с 0:2, после 0:1 — «Отыгрался».
 Запуск: pytest tests/test_v2198.py
 """
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -14,7 +14,6 @@ import bot.scheduler as scheduler
 from bot.db.models import DigestSnapshot
 from bot.utils import msk_day_start
 from tests.conftest import _completed, _player
-from tests.test_app_content import NOW
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -31,7 +30,9 @@ async def _club(db_factory, *, snapshot_ago_h: float | None, late: bool, today: 
         if late:
             s.add(_completed(a, b, a.id, 11.0, day_start - timedelta(hours=1, minutes=53)))   # 22:07
         if today:
-            s.add(_completed(b, a, b.id, 7.0, NOW - timedelta(minutes=5)))
+            # не раньше полуночи по МСК: прогон, попавший на смену суток, уводил матч во «вчера»
+            s.add(_completed(b, a, b.id, 7.0, max(day_start, datetime.now(timezone.utc).replace(tzinfo=None)
+                                                   - timedelta(minutes=5))))
         await s.commit()
 
 

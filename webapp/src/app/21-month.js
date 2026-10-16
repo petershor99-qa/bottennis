@@ -201,7 +201,7 @@
     var hint = el("div", "story-hint", "Удержи — пауза. Справа — дальше, слева — назад");
     stage.appendChild(hint);
     c.appendChild(stage);
-    var index = 0, timer = null, held = false, holdTimer = null, startedAt = 0, left = STORY_MS;
+    var index = 0, timer = null, held = false, suppress = false, holdTimer = null, startedAt = 0, left = STORY_MS;
     var auto = !reduceMotion && !app.classList.contains("quiet");
     function stop() { if (timer) { clearTimeout(timer); timer = null; } }
     function run(ms) {
@@ -240,13 +240,18 @@
     function release() {
       clearTimeout(holdTimer);
       if (!held) return;
+      held = false;
+      // v2.202.1: нажатие, которым держали паузу, не листает; флаг живёт только до
+      // ближайшего click — раньше после удержания на кнопке следующий тап пропадал
+      suppress = true;
+      setTimeout(function () { suppress = false; }, 80);
       stage.classList.remove("is-paused");
       run(left);
     }
     stage.addEventListener("pointerup", release);
     stage.addEventListener("pointercancel", release);
     stage.addEventListener("click", function (e) {
-      if (held) { held = false; return; }
+      if (suppress) { suppress = false; return; }
       var rect = stage.getBoundingClientRect();
       haptic("select");
       show(e.clientX - rect.left < rect.width / 3 ? index - 1 : index + 1);

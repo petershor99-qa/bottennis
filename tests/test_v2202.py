@@ -168,3 +168,11 @@ def test_share_kinds_and_page_wiring():
     assert "if (d.month_ready) monthReady(c, podiumNode, d.month_ready);" in home
     routes = (SRC / "90-routes.js").read_text(encoding="utf-8")
     assert 'api("summary/" + m[1] + (date ? "?date=" + date : ""))' in routes
+
+
+def test_story_hold_does_not_swallow_next_tap_and_day_tabs_active():
+    # v2.202.1: после удержания пальца следующий тап листает; вкладки итогов не бледные
+    month = (SRC / "21-month.js").read_text(encoding="utf-8")
+    assert "if (suppress) { suppress = false; return; }" in month and "held = false;" in month
+    server = (ROOT / "bot" / "webapp" / "server.py").read_text(encoding="utf-8")
+    assert 'tab["available"] = True' in server
