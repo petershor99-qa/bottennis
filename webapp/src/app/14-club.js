@@ -35,9 +35,104 @@
     }
   }
 
+  // Витрина рекордов (v2.199.0, макет и тексты утверждены владельцем): главный
+  // рекорд золотой карточкой, «Под угрозой» — кто догоняет, плитки, «Рекордсмены»;
+  // остальные рекорды — прежними строками ниже. Числа досчитываются, плитки
+  // появляются по очереди (с «уменьшить движение» — сразу).
+  // Пара (дерби, длинный матч, апсет) — аватары внахлёст и имена одной строкой,
+  // иначе в узкой плитке второе имя переносилось отдельно от аватара
+  function recordHolders(r) {
+    var line = el("div", "rec-holders" + (r.holders.length > 1 ? " is-pair" : ""));
+    var faces = el("span", "rec-faces");
+    r.holders.forEach(function (p) { faces.appendChild(avatar(p, "sm")); });
+    line.appendChild(faces);
+    var sep = r.key === "upset" ? " → " : " vs ";
+    line.appendChild(el("span", "rec-name", r.holders.map(function (p) { return p.name; }).join(sep)));
+    return line;
+  }
+
+  function recordHero(r) {
+    var card = r.route ? clickable(el("div", "card rec-hero"), r.route) : el("div", "card rec-hero");
+    var top = el("div", "rec-hero-top");
+    top.appendChild(icon("trophy", "ico-gold"));
+    top.appendChild(el("span", "", "Главный рекорд"));
+    card.appendChild(top);
+    card.appendChild(el("div", "rec-hero-title", r.title));
+    var value = el("div", "rec-hero-value");
+    value.appendChild(num("scoreboard", r.value));
+    value.appendChild(el("span", "rec-unit", r.unit));
+    card.appendChild(value);
+    var foot = el("div", "rec-hero-foot");
+    foot.appendChild(recordHolders(r));
+    if (r.held) foot.appendChild(el("span", "rec-held", r.held));
+    card.appendChild(foot);
+    return card;
+  }
+
+  function recordThreats(list) {
+    var wrap = el("section", "group");
+    wrap.appendChild(el("h2", "group-title", "Под угрозой"));
+    var card = el("div", "card rec-threats");
+    list.forEach(function (t) {
+      var row = clickable(el("div", "rec-threat"), "player/" + t.player_id);
+      row.appendChild(el("div", "rec-threat-label", t.label));
+      var bar = el("div", "rec-bar");
+      var fill = el("i", "rec-bar-fill rec-tone-" + t.tone);
+      fill.style.width = Math.round(t.progress * 100) + "%";
+      bar.appendChild(fill);
+      row.appendChild(bar);
+      row.appendChild(el("div", "rec-threat-note", t.note));
+      card.appendChild(row);
+    });
+    wrap.appendChild(card);
+    return wrap;
+  }
+
+  function recordTile(r, i) {
+    var cls = "rec-tile rec-tile-" + r.key + " stagger";
+    var t = r.route ? clickable(el("div", cls), r.route) : el("div", cls);
+    t.style.animationDelay = (i * 50) + "ms";
+    if (r.new) t.appendChild(el("span", "rec-new", "новый"));
+    t.appendChild(icon(r.icon, "rec-ico rec-ico-" + r.key));
+    t.appendChild(el("div", "rec-tile-title", r.title));
+    var value = el("div", "rec-tile-value");
+    value.appendChild(num("scoreboard", r.value));
+    value.appendChild(el("span", "rec-unit", r.unit));
+    t.appendChild(value);
+    if (r.holders.length) t.appendChild(recordHolders(r));
+    if (r.date && !r.holders.length) t.appendChild(el("div", "sub", r.date));
+    return t;
+  }
+
+  function recordHoldersRow(list) {
+    var wrap = el("section", "group");
+    wrap.appendChild(el("h2", "group-title", "Рекордсмены"));
+    var row = el("div", "rec-champs");
+    list.forEach(function (p, i) {
+      var cell = clickable(el("div", "rec-champ" + (i === 0 ? " is-top" : "")), "player/" + p.id);
+      cell.appendChild(avatar(p, "md"));
+      cell.appendChild(el("div", "rec-champ-name", p.name));
+      cell.appendChild(el("div", "rec-champ-count", String(p.count)));
+      row.appendChild(cell);
+    });
+    wrap.appendChild(row);
+    return wrap;
+  }
+
   function renderRecords(c, d) {
-    c.appendChild(header(d.title));
+    c.appendChild(header(d.title, d.summary || ""));
     if (d.empty) { emptyState(c, d.empty); return; }
+    var s0 = d.showcase;
+    if (s0) {
+      if (s0.hero) c.appendChild(recordHero(s0.hero));
+      if (s0.threats && s0.threats.length) c.appendChild(recordThreats(s0.threats));
+      if (s0.tiles && s0.tiles.length) {
+        var grid = el("div", "rec-tiles");
+        s0.tiles.forEach(function (r, i) { grid.appendChild(recordTile(r, i)); });
+        c.appendChild(grid);
+      }
+      if (s0.holders && s0.holders.length > 1) c.appendChild(recordHoldersRow(s0.holders));
+    }
     d.categories.forEach(function (cat) {
       var s = section(cat.title);
       cat.items.forEach(function (it) { s.list.appendChild(itemRow(it)); });

@@ -338,6 +338,48 @@ html, body {
 /* Зал славы */
 .throne-card { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 18px; }
 .crown-big { width: 30px; height: 30px; }
+/* Витрина рекордов (v2.199.0) */
+.rec-hero { background: color-mix(in srgb, var(--gold) 14%, var(--card)); border: 1px solid color-mix(in srgb, var(--gold) 40%, transparent); }
+.rec-hero-top { display: flex; align-items: center; gap: 6px; color: var(--gold); font-size: 13px; font-weight: 700; }
+.rec-hero-top .ico { width: 18px; height: 18px; }
+.rec-hero-title { margin-top: 6px; color: var(--hint); font-size: 14px; }
+.rec-hero-value { display: flex; align-items: baseline; gap: 6px; }
+.rec-hero-value .scoreboard { font-size: 44px; line-height: 1.1; color: var(--text); }
+.rec-unit { color: var(--hint); font-size: 14px; font-weight: 600; }
+.rec-hero-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.rec-held { margin-left: auto; font-size: 12px; color: var(--hint); }
+.rec-holders { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.rec-faces { display: inline-flex; flex: none; }
+.rec-holders.is-pair .rec-faces .avatar + .avatar { margin-left: -8px; box-shadow: 0 0 0 2px var(--card); }
+.rec-name { font-size: 14px; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rec-sep { color: var(--hint); font-size: 12px; }
+.rec-threats { display: flex; flex-direction: column; gap: 14px; }
+.rec-threat-label { font-size: 14px; font-weight: 600; }
+.rec-bar { height: 6px; border-radius: 3px; background: var(--soft); margin: 6px 0 3px; overflow: hidden; }
+.rec-bar-fill { display: block; height: 100%; border-radius: 3px; transform-origin: left; animation: grow-x .8s cubic-bezier(.2, .8, .2, 1) both .2s; }
+.rec-tone-streak { background: var(--ball); }
+.rec-tone-reign { background: var(--gold); }
+.rec-tone-matches { background: var(--accent); }
+.rec-threat-note { font-size: 12px; color: var(--hint); }
+.rec-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+.rec-tile { position: relative; background: var(--card); border-radius: 14px; padding: 12px; min-width: 0; }
+.rec-new { position: absolute; top: 8px; right: 8px; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 6px;
+  background: var(--win-soft); color: var(--win); }
+.rec-ico { width: 20px; height: 20px; color: var(--accent); }
+.rec-ico-streak, .rec-ico-hot_day { color: var(--ball); }
+.rec-ico-upset { color: var(--loss); }
+.rec-ico-reign, .rec-ico-defenses { color: var(--gold); }
+.rec-tile-title { margin-top: 4px; font-size: 12px; color: var(--hint); line-height: 1.25; }
+.rec-tile-value { display: flex; align-items: baseline; gap: 4px; margin: 2px 0 4px; }
+.rec-tile-value .scoreboard { font-size: 26px; line-height: 1.1; }
+.rec-tile .rec-name { font-size: 13px; }
+.rec-champs { display: flex; gap: 14px; overflow-x: auto; padding: 2px 4px 6px; }
+.rec-champ { text-align: center; min-width: 52px; }
+.rec-champ.is-top .avatar { box-shadow: 0 0 0 2px var(--gold); }
+.rec-champ-name { font-size: 12px; margin-top: 4px; max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rec-champ-count { font-size: 13px; font-weight: 800; }
+@media (min-width: 760px) { .rec-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (prefers-reduced-motion: reduce) { .rec-bar-fill { animation: none; } }
 .throne-reign { color: var(--gold); font-size: 14px; font-weight: 700; }
 .throne-records { margin-bottom: 12px; }
 .throne-records .throne-record { font-size: 16px; font-weight: 700; }
