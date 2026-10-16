@@ -1389,7 +1389,7 @@ def test_build_style_radar_returns_six_axes():
     from bot.services.stats import _build_style_radar
     radar = _build_style_radar(_full_stats(
         win_rate=60, total_sets_played=20, deuce_total=5, deuce_won=3,
-        comeback_wins=2, wins=6, stability_score=70,
+        lost_first_total=10, lost_first_won=3, wins=6, stability_score=70,
         first_set_conv=55, dominance_score=68,
     ))
     assert set(radar.keys()) == {
@@ -1398,7 +1398,8 @@ def test_build_style_radar_returns_six_axes():
     assert radar["Винрейт"] == 60.0
     assert radar["Клатч"] == 60.0  # 3/5*100
     assert radar["Дожимание"] == 55.0
-    assert radar["Камбэки"] == round(2 / 6 * 100)
+    # v2.196.0: доля побед после проигранной первой партии (было: победы с 0:2 от всех побед)
+    assert radar["Камбэки"] == 30.0
     assert radar["Доминирование"] == 68.0
     assert radar["Стабильность"] == 70.0
 
@@ -1486,10 +1487,11 @@ def test_archetype_point_of_no_return_removed_zero_comebacks_are_neutral():
     assert "Точка невозврата" not in _ARCHETYPE_DESCRIPTIONS
 
 
-def test_archetype_phoenix_threshold_is_8():
+def test_archetype_phoenix_threshold_is_30():
+    """v2.196.0: камбэки — доля побед после проигранной первой партии (у клуба 0–42%)."""
     from bot.services.stats import _style_archetype
-    assert _style_archetype(_arch_radar(**{"Камбэки": 8.0})) == "Феникс"
-    assert _style_archetype(_arch_radar(**{"Камбэки": 7.0})) == "Универсал"
+    assert _style_archetype(_arch_radar(**{"Камбэки": 30.0})) == "Феникс"
+    assert _style_archetype(_arch_radar(**{"Камбэки": 29.0})) == "Универсал"
 
 
 def test_archetype_new_thresholds_boundaries():
@@ -1499,37 +1501,20 @@ def test_archetype_new_thresholds_boundaries():
     assert _style_archetype(_arch_radar(**{"Клатч": 55.0})) == "Нервы стальные"
     assert _style_archetype(_arch_radar(**{"Стабильность": 75.0})) == "Метроном"
     # нижние пороги включительно (<=): значение ровно на пороге — уже архетип
-    assert _style_archetype(_arch_radar(**{"Винрейт": 40.0})) == "Донор рейтинга"
-    assert _style_archetype(_arch_radar(**{"Винрейт": 41.0})) == "Универсал"
+    assert _style_archetype(_arch_radar(**{"Винрейт": 35.0})) == "Донор рейтинга"   # v2.196.0: было 40
+    assert _style_archetype(_arch_radar(**{"Винрейт": 36.0})) == "Универсал"
     assert _style_archetype(_arch_radar(**{"Дожимание": 55.0})) == "Сдувается"
     assert _style_archetype(_arch_radar(**{"Дожимание": 56.0})) == "Универсал"
     assert _style_archetype(_arch_radar(**{"Клатч": 35.0})) == "Мандраж"
 
 
-def test_archetypes_calibrated_on_real_club_data_give_variety():
-    """Регрессия калибровки (2026-10-02): радары 7 реальных игроков клуба (обезличены) дают
-    разные ярлыки, а не «все Доноры/Терминаторы/пусто» (Винрейт, Клатч, Дожимание, Камбэки,
-    Доминирование, Стабильность)."""
-    from bot.services.stats import _style_archetype
-    club = [
-        ((46, 49, 71, 0, 57, 57), "Универсал"),
-        ((19, 36, 62, 0, 56, 78), "Донор рейтинга"),
-        ((41, 46, 83, 6, 58, 55), "Финишер"),
-        ((40, 41, 72, 1, 60, 63), "Каток"),
-        ((68, 61, 81, 1, 58, 62), "Терминатор"),
-        ((82, 57, 95, 3, 61, 79), "Терминатор"),
-        ((5, 33, 100, 0, 54, 93), "Донор рейтинга"),
-    ]
-    axes = ["Винрейт", "Клатч", "Дожимание", "Камбэки", "Доминирование", "Стабильность"]
-    got = [_style_archetype(dict(zip(axes, map(float, vals), strict=True))) for vals, _ in club]
-    assert got == [exp for _, exp in club]
-    assert len(set(got)) >= 4        # не больше двух одинаковых ярлыков на семерых
+# Калибровка радара по прод-базе — tests/test_radar_calibration.py (v2.196.0, данные 2026-10-16).
 
 
 def _enough_samples(**over) -> dict:
     """Статистика с достаточной выборкой по всем осям (v2.155.0)."""
     s = {"deuce_total": 20, "first_set_wins": 20, "dominance_matches": 20,
-         "wins": 30, "draws": 0, "losses": 30}
+         "wins": 30, "draws": 0, "losses": 30, "lost_first_total": 20}
     s.update(over)
     return s
 
@@ -1551,8 +1536,8 @@ def test_archetype_axes_need_enough_samples():
     assert _style_archetype(steamroller, _enough_samples(dominance_matches=4)) == "Универсал"
 
     phoenix = _arch_radar(**{"Камбэки": 40.0})
-    assert _style_archetype(phoenix, _enough_samples(wins=9)) == "Универсал"
-    assert _style_archetype(phoenix, _enough_samples(wins=10)) == "Феникс"
+    assert _style_archetype(phoenix, _enough_samples(lost_first_total=9)) == "Универсал"
+    assert _style_archetype(phoenix, _enough_samples(lost_first_total=10)) == "Феникс"
 
     metronome = _arch_radar(**{"Стабильность": 95.0})
     assert _style_archetype(metronome, _enough_samples(wins=4, losses=5)) == "Универсал"   # 9 матчей
@@ -1773,14 +1758,22 @@ def test_style_narrative_low_dominance():
 
 def test_style_narrative_high_comeback_rate():
     from bot.services.stats import _build_style_narrative
-    text = _build_style_narrative(_radar(**{"Камбэки": 25.0}), _full_stats())
-    assert "камбэк" in text
+    text = _build_style_narrative(_radar(**{"Камбэки": 40.0}), _full_stats(lost_first_total=12))
+    assert "Проиграв первую партию, выигрываешь матч в 40% случаев — характер не подводит." in text
 
 
-def test_style_narrative_zero_comebacks():
+def test_style_narrative_low_comebacks():
     from bot.services.stats import _build_style_narrative
-    text = _build_style_narrative(_radar(**{"Камбэки": 0.0}), _full_stats())
-    assert "Камбэков пока не случалось" in text
+    text = _build_style_narrative(_radar(**{"Камбэки": 5.0}), _full_stats(lost_first_total=12))
+    assert ("Если первая партия проиграна, матч обычно уходит сопернику — "
+            "отыгрываешься лишь в 5% случаев.") in text
+
+
+def test_style_narrative_comebacks_need_ten_lost_first_sets():
+    from bot.services.stats import _build_style_narrative
+    for value in (0.0, 50.0):
+        text = _build_style_narrative(_radar(**{"Камбэки": value}), _full_stats(lost_first_total=9)) or ""
+        assert "первую партию" not in text and "первая партия" not in text
 
 
 def test_style_narrative_high_stability():

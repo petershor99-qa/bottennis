@@ -117,7 +117,8 @@ async def test_migration_adds_failed_to_app_boots(monkeypatch, tmp_path):
 # ── Цвет показателей ──────────────────────────────────────────────────────────
 
 def _s(**kw) -> dict:
-    base = {"wins": 20, "draws": 0, "losses": 10, "deuce_total": 20, "first_set_wins": 20, "dominance_matches": 20}
+    base = {"wins": 20, "draws": 0, "losses": 10, "deuce_total": 20, "first_set_wins": 20, "dominance_matches": 20,
+            "lost_first_total": 20}
     base.update(kw)
     return base
 
@@ -141,8 +142,10 @@ def test_tier_green_without_being_best_and_tie_is_not_gold():
     assert style_tiers.tier("Винрейт", 70.0, _s(), 1, ref) == ("green", "Выше среднего по клубу на 11")
 
 
-def test_comebacks_never_red():
-    assert style_tiers.tier("Камбэки", 2.0, _s(), 1, REF)[0] == "white"
+def test_comebacks_can_be_red_since_v2196():
+    """Камбэки — доля побед после проигранной первой партии: низкая = не отыгрывается."""
+    assert style_tiers.tier("Камбэки", 2.0, _s(), 1, REF)[0] == "red"
+    assert style_tiers.tier("Камбэки", 2.0, _s(lost_first_total=9), 1, REF)[0] == "gray"
 
 
 def test_small_sample_is_gray_with_reason():
