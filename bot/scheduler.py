@@ -9,12 +9,12 @@ from aiogram.types import FSInputFile
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from sqlalchemy import and_, desc, or_, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from bot.db.database import DATABASE_URL, async_session
-from bot.db.models import AchievementEarned, Match, MatchStatus, Player
+from bot.db.models import AchievementEarned, DigestSnapshot, Match, MatchStatus, Player
 from bot.keyboards.inline import busy_with_match_kb, year_vote_invite_kb
 from bot.services.achievements import (
     ACHIEVEMENTS_MAP,
@@ -748,11 +748,57 @@ async def send_weekly_digest(bot: Bot) -> None:
 # ── Итоги дня (21:30 МСК) ─────────────────────────────────────────────────────
 
 
+# Поздние матчи (v2.198.0): сыгранные после рассылки итогов дня (21:30) и до полуночи
+# в итоги своего дня уже не попали — попадают блоком в следующую рассылку. К своему
+# дню они по-прежнему относятся (статистика дня, «Матч дня» в приложении, рейтинг).
+LATE_TITLE = "🌙 <b>После прошлых итогов</b>"
+LATE_KIND = "day_late"        # снимок рассылки только с поздними матчами (матчей сегодня не было)
+LATE_MAX_DAYS = 7
+
+
+async def _late_matches(session, day_start: datetime) -> list:
+    """Матчи после последней рассылки итогов дня и до начала сегодняшнего дня по МСК."""
+    last = (await session.execute(
+        select(func.max(DigestSnapshot.created_at)).where(DigestSnapshot.kind.in_(("day", LATE_KIND)))
+    )).scalar_one_or_none()
+    if last is None or last >= day_start:
+        return []
+    since = max(last, day_start - timedelta(days=LATE_MAX_DAYS))
+    return list((await session.execute(
+        select(Match).where(
+            Match.status == MatchStatus.completed,
+            Match.completed_at > since, Match.completed_at < day_start,
+        ).options(selectinload(Match.challenger), selectinload(Match.challenged)).order_by(Match.completed_at)
+    )).scalars().all())
+
+
+def _late_block(late: list, name_map: dict[int, str]) -> str:
+    return "\n".join([LATE_TITLE] + [
+        match_log_line(m, name_map.get(m.challenger_id, "?"), name_map.get(m.challenged_id, "?")) for m in late
+    ])
+
+
+async def _send_late_only(bot: Bot, session, late: list) -> None:
+    """Сегодня матчей не было, а поздние вчерашние есть — короткое сообщение только с ними."""
+    players = (await session.execute(select(Player))).scalars().all()
+    text = _late_block(late, {p.id: p.display_name for p in players})
+    await save_snapshot(session, LATE_KIND, text)
+    for p in players:
+        if not is_digest_muted(p, "day"):
+            await safe_send(bot, p.telegram_id, text)
+    logger.info("Итоги дня: отправлены только поздние матчи (%d)", len(late))
+
+
 async def send_daily_summary(bot: Bot) -> None:
     """Каждый день в 21:30 МСК отправляет игрокам сводку за день + «матч дня»."""
     async with async_session() as session:
         msk_now = datetime.now(timezone.utc).replace(tzinfo=None) + MSK_OFFSET
         day_start = msk_day_start()   # граница дня по МСК в UTC-naive
+        try:
+            late = await _late_matches(session, day_start)
+        except Exception:
+            logger.exception("Итоги дня: не удалось найти поздние матчи")
+            late = []
 
         r = await session.execute(
             select(Match)
@@ -766,6 +812,9 @@ async def send_daily_summary(bot: Bot) -> None:
         matches = r.scalars().all()
 
         if not matches:
+            if late:
+                await _send_late_only(bot, session, late)
+                return
             logger.info("Итоги дня: матчей не было, пропускаем")
             return
 
@@ -805,11 +854,10 @@ async def send_daily_summary(bot: Bot) -> None:
         if record:
             played_line += f"\n{record}"
 
-        lines = [
-            f"📅 <b>Итоги дня — {date_str}</b>\n",
-            played_line + "\n",
-            "🏆 <b>Топ дня:</b>",
-        ]
+        lines = [f"📅 <b>Итоги дня — {date_str}</b>\n"]
+        if late:
+            lines.append(_late_block(late, name_map) + "\n")
+        lines += [played_line + "\n", "🏆 <b>Топ дня:</b>"]
 
         medals = ["🥇", "🥈", "🥉"]
         sorted_players = sorted(

@@ -99,7 +99,9 @@ test("toggledReactions: одна реакция игрока", () => {
 
 test("matchMood: характер матча по партиям", () => {
   const m = (sets, winner, boss) => ({ sets: sets.map(([a, b]) => ({ a, b })), winner, boss: !!boss });
-  assert.equal(app.matchMood(m([[5, 11], [11, 9], [11, 8]], "a")), "comeback");
+  assert.equal(app.matchMood(m([[5, 11], [11, 9], [11, 8]], "a")), "rally");          // 0:1 → 2:1 — «Отыгрался» (v2.198.0)
+  assert.equal(app.matchMood(m([[5, 11], [7, 11], [11, 9], [11, 8], [11, 6]], "a")), "comeback");   // с 0:2 — «Камбэк»
+  assert.equal(app.matchMood(m([[5, 11], [11, 7], [9, 11], [11, 8], [11, 6]], "a")), "rally");     // 0:1, 1:1, 1:2 — не 0:2
   assert.equal(app.matchMood(m([[11, 3], [11, 4]], "a")), "blowout");
   assert.equal(app.matchMood(m([[12, 10], [13, 11]], "a")), "deuce");
   assert.equal(app.matchMood(m([[11, 9], [11, 9]], "a")), "");
