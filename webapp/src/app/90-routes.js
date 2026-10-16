@@ -89,7 +89,13 @@
     renderedNav = currentNav.id;
     track(route);
     if (keepScroll) return;
-    window.scrollTo(0, currentNav.restore ? (scrollPos[currentNav.id] || 0) : 0);
+    var id = currentNav.id, target = currentNav.restore ? (scrollPos[id] || 0) : 0;
+    window.scrollTo(0, target);
+    // v2.201.1: мобильный Chrome (Telegram на Android) после смены содержимого мог
+    // вернуть прежнюю прокрутку — экран открывался с середины. Повтор после кадра.
+    requestAnimationFrame(function () {
+      if (renderedNav === id && Math.abs(window.scrollY - target) > 2) window.scrollTo(0, target);
+    });
   }
 
   function render(quiet) {
@@ -98,6 +104,8 @@
     var nav = navEntry();
     if (renderedNav !== null && renderedNav !== nav.id) scrollPos[renderedNav] = window.scrollY;
     currentNav = nav;
+    // новый экран — наверх сразу, до каркаса загрузки (не после: браузер успевал «запомнить» середину)
+    if (!nav.restore) window.scrollTo(0, 0);
     if (route === "me") { location.replace("#/player/" + viewerId); return; }
     // «Твой месяц» во весь экран (v2.183.0); остальные экраны — если так выбрано (v2.186.0)
     if (!/^month/.test(route) && !wantFullscreen()) leaveFullscreen();
@@ -326,7 +334,10 @@
   if (snap) {
     Promise.all([meReady].concat(firstJobs)).then(function () {
       snapshotNote("");
-      scrollPos[""] = window.scrollY;   // игрок мог уже пролистать снимок — место сохраняется
+      // игрок мог уже пролистать снимок — место сохраняется (по записи истории, v2.201.1)
+      currentNav = navEntry();
+      renderedNav = currentNav.id;
+      scrollPos[currentNav.id] = window.scrollY;
       render(true);
       prefetchTabs();
     }, function () {
