@@ -2,7 +2,7 @@
   function boardRow(row) {
     var li = clickable(el("li", "row" + (row.is_viewer ? " is-viewer" : "")), "player/" + row.player_id);
     li.appendChild(el("div", "rank-num", String(row.rank)));
-    li.appendChild(avatar({ id: row.player_id, initial: row.initial }, "md"));
+    li.appendChild(hotAvatar(row, "md", row.player_id));
     var body = el("div", "body");
     var nameLine = el("div", "name");
     nameLine.appendChild(document.createTextNode(row.is_viewer ? row.name + ", ты" : row.name));

@@ -16,6 +16,13 @@
       d: "M" + x(0).toFixed(1) + "," + bottom + " L" + pts.join(" L") + " L" + x(vals.length - 1).toFixed(1) + "," + bottom + " Z" }));
     s.appendChild(svg("polyline", { "class": "chart-line", points: pts.join(" "), pathLength: "1" }));
     var last = vals.length - 1;
+    // v2.201.0: отметки — трон, ачивки, личные рекорды; подпись — по нажатию
+    var marks = {};
+    (chart.marks || []).forEach(function (mk) {
+      if (mk.i < 0 || mk.i > last) return;
+      marks[mk.i] = mk;
+      s.appendChild(svg("circle", { "class": "chart-mark mark-" + mk.kind, cx: x(mk.i), cy: y(vals[mk.i]), r: 3 }));
+    });
     var dot = svg("circle", { "class": "chart-dot", cx: x(last), cy: y(vals[last]), r: 3.5 });
     var marker = svg("line", { "class": "chart-marker", x1: 0, x2: 0, y1: T, y2: H - B });
     s.appendChild(marker);
@@ -38,10 +45,12 @@
       if (!box.width) return;
       var px = (ev.clientX - box.left) / box.width * W;
       var i = Math.max(0, Math.min(vals.length - 1, Math.round((px - L) / (W - L - R) * (vals.length - 1))));
+      if (!marks[i] && marks[i - 1]) i -= 1;          // к отметке рядом — притянуть
+      else if (!marks[i] && marks[i + 1]) i += 1;
       marker.setAttribute("x1", x(i)); marker.setAttribute("x2", x(i));
       marker.classList.add("is-on");
       dot.setAttribute("cx", x(i)); dot.setAttribute("cy", y(vals[i]));
-      meta.textContent = chart.labels[i] + " · " + vals[i].toFixed(1);
+      meta.textContent = chart.labels[i] + " · " + vals[i].toFixed(1) + (marks[i] ? " · " + marks[i].texts.join(", ") : "");
     }
     function release() {
       marker.classList.remove("is-on");

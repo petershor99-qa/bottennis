@@ -32,6 +32,7 @@ from bot.services.stats import (
     _style_archetype,
 )
 from bot.utils import (
+    CHART_MAX_POINTS,
     HEATMAP_DAYS,
     MSK_OFFSET,
     NEWCOMER_THRESHOLD,
@@ -64,7 +65,10 @@ def _msk_date(dt: datetime | None, fmt: str = "%d.%m") -> str:
 
 
 def _signed(x: float) -> str:
-    return f"+{x:.1f}" if x >= 0 else f"−{abs(x):.1f}"
+    # v2.201.0: ноль — без знака (ничья с нулевой дельтой выглядела «+0.0» зелёным)
+    if round(x, 1) == 0:
+        return "0.0"
+    return f"+{x:.1f}" if x > 0 else f"−{abs(x):.1f}"
 
 
 # ── Рейтинг клуба ─────────────────────────────────────────────────────────────
@@ -165,6 +169,7 @@ async def leaderboard_payload(session: AsyncSession, viewer_player_id: int) -> d
                 "week_change": r.week_change,
                 "week_label": _week_label(r.week_change),
                 "spark": sparks.get(r.player_id, []),
+                "streak": r.streak,
             }
             for r in rows
         ],
@@ -202,6 +207,15 @@ def _club_match(m: Match) -> dict:
     }
 
 
+async def _last_record_ts(session: AsyncSession, player_id: int) -> int:
+    from bot.db.models import PersonalRecordEarned
+
+    last = (await session.execute(
+        select(func.max(PersonalRecordEarned.earned_at)).where(PersonalRecordEarned.player_id == player_id)
+    )).scalar_one_or_none()
+    return _ms(last) if last else 0
+
+
 async def home_payload(session: AsyncSession, viewer: Player) -> dict:
     from bot.db.models import ClubRecordPing
 
@@ -209,7 +223,7 @@ async def home_payload(session: AsyncSession, viewer: Player) -> dict:
     podium = [
         {"rank": r.rank, "id": r.player_id, "name": r.name,
          "initial": (r.name.strip()[:1] or "?").upper(), "rating": f"{r.rating:.1f}",
-         "champion": r.is_champion}
+         "champion": r.is_champion, "streak": r.streak}
         for r in rows[:3]
     ]
     me_row = next((r for r in rows if r.player_id == viewer.id), None)
@@ -223,6 +237,9 @@ async def home_payload(session: AsyncSession, viewer: Player) -> dict:
         "place": f"#{me_row.rank} из {len(rows)}" if me_row else "вне рейтинга",
         "week": f"{_signed(week)} за неделю" if week is not None else "",
         "week_up": week is None or week >= 0,
+        # v2.201.0: точка на вкладке «Я» — есть ачивка или личный рекорд, которых игрок не видел
+        "achievements": sorted(get_achievements(viewer)),
+        "record_ts": await _last_record_ts(session, viewer.id),
     }
 
     today = (await session.execute(
@@ -407,9 +424,12 @@ async def player_payload(session: AsyncSession, player: Player, viewer: Player) 
                    key=lambda m: m.completed_at)
     chart = None
     if len(rated) >= 2:
+        from bot.webapp.api_personal import chart_marks
+
         labels, values = build_rating_series(rated, player.id, player.rating)
         chart = {"labels": labels, "values": values, "reference": 1000.0,
-                 "min": min(values), "max": max(values)}
+                 "min": min(values), "max": max(values),
+                 "marks": await chart_marks(session, player.id, rated[-CHART_MAX_POINTS:])}
 
     titled = [{"title": "Положение", "items": position[0]}] if position else []
     for key, title in _available_sections(player, s, matches, include_growth=personal):

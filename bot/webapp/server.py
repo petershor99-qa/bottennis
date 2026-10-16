@@ -346,6 +346,19 @@ async def challenge_open(request, session, viewer):
     return _json_error(status, text)
 
 
+async def goals_skill(request, session, viewer):
+    """Сменить цель на мастерство недели (v2.201.0) — один раз за неделю."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    key = str(body.get("key", "")) if isinstance(body, dict) else ""
+    result = await api_return.choose_skill(session, viewer, key)
+    if result is None:
+        return _json_error(409, "Цель на этой неделе уже менялась.")
+    return {"goals": result}
+
+
 async def photo_open(request, session, viewer):
     """«Поставить фото» из приложения (v2.185.0): бот присылает просьбу в чат."""
     bot = request.app.get(BOT_KEY)
@@ -648,6 +661,7 @@ def create_app(bot_token: str, session_factory, bot=None, storage=None) -> web.A
     app.router.add_post("/api/share", endpoint(share))
     app.router.add_post("/api/challenge/open", endpoint(challenge_open))
     app.router.add_post("/api/photo/open", endpoint(photo_open))
+    app.router.add_post("/api/goals/skill", endpoint(goals_skill))
     app.router.add_post("/api/match/{match_id}/react", endpoint(react))
     app.router.add_static("/static/", STATIC_DIR, show_index=False)
     return app

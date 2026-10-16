@@ -236,6 +236,7 @@
       c.appendChild(mb);
     }
     if (d.personal) personalBlocks(c, d.personal, playerId);
+    if (String(playerId) === String(viewerId)) markRecordsSeen();
 
     if (d.goals.length) {
       var g = section("Цели");
@@ -275,6 +276,18 @@
         s.list.appendChild(li);
       });
       c.appendChild(s);
+    }
+    if (p.best_day) {
+      // v2.201.0: «Лучший день» — по нажатию итоги того дня
+      var bd = p.best_day;
+      var day = clickable(el("div", "card best-day"), "summary/day/" + bd.ymd);
+      var bb = el("div", "body");
+      bb.appendChild(el("div", "eyebrow", "Лучший день"));
+      bb.appendChild(el("div", "name", bd.date));
+      bb.appendChild(el("div", "sub", bd.note));
+      day.appendChild(bb);
+      day.appendChild(num("best-day-delta tone-win", bd.delta));
+      c.appendChild(day);
     }
     if (p.signature) {
       var sg = p.signature;
@@ -550,6 +563,7 @@
         }
       }
       storageSet(SEEN_KEY, JSON.stringify(earnedIds.slice().sort()));
+      setTimeout(function () { checkMeDot(null); }, 50);
     });
   }
 

@@ -17,7 +17,7 @@
       toggledReactions: toggledReactions, matchMood: matchMood, tapGuard: tapGuard, chipSets: chipSets, isPhoneClient: isPhoneClient, replayTiming: replayTiming, ballHeight: ballHeight,
       nextNav: nextNav, sparkPoints: sparkPoints, odometerDigits: odometerDigits, raceOrder: raceOrder,
       edgeProgress: edgeProgress, isRootRoute: isRootRoute, playerFromRoute: playerFromRoute,
-      reignClock: reignClock, timelineShares: timelineShares, goalsFresh: goalsFresh, desktopFullscreenDefault: desktopFullscreenDefault
+      reignClock: reignClock, timelineShares: timelineShares, goalsFresh: goalsFresh, desktopFullscreenDefault: desktopFullscreenDefault, deltaTone: deltaTone
     };
     return;
   }
@@ -432,6 +432,26 @@
 
   function num(cls, text) { var n = el("div", cls); countUp(n, text); return n; }
 
+  // v2.201.0: «+» — победа, «−» — поражение, «0.0» — без цвета (ничья с нулевой дельтой)
+  function deltaTone(text) {
+    var c = String(text || "").charAt(0);
+    return c === "+" ? "tone-win" : (c === "−" || c === "-") ? "tone-loss" : "";
+  }
+
+  // Досчитать число от одного значения до другого (рейтинг с прошлого захода)
+  function countBetween(node, from, to, decimals) {
+    if (reduceMotion) { node.textContent = to.toFixed(decimals); return; }
+    var start = null, duration = 1100;
+    function frame(ts) {
+      if (start === null) start = ts;
+      var p = Math.min(1, (ts - start) / duration);
+      node.textContent = (from + (to - from) * (1 - Math.pow(1 - p, 3))).toFixed(decimals);
+      if (p < 1) requestAnimationFrame(frame);
+    }
+    node.textContent = from.toFixed(decimals);
+    requestAnimationFrame(frame);
+  }
+
   // ── API ────────────────────────────────────────────────────────────────────
   // Ответы держим минуту: переключение разделов профиля и возврат «назад» не
   // ходят на сервер заново. Ошибки не кэшируются. Данные меняются, только когда
@@ -558,6 +578,13 @@
       d: "M" + x(0).toFixed(1) + "," + bottom + " L" + pts.join(" L") + " L" + x(vals.length - 1).toFixed(1) + "," + bottom + " Z" }));
     s.appendChild(svg("polyline", { "class": "chart-line", points: pts.join(" "), pathLength: "1" }));
     var last = vals.length - 1;
+    // v2.201.0: отметки — трон, ачивки, личные рекорды; подпись — по нажатию
+    var marks = {};
+    (chart.marks || []).forEach(function (mk) {
+      if (mk.i < 0 || mk.i > last) return;
+      marks[mk.i] = mk;
+      s.appendChild(svg("circle", { "class": "chart-mark mark-" + mk.kind, cx: x(mk.i), cy: y(vals[mk.i]), r: 3 }));
+    });
     var dot = svg("circle", { "class": "chart-dot", cx: x(last), cy: y(vals[last]), r: 3.5 });
     var marker = svg("line", { "class": "chart-marker", x1: 0, x2: 0, y1: T, y2: H - B });
     s.appendChild(marker);
@@ -580,10 +607,12 @@
       if (!box.width) return;
       var px = (ev.clientX - box.left) / box.width * W;
       var i = Math.max(0, Math.min(vals.length - 1, Math.round((px - L) / (W - L - R) * (vals.length - 1))));
+      if (!marks[i] && marks[i - 1]) i -= 1;          // к отметке рядом — притянуть
+      else if (!marks[i] && marks[i + 1]) i += 1;
       marker.setAttribute("x1", x(i)); marker.setAttribute("x2", x(i));
       marker.classList.add("is-on");
       dot.setAttribute("cx", x(i)); dot.setAttribute("cy", y(vals[i]));
-      meta.textContent = chart.labels[i] + " · " + vals[i].toFixed(1);
+      meta.textContent = chart.labels[i] + " · " + vals[i].toFixed(1) + (marks[i] ? " · " + marks[i].texts.join(", ") : "");
     }
     function release() {
       marker.classList.remove("is-on");
@@ -641,6 +670,85 @@
   // картинки, высота «ступеньки» под игроком — до заднего края верхней грани.
   var PODIUM_ART = "static/podium.webp";
 
+  // v2.201.0: серия от трёх побед — огонь вокруг аватара (рейтинг, подиум)
+  var HOT_STREAK = 3;
+
+  function hotAvatar(p, size, id) {
+    var a = avatar(id ? { id: id, initial: p.initial } : p, size);
+    if (p.streak >= HOT_STREAK) {
+      a.classList.add("is-hot");
+      a.title = "Серия побед: " + p.streak;
+    }
+    return a;
+  }
+
+  // v2.201.0: место на подиуме сменилось с прошлого захода — аватар переезжает
+  // со старой ступени на новую, новичок подиума поднимается снизу
+  var PODIUM_SEEN_KEY = "podium_seen_v1";
+
+  function podiumMoves(wrap, items) {
+    storageGet(PODIUM_SEEN_KEY, function (raw) {
+      if (raw === undefined) return;
+      var now = {};
+      items.forEach(function (p, i) { if (p && i < 3) now[p.id] = i + 1; });
+      var prev = null;
+      try { prev = JSON.parse(raw || "null"); } catch (e) { prev = null; }
+      setTimeout(function () {
+        if (!wrap.isConnected) return;
+        storageSet(PODIUM_SEEN_KEY, JSON.stringify(now));
+        if (!prev || reduceMotion || !wrap.animate) return;
+        Object.keys(now).forEach(function (id) {
+          var from = prev[id], to = now[id];
+          if (from === to) return;
+          var av = wrap.querySelector(".podium-" + to + " .avatar");
+          if (!av || !av.animate) return;
+          var frames;
+          if (from) {
+            var anchor = wrap.querySelector(".podium-" + from + " .avatar") || wrap.querySelector(".podium-" + from + " .podium-step");
+            if (!anchor) return;
+            var a = av.getBoundingClientRect(), b = anchor.getBoundingClientRect();
+            var dx = (b.left + b.width / 2) - (a.left + a.width / 2), dy = (b.top + b.height / 2) - (a.top + a.height / 2);
+            frames = [{ transform: "translate(" + dx + "px," + dy + "px)" },
+              { transform: "translate(" + dx / 2 + "px," + (dy / 2 - 30) + "px)", offset: 0.5 }, { transform: "none" }];
+          } else {
+            frames = [{ transform: "translateY(60px) scale(.5)", opacity: 0 }, { transform: "none", opacity: 1 }];
+          }
+          av.animate(frames, { duration: 900, delay: 700, easing: "cubic-bezier(.3, .9, .3, 1)", fill: "backwards" });
+        });
+      }, 400);
+    });
+  }
+
+  // v2.201.0: рейтинг изменился с прошлого захода — число досчитывается от старого
+  // значения, над ним всплывает разница
+  var ME_RATING_KEY = "me_rating_seen_v1";
+
+  function meRating(card, rating) {
+    var node = el("div", "me-rating");
+    var done = false;
+    function plain() { if (!done) { done = true; countUp(node, rating); } }
+    var fallback = setTimeout(plain, 800);
+    storageGet(ME_RATING_KEY, function (raw) {
+      clearTimeout(fallback);
+      var before = parseFloat(raw), after = parseFloat(rating);
+      var changed = raw && !isNaN(before) && !isNaN(after) && Math.abs(after - before) >= 0.05 &&
+        !app.classList.contains("quiet");
+      if (!changed || done) plain();
+      else {
+        done = true;
+        countBetween(node, before, after, 1);
+        var diff = after - before;
+        var bubble = el("span", "me-bubble " + (diff > 0 ? "tone-win" : "tone-loss"),
+          (diff > 0 ? "+" : "−") + Math.abs(diff).toFixed(1));
+        card.appendChild(bubble);
+        setTimeout(function () { bubble.remove(); }, 2600);
+      }
+      if (raw === undefined) return;
+      setTimeout(function () { if (card.isConnected) storageSet(ME_RATING_KEY, rating); }, 400);
+    });
+    return node;
+  }
+
   function podium(items) {
     var wrap = el("div", "podium podium-stand");
     var art = el("img", "podium-art");
@@ -657,7 +765,7 @@
         var crownSlot = el("div", "crown-slot");
         if (p.champion) crownSlot.appendChild(icon("crown", "crown"));
         col.appendChild(crownSlot);
-        col.appendChild(avatar(p, place === 1 ? "xl" : "lg"));
+        col.appendChild(hotAvatar(p, place === 1 ? "xl" : "lg"));
         col.appendChild(el("div", "podium-name", p.name));
         col.appendChild(num("podium-rating", p.rating));
       }
@@ -710,7 +818,8 @@
     var tags = [];
     var mood = matchMood({ winner: it.winner, boss: it.boss, sets: chipSets(it.sets) });
     if (featured && featured.id === it.id) tags.push(["feed-tag", featured.title]);
-    if (mood) tags.push(["feed-tag mood-tag mood-" + mood, MOOD_LABELS[mood]]);
+    // v2.201.0: «Отыгрался» в ленте — почти у каждого 2:1, поэтому только на экране матча
+    if (mood && mood !== "rally") tags.push(["feed-tag mood-tag mood-" + mood, MOOD_LABELS[mood]]);
     if (!tags.length) return null;
     var wrap = el("div", "feed-tags");
     tags.forEach(function (t) { wrap.appendChild(el("span", t[0], t[1])); });
@@ -1007,7 +1116,10 @@
     var homeCols = twoCols(c, false);
     var outer = c;
     c = homeCols.main;
-    c.appendChild(podium(d.podium));
+    var podiumNode = podium(d.podium);
+    c.appendChild(podiumNode);
+    podiumMoves(podiumNode, d.podium);
+    checkMeDot(d.me);
 
     var me = clickable(el("div", "card me-card"), "player/" + d.me.id);
     me.appendChild(avatar({ id: d.me.id, initial: d.me.initial }, "md"));
@@ -1016,7 +1128,7 @@
     if (d.me.week) mb.appendChild(el("div", "sub " + (d.me.week_up ? "tone-win" : "tone-loss"), d.me.week));
     if (d.me.today) mb.appendChild(el("div", "sub", d.me.today));
     me.appendChild(mb);
-    me.appendChild(num("me-rating", d.me.rating));
+    me.appendChild(meRating(me, d.me.rating));
     c.appendChild(me);
     c.appendChild(challengeButton(null));
     if (d.goals) c.appendChild(goalsBlock(d.goals));
@@ -1045,7 +1157,7 @@
   function boardRow(row) {
     var li = clickable(el("li", "row" + (row.is_viewer ? " is-viewer" : "")), "player/" + row.player_id);
     li.appendChild(el("div", "rank-num", String(row.rank)));
-    li.appendChild(avatar({ id: row.player_id, initial: row.initial }, "md"));
+    li.appendChild(hotAvatar(row, "md", row.player_id));
     var body = el("div", "body");
     var nameLine = el("div", "name");
     nameLine.appendChild(document.createTextNode(row.is_viewer ? row.name + ", ты" : row.name));
@@ -1418,6 +1530,7 @@
       c.appendChild(mb);
     }
     if (d.personal) personalBlocks(c, d.personal, playerId);
+    if (String(playerId) === String(viewerId)) markRecordsSeen();
 
     if (d.goals.length) {
       var g = section("Цели");
@@ -1457,6 +1570,18 @@
         s.list.appendChild(li);
       });
       c.appendChild(s);
+    }
+    if (p.best_day) {
+      // v2.201.0: «Лучший день» — по нажатию итоги того дня
+      var bd = p.best_day;
+      var day = clickable(el("div", "card best-day"), "summary/day/" + bd.ymd);
+      var bb = el("div", "body");
+      bb.appendChild(el("div", "eyebrow", "Лучший день"));
+      bb.appendChild(el("div", "name", bd.date));
+      bb.appendChild(el("div", "sub", bd.note));
+      day.appendChild(bb);
+      day.appendChild(num("best-day-delta tone-win", bd.delta));
+      c.appendChild(day);
     }
     if (p.signature) {
       var sg = p.signature;
@@ -1732,6 +1857,7 @@
         }
       }
       storageSet(SEEN_KEY, JSON.stringify(earnedIds.slice().sort()));
+      setTimeout(function () { checkMeDot(null); }, 50);
     });
   }
 
@@ -1861,7 +1987,7 @@
     body.appendChild(el("div", "name", sameOpponent ? RESULT_WORDS[m.result] : m.opponent));
     body.appendChild(el("div", "sub", [m.date, m.score, m.boss ? "боссфайт" : ""].filter(Boolean).join(" · ")));
     li.appendChild(body);
-    if (m.delta) li.appendChild(el("div", "delta " + (m.delta.charAt(0) === "+" ? "tone-win" : "tone-loss"), m.delta));
+    if (m.delta) li.appendChild(el("div", "delta " + deltaTone(m.delta), m.delta));
     return li;
   }
 
@@ -2470,7 +2596,10 @@
     else g.fillRect(x, y, w, h);
   }
 
-  function signedColor(text) { return String(text).charAt(0) === "+" ? CARD.win : CARD.loss; }
+  function signedColor(text) {
+    var tone = deltaTone(text);
+    return tone === "tone-win" ? CARD.win : tone === "tone-loss" ? CARD.loss : CARD.hint;
+  }
 
   function titleBlock(title, sub) {
     return { h: 150, draw: function (g, y) {
@@ -2714,7 +2843,7 @@
         b.appendChild(el("div", "name", p.name));
         b.appendChild(el("div", "sub", p.matches + " · " + p.record));
         li.appendChild(b);
-        li.appendChild(el("span", "value " + (p.delta.charAt(0) === "+" ? "tone-win" : "tone-loss"), p.delta));
+        li.appendChild(el("span", "value " + deltaTone(p.delta), p.delta));
         ps.list.appendChild(li);
       });
       c.appendChild(ps);
@@ -3034,6 +3163,21 @@
     return blocks;
   }
 
+  // v2.201.0: когда счёт досчитался, победитель «подпрыгивает»; апсет (победа над
+  // тем, кто сильно выше) при первом просмотре — с конфетти
+  function winnerJump(row, d, replay) {
+    if (!d.winner || reduceMotion || app.classList.contains("quiet")) return;
+    var side = row.children[d.winner === "a" ? 0 : 2];
+    var t = replayTiming(d.sets.length);
+    var wait = replay ? t.start + d.sets.length * (t.per + t.gap) + 150 : 700;
+    setTimeout(function () {
+      var av = side && side.querySelector(".avatar");
+      if (!av || !av.isConnected) return;
+      av.classList.add("is-jump");
+      if (d.upset && replay) { confetti(av); hapticSuccess(); }
+    }, wait);
+  }
+
   function renderMatch(c, d) {
     var mood = matchMood(d);
     // штамп — над победителем (v2.185.0; раньше всегда справа)
@@ -3044,7 +3188,7 @@
       var s = clickable(el("div", "versus-side" + (d.winner === mine ? " is-winner" : "")), "player/" + p.id);
       s.appendChild(avatar(p, "lg"));
       s.appendChild(el("div", "versus-name", p.name));
-      if (p.delta) s.appendChild(el("div", "sub " + (p.delta.charAt(0) === "+" ? "tone-win" : "tone-loss"), p.delta));
+      if (p.delta) s.appendChild(el("div", "sub " + deltaTone(p.delta), p.delta));
       return s;
     }
     var aSets = d.sets.filter(function (x) { return x.a > x.b; }).length;
@@ -3090,6 +3234,7 @@
     });
     c.appendChild(sets);
     if (replay) replaySets(card, rows, aNum, bNum, d);
+    winnerJump(row, d, replay);
 
     if (d.reason || d.report) {
       var story = el("div", "card");
@@ -3635,6 +3780,40 @@
     });
   }
 
+  // v2.201.0: цель на мастерство можно заменить сам — один раз за неделю
+  function skillSwitch(block, g) {
+    var b = el("button", "goal-switch", "Сменить цель");
+    b.type = "button";
+    b.addEventListener("click", function (e) {
+      e.stopPropagation();
+      haptic("select");
+      var wrap = el("div", "sheet-wrap");
+      var sheet = el("div", "sheet quick-sheet");
+      sheet.appendChild(el("div", "sheet-title", "Цель на мастерство"));
+      sheet.appendChild(el("div", "quick-sub", "Поменять можно один раз за неделю"));
+      var list = el("ul", "list list-plain compare-list");
+      g.skill_options.forEach(function (o) {
+        var li = el("li", "row tap");
+        li.setAttribute("role", "button");
+        li.appendChild(el("div", "body name", o.title));
+        li.addEventListener("click", function () {
+          wrap.remove();
+          post("goals/skill", { key: o.key }).then(function (r) {
+            apiCache = {};
+            if (block.isConnected && r.goals) block.parentNode.replaceChild(goalsBlock(r.goals), block);
+          }, function (err) { sheetOpen(null, "Не получилось", err.message, ""); });
+        });
+        list.appendChild(li);
+      });
+      sheet.appendChild(list);
+      sheet.addEventListener("click", function (ev) { ev.stopPropagation(); });
+      wrap.addEventListener("click", function () { wrap.remove(); });
+      wrap.appendChild(sheet);
+      document.body.appendChild(wrap);
+    });
+    return b;
+  }
+
   function goalsBlock(g) {
     var wrap = el("section", "group goals");
     var head = el("div", "group-head");
@@ -3652,6 +3831,7 @@
       if (goal.note) body.appendChild(el("div", "sub", goal.note));
       li.appendChild(body);
       li.appendChild(el("div", "meta goal-count", goal.done ? "готово" : goal.progress + " / " + goal.target));
+      if (goal.skill && g.skill_options && g.skill_options.length) body.appendChild(skillSwitch(wrap, g));
       list.appendChild(li);
     });
     wrap.appendChild(list);
@@ -3666,6 +3846,48 @@
     }
     celebrateGoals(wrap, g);
     return wrap;
+  }
+
+  // Точка на вкладке «Я» (v2.201.0): есть ачивка или личный рекорд, которых игрок
+  // ещё не видел. Ачивки — та же память, что подсветка новых (SEEN_KEY), рекорды —
+  // время последнего, увиденного на своём профиле. Первый раз — только запомнить.
+  var REC_SEEN_KEY = "seen_record_ts_v1";
+  var meDot = false;
+  var lastMe = null;
+
+  function setMeDot(on) {
+    meDot = on;
+    var tab = document.querySelector(".tab-me");
+    if (tab) tab.classList.toggle("has-dot", on);
+  }
+
+  function checkMeDot(me) {
+    if (me) lastMe = me;
+    me = lastMe;
+    if (!me || !me.achievements) return;
+    storageGet(SEEN_KEY, function (rawA) {
+      if (rawA === undefined) return;
+      storageGet(REC_SEEN_KEY, function (rawR) {
+        var seen = null;
+        try { seen = JSON.parse(rawA || "null"); } catch (e) { seen = null; }
+        if (!Array.isArray(seen)) {
+          seen = me.achievements.slice();
+          storageSet(SEEN_KEY, JSON.stringify(seen.slice().sort()));
+        }
+        var recSeen = parseInt(rawR || "", 10);
+        if (rawR === null || isNaN(recSeen)) {
+          recSeen = me.record_ts || 0;
+          storageSet(REC_SEEN_KEY, String(recSeen));
+        }
+        setMeDot(me.achievements.some(function (id) { return seen.indexOf(id) < 0; }) || (me.record_ts || 0) > recSeen);
+      });
+    });
+  }
+
+  function markRecordsSeen() {
+    if (!lastMe) return;
+    storageSet(REC_SEEN_KEY, String(lastMe.record_ts || 0));
+    setTimeout(function () { checkMeDot(null); }, 50);
   }
 
   // «Пока тебя не было»: что изменилось с прошлого захода. Время захода —
@@ -4242,7 +4464,7 @@
   function drawTabbar(active) {
     tabbar.textContent = "";
     TABS.forEach(function (t) {
-      var b = el("button", "tab" + (t[0] === active ? " is-active" : ""));
+      var b = el("button", "tab tab-" + t[0] + (t[0] === active ? " is-active" : "") + (t[0] === "me" && meDot ? " has-dot" : ""));
       b.type = "button";
       b.appendChild(icon(t[3]));
       b.appendChild(el("span", "tab-label", t[2]));
@@ -4264,30 +4486,43 @@
 
   function currentRoute() { return location.hash.replace(/^#\/?/, ""); }
 
-  // Позиция прокрутки по адресу: возврат «назад» попадает на то же место
+  // Позиция прокрутки — по записи истории (v2.201.0), а не по адресу. Переход по
+  // ссылке создаёт новую запись — экран сверху, даже если этот адрес уже был в
+  // истории (матч → профиль → тот же матч открывался с середины). «Назад»
+  // (кнопка Telegram, свайп) возвращает на запись со своим id — на то же место.
   var scrollPos = {};
   var renderedRoute = null;
+  var renderedNav = null;
+  var currentNav = { id: null, restore: false };
+  var navCounter = 0;
+  try { if ("scrollRestoration" in history) history.scrollRestoration = "manual"; } catch (e) { /* старый браузер */ }
 
-  // v2.200.0: место прокрутки восстанавливается только при возврате «назад»;
-  // новый заход на экран (вглубь) — сверху. Раньше «Зал славы» при повторном
-  // открытии оказывался там, где его бросили в прошлый раз.
+  function navEntry() {
+    var st = history.state;
+    if (st && st.navId) return { id: st.navId, restore: true };
+    var id = Date.now().toString(36) + "-" + (++navCounter);
+    try { history.replaceState({ navId: id }, "", location.href); } catch (e) { /* без истории — всегда сверху */ }
+    return { id: id, restore: false };
+  }
+
   function enterScreen(route, quiet) {
-    var dir = quiet === true ? "none" : navDirection(route);
-    if (dir === "forward") delete scrollPos[route];
-    app.setAttribute("data-enter", dir);
+    app.setAttribute("data-enter", quiet === true ? "none" : navDirection(route));
   }
 
   function finishRender(route, keepScroll) {
     renderedRoute = route;
+    renderedNav = currentNav.id;
     track(route);
     if (keepScroll) return;
-    window.scrollTo(0, scrollPos[route] || 0);
+    window.scrollTo(0, currentNav.restore ? (scrollPos[currentNav.id] || 0) : 0);
   }
 
   function render(quiet) {
     var route = currentRoute();
     app.classList.toggle("quiet", quiet === true);
-    if (renderedRoute !== null && renderedRoute !== route) scrollPos[renderedRoute] = window.scrollY;
+    var nav = navEntry();
+    if (renderedNav !== null && renderedNav !== nav.id) scrollPos[renderedNav] = window.scrollY;
+    currentNav = nav;
     if (route === "me") { location.replace("#/player/" + viewerId); return; }
     // «Твой месяц» во весь экран (v2.183.0); остальные экраны — если так выбрано (v2.186.0)
     if (!/^month/.test(route) && !wantFullscreen()) leaveFullscreen();
@@ -4306,6 +4541,7 @@
         setSegment(tab);
         loadTab(tab, token);
         renderedRoute = route;
+        renderedNav = currentNav.id;
         track(route);
         return;
       }
@@ -4385,7 +4621,7 @@
     return Promise.all(routeJobs(route)).then(function () {
       if (currentRoute() !== route || document.querySelector(".sheet-wrap")) return;
       shell = null;
-      scrollPos[route] = y;
+      if (renderedNav !== null) scrollPos[renderedNav] = y;
       render(true);
       requestAnimationFrame(function () { window.scrollTo(0, y); });
     }, function () { /* нет связи — оставляем как было */ });

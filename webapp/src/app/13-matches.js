@@ -7,7 +7,7 @@
     body.appendChild(el("div", "name", sameOpponent ? RESULT_WORDS[m.result] : m.opponent));
     body.appendChild(el("div", "sub", [m.date, m.score, m.boss ? "боссфайт" : ""].filter(Boolean).join(" · ")));
     li.appendChild(body);
-    if (m.delta) li.appendChild(el("div", "delta " + (m.delta.charAt(0) === "+" ? "tone-win" : "tone-loss"), m.delta));
+    if (m.delta) li.appendChild(el("div", "delta " + deltaTone(m.delta), m.delta));
     return li;
   }
 

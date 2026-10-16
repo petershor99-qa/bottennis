@@ -214,6 +214,9 @@ async def summary_payload(session: AsyncSession, kind: str) -> dict | None:
 
 # ── Экран матча ───────────────────────────────────────────────────────────────
 
+UPSET_DELTA = 20   # как «апсет — фаворит повержен» в match_drama_reason
+
+
 async def match_payload(session: AsyncSession, match_id: int) -> dict | None:
     m = (await session.execute(
         select(Match).where(Match.id == match_id, Match.status == MatchStatus.completed)
@@ -245,6 +248,8 @@ async def match_payload(session: AsyncSession, match_id: int) -> dict | None:
         "winner": winner,
         "sets": sets,
         "boss": bool(m.is_boss_fight),
+        # v2.201.0: апсет (тот же порог, что в подписи «апсет — фаворит повержен») — конфетти
+        "upset": bool(winner) and not m.is_boss_fight and (m.rating_change or 0) >= UPSET_DELTA,
         "reason": plain(match_drama_reason(m)) if match_drama_score(m) >= DRAMA_THRESHOLD else "",
         "report": report,
         "h2h": {"a": h2h["wins"], "b": h2h["losses"], "draws": h2h["draws"],

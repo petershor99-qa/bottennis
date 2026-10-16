@@ -135,7 +135,7 @@ async def test_streak_counts_fully_closed_weeks(db, monkeypatch):
     await db.commit()
     done_weeks = {MONDAY - timedelta(weeks=1), MONDAY - timedelta(weeks=2)}
 
-    def fake(history, week, pid, start, names):
+    def fake(history, week, pid, start, names, chosen=None):
         ok = start in done_weeks
         return [{"key": "x", "title": "x", "target": 1, "progress": int(ok), "done": ok}]
 
