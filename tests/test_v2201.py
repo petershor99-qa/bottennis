@@ -138,3 +138,12 @@ def test_page_wiring():
     for rule in (".tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }", ".avatar.is-hot",
                  ".tab.has-dot::after", ".podium-stand { max-width: 440px;"):
         assert rule in CSS
+
+
+def test_scroll_to_top_survives_mobile_chrome():
+    # v2.201.1: без «якоря прокрутки», наверх до каркаса загрузки и повтор после кадра
+    routes = (SRC / "90-routes.js").read_text(encoding="utf-8")
+    assert "if (!nav.restore) window.scrollTo(0, 0);" in routes
+    assert "renderedNav === id && Math.abs(window.scrollY - target) > 2" in routes
+    assert "scrollPos[currentNav.id] = window.scrollY;" in routes          # снимок главной
+    assert "overflow-anchor: none;" in CSS

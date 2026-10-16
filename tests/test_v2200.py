@@ -76,7 +76,7 @@ async def test_closed_current_week_counts_in_streak(db, monkeypatch):
 
 def test_forward_navigation_starts_at_top():
     js = (SRC / "90-routes.js").read_text(encoding="utf-8")
-    assert "currentNav.restore ? (scrollPos[currentNav.id] || 0) : 0" in js   # v2.201.0 — по записи истории
+    assert "currentNav.restore ? (scrollPos[id] || 0) : 0" in js   # v2.201.0 — по записи истории
     assert js.count("enterScreen(route, quiet);") == 2
 
 

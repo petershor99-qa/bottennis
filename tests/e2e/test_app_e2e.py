@@ -161,3 +161,34 @@ def test_edge_swipe_goes_back(browser, base_url):
     page.wait_for_timeout(300)
     assert page.evaluate("location.hash") == "#/rating"
     page.context.close()
+
+
+def test_screen_opens_from_top_on_phone(browser, base_url):
+    """v2.201.1: на телефоне (мобильный Chrome, Telegram на Android) экран после
+    нажатия открывался с середины — браузер возвращал прежнюю прокрутку."""
+    ctx = browser.new_context(viewport={"width": 393, "height": 780}, is_mobile=True, has_touch=True,
+                              device_scale_factor=2.75)
+    page = ctx.new_page()
+    page.goto(f"{base_url}/preview#/")
+    wait_screen(page)
+    page.mouse.wheel(0, 2500)
+    page.wait_for_timeout(400)
+    card = page.locator(".feed-match").nth(5)
+    card.scroll_into_view_if_needed()
+    card.tap()
+    wait_screen(page)
+    page.wait_for_timeout(800)
+    assert page.evaluate("location.hash").startswith("#/match/")
+    assert page.evaluate("scrollY") == 0
+    page.mouse.wheel(0, 3000)
+    page.wait_for_timeout(300)
+    page.locator(".tab-home").tap()
+    wait_screen(page)
+    page.wait_for_timeout(300)
+    page.mouse.wheel(0, 900)
+    page.wait_for_timeout(400)
+    page.locator(".club-tile", has_text="Итоги").tap()
+    wait_screen(page)
+    page.wait_for_timeout(800)
+    assert page.evaluate("scrollY") == 0
+    ctx.close()

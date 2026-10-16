@@ -85,6 +85,9 @@ html, body {
   -webkit-font-smoothing: antialiased;
   /* v2.185.0: двойной тап не увеличивает экран и не ждёт 300 мс */
   touch-action: manipulation;
+  /* v2.201.1: без «якоря прокрутки» — экраны перерисовываются целиком, и мобильный
+     Chrome (Telegram на Android) возвращал прежнюю прокрутку: экран открывался с середины */
+  overflow-anchor: none;
 }
 
 .screen {
