@@ -131,15 +131,24 @@
   // Во весь экран всегда (v2.186.0): на телефоне — сразу при запуске (Telegram
   // 8.0+; кнопки Telegram «закрыть» и «⋮» остаются поверх, под них — отступ
   // safe area). На компьютере окно приложения Telegram не даёт «чуть увеличить»,
-  // только на весь монитор — поэтому там кнопка в углу, выбор запоминается на
-  // этом устройстве (localStorage, не CloudStorage: на телефоне свой режим).
+  // только на весь монитор — там кнопка в углу, выбор запоминается на этом
+  // устройстве (localStorage, не CloudStorage: на телефоне свой режим).
+  // v2.200.0: в Telegram для компьютера (Windows/Linux, macOS) по умолчанию
+  // во весь экран — узкое окно было неудобным; кнопкой можно вернуть окно.
   var FS_KEY = "fullscreen_desktop_v1";
   var fsButton = null;
 
   function isPhoneClient(platform) { return platform === "android" || platform === "ios"; }
 
+  function desktopFullscreenDefault(platform, saved) {
+    if (saved === "1" || saved === "0") return saved === "1";
+    return platform === "tdesktop" || platform === "macos";
+  }
+
   function desktopWantsFullscreen() {
-    try { return window.localStorage.getItem(FS_KEY) === "1"; } catch (e) { return false; }
+    var saved = null;
+    try { saved = window.localStorage.getItem(FS_KEY); } catch (e) { saved = null; }
+    return desktopFullscreenDefault(clientInfo().platform, saved);
   }
 
   function wantFullscreen() {

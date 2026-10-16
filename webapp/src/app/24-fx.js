@@ -50,6 +50,30 @@
     setTimeout(function () { if (layer.parentNode) layer.parentNode.removeChild(layer); }, 1400);
   }
 
+  // Мячики от кольца закрытой цели (v2.200.0)
+  function ballBurst(anchor) {
+    if (reduceMotion || !anchor || !anchor.getBoundingClientRect) return;
+    var box = anchor.getBoundingClientRect();
+    var layer = el("div", "confetti");
+    layer.style.left = (box.left + box.width / 2) + "px";
+    layer.style.top = (box.top + box.height / 2) + "px";
+    for (var i = 0; i < 10; i++) {
+      var ball = el("i", "ball-bit");
+      var angle = (Math.PI * 2 * i) / 10 + Math.random() * 0.4;
+      var dist = 26 + Math.random() * 26;
+      ball.style.setProperty("--dx", Math.round(Math.cos(angle) * dist) + "px");
+      ball.style.setProperty("--dy", Math.round(Math.sin(angle) * dist) + "px");
+      ball.style.animationDelay = Math.round(Math.random() * 60) + "ms";
+      layer.appendChild(ball);
+    }
+    document.body.appendChild(layer);
+    setTimeout(function () { if (layer.parentNode) layer.parentNode.removeChild(layer); }, 1000);
+  }
+
+  function hapticSuccess() {
+    try { if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success"); } catch (e) { /* нет вибрации */ }
+  }
+
   // Заставка «Новое звание»: один раз, при первом заходе в свой профиль после повышения
   var TITLE_KEY = "seen_title_v1";
 

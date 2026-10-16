@@ -65,6 +65,15 @@
   var scrollPos = {};
   var renderedRoute = null;
 
+  // v2.200.0: место прокрутки восстанавливается только при возврате «назад»;
+  // новый заход на экран (вглубь) — сверху. Раньше «Зал славы» при повторном
+  // открытии оказывался там, где его бросили в прошлый раз.
+  function enterScreen(route, quiet) {
+    var dir = quiet === true ? "none" : navDirection(route);
+    if (dir === "forward") delete scrollPos[route];
+    app.setAttribute("data-enter", dir);
+  }
+
   function finishRender(route, keepScroll) {
     renderedRoute = route;
     track(route);
@@ -100,7 +109,7 @@
       shell = null;
       app.textContent = "";
       app.classList.remove("is-wide");
-      app.setAttribute("data-enter", quiet === true ? "none" : navDirection(route));
+      enterScreen(route, quiet);
       app.appendChild(skeleton("profile"));
       api("player/" + playerId).then(function (d) {
         if (token !== renderToken) return;
@@ -129,7 +138,7 @@
 
     app.textContent = "";
     app.classList.remove("is-wide");
-    app.setAttribute("data-enter", quiet === true ? "none" : navDirection(route));
+    enterScreen(route, quiet);
     app.appendChild(skeletonFor(route));
     entry[2](match).then(function (data) {
       if (token !== renderToken) return;

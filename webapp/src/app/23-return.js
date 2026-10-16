@@ -22,6 +22,60 @@
     return s;
   }
 
+  // Праздник закрытой цели (v2.200.0): один раз на цель за неделю — галочка
+  // прочерчивается, от кольца разлетаются мячики; все три закрыты — конфетти
+  // и счётчик недель подряд щёлкает на +1. Что уже показано — в памяти устройства.
+  var GOALS_SEEN_KEY = "goals_seen_v1";
+
+  // Чистая часть (проверяется в Node): что праздновать и что запомнить
+  function goalsFresh(stored, week, goals, allDone) {
+    var parts = String(stored || "").split("|");
+    var same = parts[0] === week;
+    var seen = same && parts[1] ? parts[1].split(",") : [];
+    var seenAll = same && parts[2] === "all";
+    var fresh = goals.filter(function (g) { return g.done && seen.indexOf(g.key) < 0; })
+      .map(function (g) { return g.key; });
+    var done = goals.filter(function (g) { return g.done; }).map(function (g) { return g.key; });
+    return { fresh: fresh, all: !!allDone && !seenAll,
+             store: week + "|" + done.join(",") + "|" + (allDone ? "all" : "") };
+  }
+
+  function celebrateGoals(wrap, g) {
+    if (!g.week) return;
+    storageGet(GOALS_SEEN_KEY, function (raw) {
+      if (raw === undefined) return;                  // памяти нет — без праздника
+      var r = goalsFresh(raw, g.week, g.goals, g.all_done);
+      if (!r.fresh.length && !r.all) return;
+      // главная могла сразу перерисоваться свежими данными (старт из снимка) —
+      // празднуем только то, что осталось на экране
+      setTimeout(function () {
+        if (!wrap.isConnected) return;
+        storageSet(GOALS_SEEN_KEY, r.store);
+        r.fresh.forEach(function (key, i) {
+          var row = wrap.querySelector('[data-goal="' + key + '"]');
+          if (!row) return;
+          row.classList.add("is-fresh");
+          setTimeout(function () {
+            hapticSuccess();
+            ballBurst(row.querySelector(".goal-ring"));
+          }, (reduceMotion ? 0 : 750) + i * 250);
+        });
+        if (!r.all) return;
+        var foot = wrap.querySelector(".goals-foot");
+        var count = wrap.querySelector(".goals-streak");
+        setTimeout(function () {
+          if (count) {
+            count.textContent = String(Math.max(0, g.streak - 1));
+            setTimeout(function () { count.textContent = String(g.streak); count.classList.add("is-flip"); },
+              reduceMotion ? 0 : 350);
+          }
+          if (foot) { foot.classList.add("is-fresh"); confetti(foot); }
+          hapticSuccess();
+        }, reduceMotion ? 0 : 900 + r.fresh.length * 250);
+      }, 400);
+    });
+  }
+
   function goalsBlock(g) {
     var wrap = el("section", "group goals");
     var head = el("div", "group-head");
@@ -32,6 +86,7 @@
     g.goals.forEach(function (goal) {
       var li = goal.player_id ? clickable(el("li", "row goal-row"), "player/" + goal.player_id) : el("li", "row goal-row");
       if (goal.done) li.classList.add("is-done");
+      li.setAttribute("data-goal", goal.key);
       li.appendChild(goalRing(goal.progress, goal.target, goal.done));
       var body = el("div", "body");
       body.appendChild(el("div", "name", goal.title));
@@ -41,10 +96,16 @@
       list.appendChild(li);
     });
     wrap.appendChild(list);
-    var foot = [];
-    if (g.all_done) foot.push("Неделя закрыта");
-    if (g.streak) foot.push("Закрыто недель подряд: " + g.streak);
-    if (foot.length) wrap.appendChild(el("p", "footnote goals-foot" + (g.all_done ? " is-done" : ""), foot.join(" · ")));
+    if (g.all_done || g.streak) {
+      var foot = el("p", "footnote goals-foot" + (g.all_done ? " is-done" : ""));
+      if (g.all_done) foot.appendChild(document.createTextNode("Неделя закрыта"));
+      if (g.streak) {
+        foot.appendChild(document.createTextNode((g.all_done ? " · " : "") + "Закрыто недель подряд: "));
+        foot.appendChild(el("span", "goals-streak", String(g.streak)));
+      }
+      wrap.appendChild(foot);
+    }
+    celebrateGoals(wrap, g);
     return wrap;
   }
 
