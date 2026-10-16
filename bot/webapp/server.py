@@ -249,6 +249,10 @@ async def summary(request, session, viewer):
     kind = request.match_info["kind"]
     if kind == "day":
         payload = await api_club.summary_payload(session, kind)
+        if payload is not None:
+            # v2.202.1: остальные вкладки считаются на лету — бледными (по снимкам) их не показываем
+            for tab in payload["tabs"]:
+                tab["available"] = True
     else:
         # v2.202.0: неделя, месяц, квартал и год — на лету за любой период (как день)
         payload = await api_period.period_payload(session, viewer, kind, request.query.get("date") or None)
