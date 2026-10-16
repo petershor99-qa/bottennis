@@ -961,6 +961,27 @@ async def send_db_backup(bot: Bot) -> None:
         logger.info("Бэкап БД отправлен админу")
 
 
+# Квартальный «техосмотр» (v2.197.0): напоминание только администратору — пересчитать
+# радар стиля и пороги по данным клуба, проверить зависимости. Игрокам ничего не уходит.
+# 15-го (не 1-го): 1 января — праздники, с 15 по 31 декабря — заморозка деплоя.
+CHECKUP_MONTHS = "1,4,7,10"
+CHECKUP_DAY = 15
+CHECKUP_TEXT = (
+    "🔧 Техосмотр клуба: пора пересчитать радар и проверить зависимости. На сервере: "
+    "<code>cd /opt/bottennis &amp;&amp; .venv/bin/python scripts/quarterly_report.py</code> "
+    "— вывод пришли Claude."
+)
+
+
+async def send_checkup_reminder(bot: Bot) -> None:
+    """Раз в квартал — напоминание администратору о техосмотре (скилл `checkup`)."""
+    admin_id = env_int("ADMIN_ID")
+    if not admin_id:
+        return
+    if await safe_send(bot, admin_id, CHECKUP_TEXT):
+        logger.info("Напоминание о техосмотре отправлено админу")
+
+
 MONTH_NAMES_GEN = {
     1: "января", 2: "февраля", 3: "марта", 4: "апреля",
     5: "мая", 6: "июня", 7: "июля", 8: "августа",
@@ -1741,6 +1762,14 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         ),
         args=[bot],
         id="year_vote_reminder",
+    )
+
+    # Техосмотр раз в квартал — только администратору (v2.197.0)
+    scheduler.add_job(
+        send_checkup_reminder,
+        CronTrigger(month=CHECKUP_MONTHS, day=CHECKUP_DAY, hour=10, minute=0, timezone=msk),
+        args=[bot],
+        id="quarterly_checkup",
     )
 
     return scheduler

@@ -80,7 +80,8 @@ async def report(db_path: Path) -> str:
     rows = []
     async with async_session() as session:
         ref = await style_tiers.club_reference(session)
-        for p in (await session.execute(select(Player))).scalars().all():
+        # по id — чтобы нумерация u1, u2… совпадала с quarterly_report.py при равном числе матчей
+        for p in (await session.execute(select(Player).order_by(Player.id))).scalars().all():
             matches = await get_career_matches(session, p.id, with_opponents=True)
             if len(matches) < style_tiers.MIN_MATCHES_FOR_RADAR:
                 continue
