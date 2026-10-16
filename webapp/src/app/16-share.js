@@ -122,6 +122,28 @@
     return blocks;
   }
 
+  // v2.202.0: итоги недели, месяца, квартала, года
+  function periodCardBlocks(d) {
+    var blocks = [titleBlock(d.title, d.label),
+      statsBlock(d.board.map(function (t) { return [t.label, t.value]; }))];
+    if (d.compare_note) {
+      blocks.push(lineBlock(d.board.filter(function (t) { return t.delta; })
+        .map(function (t) { return t.label.toLowerCase() + " " + t.delta; }).join(", ") + " " + d.compare_note));
+    }
+    if (d.standings.length) {
+      blocks.push(rowsBlock(d.standings_title, d.standings.slice(0, 7).map(function (r) {
+        return [r.place + ". " + r.name + "  " + r.record, r.delta, signedColor(r.delta)];
+      })));
+    }
+    var heroes = d.heroes.filter(function (h) { return h.value && h.players.length; }).slice(0, 5);
+    if (heroes.length) {
+      blocks.push(rowsBlock(d.heroes_title, heroes.map(function (h) {
+        return [h.title + ": " + h.players.map(function (p) { return p.name; }).join(" vs "), h.value];
+      })));
+    }
+    return blocks;
+  }
+
   function profileCardBlocks(d) {
     var h = d.head;
     var blocks = [titleBlock(h.name, h.subtitle),

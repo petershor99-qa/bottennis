@@ -749,6 +749,34 @@
     return node;
   }
 
+  // v2.202.0: первые дни месяца — карточка «Твой октябрь готов» (закрыл — больше не показывается)
+  var MONTH_READY_KEY = "month_ready_seen_v1";
+
+  function monthReady(c, anchor, m) {
+    storageGet(MONTH_READY_KEY, function (seen) {
+      if (seen === m.ym || !anchor.isConnected) return;
+      var card = clickable(el("div", "card hint month-ready"), "month/" + m.ym);
+      card.appendChild(icon("calendar-event", "ico-lead"));
+      var b = el("div", "body");
+      b.appendChild(el("div", "name", m.title));
+      b.appendChild(el("div", "sub", m.sub));
+      card.appendChild(b);
+      var close = el("button", "hint-close");
+      close.type = "button";
+      close.setAttribute("aria-label", "Скрыть");
+      close.appendChild(useIcon("x"));
+      close.addEventListener("click", function (e) {
+        e.stopPropagation();
+        haptic("select");
+        storageSet(MONTH_READY_KEY, m.ym);
+        card.remove();
+      });
+      card.appendChild(close);
+      card.addEventListener("click", function () { storageSet(MONTH_READY_KEY, m.ym); });
+      anchor.parentNode.insertBefore(card, anchor);
+    });
+  }
+
   function podium(items) {
     var wrap = el("div", "podium podium-stand");
     var art = el("img", "podium-art");
@@ -1120,6 +1148,7 @@
     c.appendChild(podiumNode);
     podiumMoves(podiumNode, d.podium);
     checkMeDot(d.me);
+    if (d.month_ready) monthReady(c, podiumNode, d.month_ready);
 
     var me = clickable(el("div", "card me-card"), "player/" + d.me.id);
     me.appendChild(avatar({ id: d.me.id, initial: d.me.initial }, "md"));
@@ -2514,8 +2543,131 @@
     return wrap;
   }
 
+  // v2.202.0: неделя, месяц, квартал, год — на лету за любой период: листание,
+  // табло со сравнением, тумба с аватарами, «Твоя неделя», герои карточками,
+  // матч периода карточкой, «Гонка рейтинга», «Поделиться картинкой»
+  function periodNav(d, kind) {
+    var nav = el("div", "day-nav");
+    function arrow(target, name, label) {
+      var b = el("button", "day-arrow");
+      b.type = "button";
+      b.setAttribute("aria-label", label);
+      b.appendChild(icon(name));
+      if (!target) b.disabled = true;
+      else b.addEventListener("click", function () { haptic("select"); location.replace("#/summary/" + kind + "/" + compactDate(target)); });
+      return b;
+    }
+    nav.appendChild(arrow(d.prev, "chevron-left", "Предыдущий период"));
+    nav.appendChild(el("div", "day-label", d.label));
+    nav.appendChild(arrow(d.next, "chevron-right", "Следующий период"));
+    return nav;
+  }
+
+  function faces(players) {
+    var row = el("div", "hero-faces");
+    var pics = el("div", "rec-faces");
+    players.forEach(function (p) { pics.appendChild(avatar(p, "sm")); });
+    row.appendChild(pics);
+    row.appendChild(el("span", "rec-name", players.map(function (p) { return p.name; }).join(players.length === 2 ? " vs " : ", ")));
+    return row;
+  }
+
+  function heroTile(h, i) {
+    var route = h.players.length === 1 ? "player/" + h.players[0].id :
+      h.key === "derby" && h.players.length === 2 ? "pair/" + h.players[0].id + "/" + h.players[1].id : null;
+    var t = route ? clickable(el("div", "rec-tile hero-tile stagger"), route) : el("div", "rec-tile hero-tile stagger");
+    t.style.animationDelay = (i * 60) + "ms";
+    t.appendChild(icon(h.icon, "rec-ico hero-ico-" + h.key));
+    t.appendChild(el("div", "rec-tile-title", h.title));
+    if (h.value) {
+      // число крупно, слова после него мелко: «3» + «победы подряд»
+      var v = el("div", "rec-tile-value");
+      var parts = splitNumber(h.value);
+      v.appendChild(num("scoreboard", parts ? parts[0] + parts[1] + parts[2] : h.value));
+      if (parts && parts[3].trim()) v.appendChild(el("span", "rec-unit", parts[3].trim()));
+      t.appendChild(v);
+    }
+    if (h.players.length) t.appendChild(faces(h.players));
+    if (h.note) t.appendChild(el("div", "sub", h.note));
+    return t;
+  }
+
+  function youCard(you) {
+    var card = el("div", "card you-card");
+    card.appendChild(el("div", "eyebrow", you.title));
+    you.lines.forEach(function (line) { card.appendChild(el("div", "you-line", line)); });
+    if (you.story) {
+      var b = el("button", "button button-quiet you-story", "Смотреть сторис");
+      b.type = "button";
+      b.addEventListener("click", function () { haptic("impact"); go("month/" + you.story); });
+      card.appendChild(b);
+    }
+    return card;
+  }
+
+  function renderPeriod(c, d, kind) {
+    c.appendChild(header(d.title, ""));
+    c.appendChild(summaryTabs(d.tabs, kind));
+    c.appendChild(periodNav(d, kind));
+    if (d.empty) { emptyState(c, d.empty); yearExtras(c, d); return; }
+    var cols = twoCols(c, false);
+    var main = cols.main;
+    if (d.you) main.appendChild(youCard(d.you));
+    var board = el("div", "tiles tiles-3 day-board");
+    d.board.forEach(function (t) {
+      var tile = el("div", "tile");
+      tile.appendChild(el("div", "tile-label", t.label));
+      tile.appendChild(num("tile-value", t.value));
+      if (t.delta) tile.appendChild(el("div", "tile-sub " + deltaTone(t.delta), t.delta));
+      board.appendChild(tile);
+    });
+    main.appendChild(board);
+    if (d.compare_note) main.appendChild(el("p", "day-usual", d.compare_note));
+    if (d.standings.length >= 2) {
+      main.appendChild(podium(d.standings.slice(0, 3).map(function (s) {
+        return { id: s.id, name: s.name, initial: s.initial, rating: s.record, streak: 0, champion: false };
+      })));
+    }
+    if (d.match) {
+      var top = el("ul", "feed-list");
+      top.appendChild(dayMatchCard(d.match, d.match.title, d.match.report));
+      main.appendChild(top);
+    }
+    var side = cols.side;
+    if (d.heroes.length) {
+      var hs = el("section", "group");
+      hs.appendChild(el("h2", "group-title", d.heroes_title));
+      var grid = el("div", "rec-tiles");
+      d.heroes.forEach(function (h, i) { grid.appendChild(heroTile(h, i)); });
+      hs.appendChild(grid);
+      side.appendChild(hs);
+    }
+    var s = section(d.standings_title);
+    d.standings.forEach(function (r, i) {
+      var li = clickable(el("li", "row stagger"), "player/" + r.id);
+      li.style.animationDelay = (i * 50) + "ms";
+      li.appendChild(el("div", "rank-num", String(r.place)));
+      li.appendChild(avatar(r, "sm"));
+      var b = el("div", "body");
+      b.appendChild(el("div", "name", r.name));
+      b.appendChild(el("div", "sub", r.record));
+      li.appendChild(b);
+      if (r.form.length) li.appendChild(formStrip(r.form, "strip-inline"));
+      s.list.appendChild(li);
+    });
+    side.appendChild(s);
+    var race = section();
+    race.list.appendChild(clickable(itemRow({ label: "Гонка рейтинга", value: "›" }), "race"));
+    side.appendChild(race);
+    var share = el("div", "share-row");
+    share.appendChild(shareButton("period", function () { return periodCardBlocks(d); }));
+    side.appendChild(share);
+    yearExtras(side, d);
+  }
+
   function renderSummary(c, d, kind) {
     if (kind === "day" && d.day) { renderDay(c, d.day, summaryTabs(d.tabs, kind)); return; }
+    if (d.board || d.label) { renderPeriod(c, d, kind); return; }
     c.appendChild(header(d.title || "Итоги", d.date || ""));
     c.appendChild(summaryTabs(d.tabs, kind));
     if (d.empty) { emptyState(c, d.empty); yearExtras(c, d); return; }
@@ -2671,6 +2823,28 @@
     if (d.players.length) {
       blocks.push(rowsBlock("Кто как сыграл", d.players.slice(0, 7).map(function (p) {
         return [p.name + "  " + p.record, p.delta, signedColor(p.delta)];
+      })));
+    }
+    return blocks;
+  }
+
+  // v2.202.0: итоги недели, месяца, квартала, года
+  function periodCardBlocks(d) {
+    var blocks = [titleBlock(d.title, d.label),
+      statsBlock(d.board.map(function (t) { return [t.label, t.value]; }))];
+    if (d.compare_note) {
+      blocks.push(lineBlock(d.board.filter(function (t) { return t.delta; })
+        .map(function (t) { return t.label.toLowerCase() + " " + t.delta; }).join(", ") + " " + d.compare_note));
+    }
+    if (d.standings.length) {
+      blocks.push(rowsBlock(d.standings_title, d.standings.slice(0, 7).map(function (r) {
+        return [r.place + ". " + r.name + "  " + r.record, r.delta, signedColor(r.delta)];
+      })));
+    }
+    var heroes = d.heroes.filter(function (h) { return h.value && h.players.length; }).slice(0, 5);
+    if (heroes.length) {
+      blocks.push(rowsBlock(d.heroes_title, heroes.map(function (h) {
+        return [h.title + ": " + h.players.map(function (p) { return p.name; }).join(" vs "), h.value];
       })));
     }
     return blocks;
@@ -3329,8 +3503,39 @@
   // ── «Твой месяц» (v2.177.0) ────────────────────────────────────────────────
   // История месяца карточками, как сторис: нажатие справа — дальше, слева —
   // назад, полоски сверху показывают, где ты. Открывается только самим игроком.
+  // v2.202.0: календарь месяца — дни цветом по итогу (в плюс, в минус, в ноль)
+  function storyCalendar(card) {
+    var grid = el("div", "story-cal");
+    for (var i = 0; i < card.offset; i++) grid.appendChild(el("i", "story-cal-pad"));
+    card.days.forEach(function (r, k) {
+      grid.appendChild(el("i", "story-cal-day" + (r ? " is-" + r : ""), String(k + 1)));
+    });
+    return grid;
+  }
+
+  // «Месяц одной картинкой»: главное цифрами и «Поделиться картинкой»
+  function storyFinal(box, card) {
+    box.appendChild(avatar(card.player, "lg"));
+    var grid = el("div", "story-stats");
+    card.stats.forEach(function (s) {
+      var cell = el("div", "story-stat");
+      cell.appendChild(num("story-stat-value scoreboard", s[1]));
+      cell.appendChild(el("div", "story-stat-label", s[0]));
+      grid.appendChild(cell);
+    });
+    box.appendChild(grid);
+    var share = shareButton("month", function () {
+      return [titleBlock(card.title, card.player.name), statsBlock(card.stats.slice(0, 3)),
+        statsBlock(card.stats.slice(3, 6))];
+    });
+    share.addEventListener("click", function (e) { e.stopPropagation(); }, true);
+    box.appendChild(share);
+  }
+
   function storyCard(card) {
-    var box = el("div", "story-card story-" + card.kind);
+    var box = el("div", "story-card story-" + card.kind +
+      (card.up === true ? " story-up" : card.up === false ? " story-down" : "") +
+      (card.kind === "achievements" || card.kind === "records" ? " story-gold" : ""));
     if (card.art) {
       // v2.194.0: прощальная карточка — картинка заставки (тот же адрес, что у
       // заставки, — уже в кэше, лишней загрузки нет)
@@ -3341,6 +3546,8 @@
       box.appendChild(art);
     }
     box.appendChild(el("div", "story-title", card.title));
+    if (card.kind === "final") { storyFinal(box, card); return box; }
+    if (card.stamp) box.appendChild(el("div", "mood-stamp story-stamp mood-" + card.mood, card.stamp));
     if (card.player) {
       var who = el("div", "story-who");
       who.appendChild(avatar(card.player, "lg"));
@@ -3350,10 +3557,18 @@
     if (card.match) box.appendChild(versusLine(card.match));
     if (card.big) {
       var big = el("div", "story-big scoreboard" + (card.up === true ? " tone-win" : card.up === false ? " tone-loss" : ""));
-      big.textContent = card.big;
+      countUp(big, card.big);
       box.appendChild(big);
     }
     if (card.big_label) box.appendChild(el("div", "story-label", card.big_label));
+    if (card.days) box.appendChild(storyCalendar(card));
+    if (card.route) {
+      // дата — ссылка на итоги того дня (нажатие не листает сторис)
+      var link = el("button", "story-link", card.date + " ›");
+      link.type = "button";
+      link.addEventListener("click", function (e) { e.stopPropagation(); haptic("select"); go(card.route); });
+      box.appendChild(link);
+    }
     if (card.series && card.series.length > 1) box.appendChild(storySpark(card.series));
     if (card.match) {
       var chips = setChips(card.match.sets, card.match.winner);
@@ -3388,6 +3603,8 @@
     return s;
   }
 
+  var STORY_MS = 5000;
+
   function renderMonth(c, d) {
     enterFullscreen();   // v2.183.0: «Твой месяц» во весь экран, как сторис
     c.appendChild(header(d.title, ""));
@@ -3413,17 +3630,55 @@
     stage.appendChild(bars);
     var slot = el("div", "story-slot");
     stage.appendChild(slot);
-    var hint = el("div", "story-hint", "Нажми справа — дальше, слева — назад");
+    var hint = el("div", "story-hint", "Удержи — пауза. Справа — дальше, слева — назад");
     stage.appendChild(hint);
     c.appendChild(stage);
-    var index = 0;
+    var index = 0, timer = null, held = false, holdTimer = null, startedAt = 0, left = STORY_MS;
+    var auto = !reduceMotion && !app.classList.contains("quiet");
+    function stop() { if (timer) { clearTimeout(timer); timer = null; } }
+    function run(ms) {
+      stop();
+      if (!auto || index >= d.cards.length - 1) return;
+      startedAt = Date.now();
+      left = ms;
+      timer = setTimeout(function () {
+        if (!stage.isConnected) return;
+        show(index + 1);
+      }, ms);
+    }
     function show(i) {
       index = Math.max(0, Math.min(d.cards.length - 1, i));
       slot.textContent = "";
-      slot.appendChild(storyCard(d.cards[index]));
-      [].forEach.call(bars.children, function (b, k) { b.className = k < index ? "is-done" : k === index ? "is-now" : ""; });
+      var card = d.cards[index];
+      var node = storyCard(card);
+      slot.appendChild(node);
+      [].forEach.call(bars.children, function (b, k) {
+        b.className = k < index ? "is-done" : k === index ? (auto ? "is-now is-auto" : "is-now") : "";
+        b.style.removeProperty("--story-ms");
+      });
+      if (auto) bars.children[index].style.setProperty("--story-ms", STORY_MS + "ms");
+      stage.classList.remove("is-paused");
+      if (card.confetti) setTimeout(function () { if (node.isConnected) confetti(node.querySelector(".avatar") || node); }, 300);
+      run(STORY_MS);
     }
+    // v2.202.0: автолистание как в сторис; удержание пальца — пауза
+    stage.addEventListener("pointerdown", function () {
+      holdTimer = setTimeout(function () {
+        held = true;
+        if (timer) { stop(); left = Math.max(300, left - (Date.now() - startedAt)); }
+        stage.classList.add("is-paused");
+      }, 250);
+    });
+    function release() {
+      clearTimeout(holdTimer);
+      if (!held) return;
+      stage.classList.remove("is-paused");
+      run(left);
+    }
+    stage.addEventListener("pointerup", release);
+    stage.addEventListener("pointercancel", release);
     stage.addEventListener("click", function (e) {
+      if (held) { held = false; return; }
       var rect = stage.getBoundingClientRect();
       haptic("select");
       show(e.clientX - rect.left < rect.width / 3 ? index - 1 : index + 1);
@@ -4441,8 +4696,8 @@
     [/^throne$/, "home", one("throne"), renderThrone, "throne"],
     // Итоги дня (v2.176.0) — на лету за любой день: summary/day/ГГГГММДД
     [/^summary\/(day|week|month|quarter|year)(?:\/(\d{8}))?$/, "home", function (m) {
-      if (m[1] !== "day") return api("summary/" + m[1]);
       var date = m[2] ? m[2].slice(0, 4) + "-" + m[2].slice(4, 6) + "-" + m[2].slice(6) : "";
+      if (m[1] !== "day") return api("summary/" + m[1] + (date ? "?date=" + date : ""));
       return Promise.all([api("summary/day"), api("day" + (date ? "?date=" + date : ""))])
         .then(function (r) { return { tabs: r[0].tabs, day: r[1] }; });
     }, function (c, d, m) { renderSummary(c, d, m[1]); }, "summary"],

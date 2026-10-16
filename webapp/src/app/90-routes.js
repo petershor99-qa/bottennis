@@ -16,8 +16,8 @@
     [/^throne$/, "home", one("throne"), renderThrone, "throne"],
     // Итоги дня (v2.176.0) — на лету за любой день: summary/day/ГГГГММДД
     [/^summary\/(day|week|month|quarter|year)(?:\/(\d{8}))?$/, "home", function (m) {
-      if (m[1] !== "day") return api("summary/" + m[1]);
       var date = m[2] ? m[2].slice(0, 4) + "-" + m[2].slice(4, 6) + "-" + m[2].slice(6) : "";
+      if (m[1] !== "day") return api("summary/" + m[1] + (date ? "?date=" + date : ""));
       return Promise.all([api("summary/day"), api("day" + (date ? "?date=" + date : ""))])
         .then(function (r) { return { tabs: r[0].tabs, day: r[1] }; });
     }, function (c, d, m) { renderSummary(c, d, m[1]); }, "summary"],

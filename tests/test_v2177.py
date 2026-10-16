@@ -187,7 +187,9 @@ async def test_month_payload_cards_and_navigation(db):
     await db.commit()
     d = await month_payload(db, a, None)
     kinds = [x["kind"] for x in d["cards"]]
-    assert kinds[:4] == ["intro", "rating", "match", "rival"] and "achievements" in kinds and "place" in kinds
+    # v2.202.0: после рейтинга — календарь и цифры, лучший день; в конце — «Месяц одной картинкой»
+    assert kinds[:4] == ["intro", "rating", "calendar", "numbers"] and kinds[-1] == "final"
+    assert kinds.index("match") < kinds.index("rival") and "achievements" in kinds and "place" in kinds
     intro = d["cards"][0]
     assert intro["big"] == "3" and intro["lines"][0] == "2 победы · 1 поражение"
     assert d["cards"][1]["big"] == "+10.0"

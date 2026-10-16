@@ -18,8 +18,9 @@ from tests.test_webapp import _init_data
 PREVIEW_TOKEN = "123456:PREVIEW"   # тот же, что в scripts/preview_miniapp.py
 # статика первого запуска; было ~160 КБ до v2.180.0, стало ~135; v2.188.0 — 180:
 # +26 КБ картинки заставки (решение владельца), сейчас ~168; v2.200.0 — 190:
-# +8 КБ тумбы подиума (картинка владельца) и рост app.js/app.css, сейчас ~185
-FIRST_LOAD_KB = 190
+# +8 КБ тумбы подиума (картинка владельца) и рост app.js/app.css, сейчас ~185;
+# v2.202.0 — 200: новые «Итоги» и «Твой месяц» в app.js/app.css, сейчас ~191
+FIRST_LOAD_KB = 200
 REPEAT_STATIC_KB = 8               # повторный запуск: только index.html
 FAST_3G_MS = 3000                  # главная на «быстром 3G» (1,6 Мбит/с, 150 мс); замер — ~1,5 с
 BRIDGE = "window.TelegramWebviewProxy = { postEvent: function () {} };"

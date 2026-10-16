@@ -62,6 +62,7 @@ from bot.webapp import (
     api_day,
     api_insights,
     api_month,
+    api_period,
     api_personal,
     api_return,
     menu,
@@ -175,6 +176,8 @@ async def home(request, session, viewer):
     page = await _feed_page(session, viewer, 0)
     # v2.181.0: «Цели недели» — только в приложении, без уведомлений
     payload["goals"] = await api_return.goals_payload(session, viewer)
+    # v2.202.0: первые дни месяца — «Твой октябрь готов»
+    payload["month_ready"] = await api_month.month_ready(session, viewer)
     payload["feed"], payload["feed_more"] = page["items"], page["more"]
     # v2.173.0: реакции и на карточке «Матч дня» — счётчики, как в ленте
     featured = payload.get("featured")
@@ -243,7 +246,14 @@ async def scores(request, session, viewer):
 
 
 async def summary(request, session, viewer):
-    payload = await api_club.summary_payload(session, request.match_info["kind"])
+    kind = request.match_info["kind"]
+    if kind == "day":
+        payload = await api_club.summary_payload(session, kind)
+    else:
+        # v2.202.0: неделя, месяц, квартал и год — на лету за любой период (как день)
+        payload = await api_period.period_payload(session, viewer, kind, request.query.get("date") or None)
+        if payload is not None:
+            payload["tabs"] = [{"kind": k, "title": t, "available": True} for k, t in api_club.SUMMARY_KINDS]
     if payload is not None and payload["kind"] == "year":
         # v2.170.0: «Твой год» и неформальные звания (голосование — в боте)
         payload.update(await api_insights.year_extras(session, viewer))
