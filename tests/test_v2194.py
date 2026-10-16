@@ -4,15 +4,19 @@ v2.194.0: загрузчик Mini App первым в <head> (полоска Tel
 в «Твоём месяце».
 Запуск: pytest tests/test_v2194.py
 """
+import gzip
 import logging
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from aiohttp import ClientSession
+from aiohttp.test_utils import TestClient, TestServer
 
 import bot.webapp.usage as usage
 from bot.utils import msk_day_start
 from bot.webapp.api_month import month_payload, outro_card
+from bot.webapp.server import create_app
 from bot.webapp.usage import log_boot_failure, log_boot_time, net_line
 from tests.conftest import _completed, _player, freeze_clock
 from tests.test_webapp import ADMIN
@@ -149,3 +153,33 @@ def test_story_card_renders_splash_art():
     assert ".story-art {" in css and ".story-outro {" in css
     # «уменьшить движение» — без анимации картинки
     assert ".boot-pic, .story-card, .story-art," in css
+
+
+# ── index.html сжата ──────────────────────────────────────────────────────────
+
+@pytest.fixture
+async def client(db_factory, monkeypatch):
+    monkeypatch.setenv("WEBAPP_URL", "https://club.example/")
+    async with TestClient(TestServer(create_app("123456:TEST-token", db_factory))) as c:
+        yield c
+
+
+async def test_index_is_gzipped_when_accepted(client):
+    """РЕГРЕССИЯ v2.194.0: index.html не кэшируется и приходит при каждом запуске,
+    а отдавалась без сжатия (9,5 КБ после переноса загрузчика) — повторный запуск
+    вышел за бюджет 8 КБ (e2e test_boot_budget)."""
+    async with ClientSession(auto_decompress=False) as raw:
+        resp = await raw.get(client.make_url("/"), headers={"Accept-Encoding": "gzip"})
+        body = await resp.read()
+    assert resp.headers.get("Content-Encoding") == "gzip"
+    assert resp.headers.get("Cache-Control") == "no-store"
+    html = gzip.decompress(body).decode("utf-8")
+    assert "window.__clubBoot" in html and len(body) < 6 * 1024
+
+
+async def test_index_plain_without_gzip(client):
+    async with ClientSession(auto_decompress=False) as raw:
+        resp = await raw.get(client.make_url("/"), headers={"Accept-Encoding": "identity"})
+        body = await resp.read()
+    assert "Content-Encoding" not in resp.headers
+    assert b"window.__clubBoot" in body

@@ -107,9 +107,14 @@ def _json_error(status: int, message: str) -> web.Response:
 
 
 async def index(request: web.Request) -> web.Response:
-    """Страница со ссылками на текущие версии app.js и app.css (v2.172.0)."""
-    return web.Response(body=request.app[ASSETS_KEY].index_html(), content_type="text/html",
-                        charset="utf-8", headers=_SECURITY_HEADERS)
+    """Страница со ссылками на текущие версии app.js и app.css (v2.172.0).
+    Сжата gzip (v2.194.0): она не кэшируется и приходит при каждом запуске —
+    9,5 КБ без сжатия, ~4 КБ со сжатием."""
+    response = web.Response(body=request.app[ASSETS_KEY].index_html(), content_type="text/html",
+                            charset="utf-8", headers=_SECURITY_HEADERS)
+    if accepts_gzip(request):
+        response.enable_compression(web.ContentCoding.gzip)
+    return response
 
 
 async def static_asset(request: web.Request) -> web.Response:
