@@ -71,8 +71,39 @@
   // ── «Твой месяц» (v2.177.0) ────────────────────────────────────────────────
   // История месяца карточками, как сторис: нажатие справа — дальше, слева —
   // назад, полоски сверху показывают, где ты. Открывается только самим игроком.
+  // v2.202.0: календарь месяца — дни цветом по итогу (в плюс, в минус, в ноль)
+  function storyCalendar(card) {
+    var grid = el("div", "story-cal");
+    for (var i = 0; i < card.offset; i++) grid.appendChild(el("i", "story-cal-pad"));
+    card.days.forEach(function (r, k) {
+      grid.appendChild(el("i", "story-cal-day" + (r ? " is-" + r : ""), String(k + 1)));
+    });
+    return grid;
+  }
+
+  // «Месяц одной картинкой»: главное цифрами и «Поделиться картинкой»
+  function storyFinal(box, card) {
+    box.appendChild(avatar(card.player, "lg"));
+    var grid = el("div", "story-stats");
+    card.stats.forEach(function (s) {
+      var cell = el("div", "story-stat");
+      cell.appendChild(num("story-stat-value scoreboard", s[1]));
+      cell.appendChild(el("div", "story-stat-label", s[0]));
+      grid.appendChild(cell);
+    });
+    box.appendChild(grid);
+    var share = shareButton("month", function () {
+      return [titleBlock(card.title, card.player.name), statsBlock(card.stats.slice(0, 3)),
+        statsBlock(card.stats.slice(3, 6))];
+    });
+    share.addEventListener("click", function (e) { e.stopPropagation(); }, true);
+    box.appendChild(share);
+  }
+
   function storyCard(card) {
-    var box = el("div", "story-card story-" + card.kind);
+    var box = el("div", "story-card story-" + card.kind +
+      (card.up === true ? " story-up" : card.up === false ? " story-down" : "") +
+      (card.kind === "achievements" || card.kind === "records" ? " story-gold" : ""));
     if (card.art) {
       // v2.194.0: прощальная карточка — картинка заставки (тот же адрес, что у
       // заставки, — уже в кэше, лишней загрузки нет)
@@ -83,6 +114,8 @@
       box.appendChild(art);
     }
     box.appendChild(el("div", "story-title", card.title));
+    if (card.kind === "final") { storyFinal(box, card); return box; }
+    if (card.stamp) box.appendChild(el("div", "mood-stamp story-stamp mood-" + card.mood, card.stamp));
     if (card.player) {
       var who = el("div", "story-who");
       who.appendChild(avatar(card.player, "lg"));
@@ -92,10 +125,18 @@
     if (card.match) box.appendChild(versusLine(card.match));
     if (card.big) {
       var big = el("div", "story-big scoreboard" + (card.up === true ? " tone-win" : card.up === false ? " tone-loss" : ""));
-      big.textContent = card.big;
+      countUp(big, card.big);
       box.appendChild(big);
     }
     if (card.big_label) box.appendChild(el("div", "story-label", card.big_label));
+    if (card.days) box.appendChild(storyCalendar(card));
+    if (card.route) {
+      // дата — ссылка на итоги того дня (нажатие не листает сторис)
+      var link = el("button", "story-link", card.date + " ›");
+      link.type = "button";
+      link.addEventListener("click", function (e) { e.stopPropagation(); haptic("select"); go(card.route); });
+      box.appendChild(link);
+    }
     if (card.series && card.series.length > 1) box.appendChild(storySpark(card.series));
     if (card.match) {
       var chips = setChips(card.match.sets, card.match.winner);
@@ -130,6 +171,8 @@
     return s;
   }
 
+  var STORY_MS = 5000;
+
   function renderMonth(c, d) {
     enterFullscreen();   // v2.183.0: «Твой месяц» во весь экран, как сторис
     c.appendChild(header(d.title, ""));
@@ -155,17 +198,55 @@
     stage.appendChild(bars);
     var slot = el("div", "story-slot");
     stage.appendChild(slot);
-    var hint = el("div", "story-hint", "Нажми справа — дальше, слева — назад");
+    var hint = el("div", "story-hint", "Удержи — пауза. Справа — дальше, слева — назад");
     stage.appendChild(hint);
     c.appendChild(stage);
-    var index = 0;
+    var index = 0, timer = null, held = false, holdTimer = null, startedAt = 0, left = STORY_MS;
+    var auto = !reduceMotion && !app.classList.contains("quiet");
+    function stop() { if (timer) { clearTimeout(timer); timer = null; } }
+    function run(ms) {
+      stop();
+      if (!auto || index >= d.cards.length - 1) return;
+      startedAt = Date.now();
+      left = ms;
+      timer = setTimeout(function () {
+        if (!stage.isConnected) return;
+        show(index + 1);
+      }, ms);
+    }
     function show(i) {
       index = Math.max(0, Math.min(d.cards.length - 1, i));
       slot.textContent = "";
-      slot.appendChild(storyCard(d.cards[index]));
-      [].forEach.call(bars.children, function (b, k) { b.className = k < index ? "is-done" : k === index ? "is-now" : ""; });
+      var card = d.cards[index];
+      var node = storyCard(card);
+      slot.appendChild(node);
+      [].forEach.call(bars.children, function (b, k) {
+        b.className = k < index ? "is-done" : k === index ? (auto ? "is-now is-auto" : "is-now") : "";
+        b.style.removeProperty("--story-ms");
+      });
+      if (auto) bars.children[index].style.setProperty("--story-ms", STORY_MS + "ms");
+      stage.classList.remove("is-paused");
+      if (card.confetti) setTimeout(function () { if (node.isConnected) confetti(node.querySelector(".avatar") || node); }, 300);
+      run(STORY_MS);
     }
+    // v2.202.0: автолистание как в сторис; удержание пальца — пауза
+    stage.addEventListener("pointerdown", function () {
+      holdTimer = setTimeout(function () {
+        held = true;
+        if (timer) { stop(); left = Math.max(300, left - (Date.now() - startedAt)); }
+        stage.classList.add("is-paused");
+      }, 250);
+    });
+    function release() {
+      clearTimeout(holdTimer);
+      if (!held) return;
+      stage.classList.remove("is-paused");
+      run(left);
+    }
+    stage.addEventListener("pointerup", release);
+    stage.addEventListener("pointercancel", release);
     stage.addEventListener("click", function (e) {
+      if (held) { held = false; return; }
       var rect = stage.getBoundingClientRect();
       haptic("select");
       show(e.clientX - rect.left < rect.width / 3 ? index - 1 : index + 1);

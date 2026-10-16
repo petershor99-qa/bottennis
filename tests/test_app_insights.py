@@ -197,4 +197,6 @@ async def test_usage_hidden_from_players(client):
 
 async def test_summary_year_has_my_year_even_without_snapshot(client):
     data = await (await client.get("/api/summary/year", headers=client.admin)).json()
-    assert data["empty"] and data["mine"]["items"][0] == {"label": "Матчей", "value": "1"}
+    # v2.202.0: итоги года считаются на лету — снимок сводки не нужен
+    assert data["board"][0] == {"label": "Матчей", "value": "1", "delta": ""}
+    assert data["mine"]["items"][0] == {"label": "Матчей", "value": "1"}

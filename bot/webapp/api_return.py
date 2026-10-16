@@ -298,6 +298,34 @@ def _goals_for_week(history: list[Match], week: list[Match], pid: int, start: da
     return goals
 
 
+async def closed_weeks(session: AsyncSession, viewer: Player, start: datetime, end: datetime) -> tuple[int, int]:
+    """«Твой месяц» (v2.202.0): сколько завершённых недель, начавшихся в [start, end),
+    закрыты целиком — (закрыто, всего)."""
+    matches = list((await session.execute(
+        select(Match).where(
+            Match.status == MatchStatus.completed, Match.completed_at.is_not(None),
+            or_(Match.challenger_id == viewer.id, Match.challenged_id == viewer.id),
+        ).order_by(Match.completed_at)
+    )).scalars().all())
+    names = {p.id: p.display_name for p in (await session.execute(select(Player))).scalars().all()}
+    choices = {c.week_start: c.skill for c in (await session.execute(
+        select(GoalChoice).where(GoalChoice.player_id == viewer.id))).scalars()}
+    now = _now()
+    ws = week_start(start)
+    if ws < start:
+        ws += timedelta(weeks=1)
+    closed = total = 0
+    while ws < end and ws + timedelta(weeks=1) <= now:
+        we = ws + timedelta(weeks=1)
+        goals = _goals_for_week([m for m in matches if m.completed_at < ws],
+                                [m for m in matches if ws <= m.completed_at < we],
+                                viewer.id, ws, names, choices.get(ws))
+        total += 1
+        closed += all(g["done"] for g in goals)
+        ws = we
+    return closed, total
+
+
 async def goals_payload(session: AsyncSession, viewer: Player) -> dict:
     now = _now()
     start = week_start(now)

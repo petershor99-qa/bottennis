@@ -123,8 +123,9 @@ async def test_month_ends_with_outro_current_month(db):
     db.add_all([_completed(a, b, a.id, 10.0, TODAY), _completed(b, a, b.id, 5.0, TODAY + timedelta(minutes=5))])
     await db.commit()
     cards = (await month_payload(db, a, None))["cards"]
-    assert cards[-1]["kind"] == "outro" and cards[-1]["title"] == "Месяц ещё идёт"
-    assert cards[-1]["lines"][0] == "2 матча · 1 победа"
+    # v2.202.0: прощальная — предпоследняя, последняя — «Месяц одной картинкой»
+    assert cards[-2]["kind"] == "outro" and cards[-2]["title"] == "Месяц ещё идёт"
+    assert cards[-2]["lines"][0] == "2 матча · 1 победа" and cards[-1]["kind"] == "final"
     assert [c["kind"] for c in cards].count("outro") == 1
 
 
@@ -134,7 +135,7 @@ async def test_month_outro_for_finished_month_says_see_you_next(db):
     db.add(_completed(a, b, a.id, 10.0, old))
     await db.commit()
     d = await month_payload(db, a, None)       # в этом месяце не играл — прошлый (закрытый)
-    outro = d["cards"][-1]
+    outro = d["cards"][-2]
     assert outro["title"] == "Месяц закрыт" and outro["lines"][1].startswith("До встречи в ")
 
 

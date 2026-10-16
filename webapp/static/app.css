@@ -1189,6 +1189,7 @@ html.has-fs-toggle .screen-head { padding-right: 40px; }
 /* ── v2.201.0: исправления по обходу и новые анимации ─────────────────── */
 /* Узкий телефон (320 px): плитки профиля не вылезают вбок */
 .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.tiles.tiles-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }   /* v2.202.0: правило выше перебивало три колонки */
 .tile { min-width: 0; }
 .tile-value { font-size: clamp(21px, 7vw, 28px); overflow-wrap: anywhere; }
 /* Тумба на компьютере — не на всю колонку */
@@ -1230,3 +1231,46 @@ html.has-fs-toggle .screen-head { padding-right: 40px; }
   .me-bubble, .avatar.is-hot, .avatar.is-jump, .tab.has-dot::after { animation: none; }
   .podium-stand .avatar.is-hot { animation: none; }
 }
+
+/* ── v2.202.0: итоги недели, месяца, квартала, года ───────────────────── */
+.hero-tile .rec-tile-value .scoreboard { font-size: 22px; }
+.hero-faces { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+.hero-faces .rec-faces { display: flex; }
+.hero-faces .rec-faces .avatar + .avatar { margin-left: -8px; box-shadow: 0 0 0 2px var(--card); }
+.hero-faces .rec-name { font-size: 13px; white-space: normal; overflow: visible; }
+.hero-ico-up, .hero-ico-noloss { color: var(--win); }
+.hero-ico-down { color: var(--loss); }
+.hero-ico-streak, .hero-ico-swing { color: var(--ball); }
+.hero-ico-wins { color: var(--gold); }
+.hero-ico-slackers { color: var(--hint); }
+.day-board .tile-sub { font-weight: 700; }
+.you-card { margin-bottom: 12px; }
+.you-line { font-size: 15px; margin-top: 4px; }
+.you-line:first-of-type { margin-top: 6px; font-weight: 700; }
+.you-story { margin-top: 10px; width: 100%; }
+
+/* ── v2.202.0: «Твой месяц» — автолистание, фон по смыслу, новые карточки ── */
+.story-bars i.is-auto b { animation: story-fill var(--story-ms, 5s) linear both; }
+.story.is-paused .story-bars i.is-auto b { animation-play-state: paused; }
+.story-up { background: linear-gradient(180deg, color-mix(in srgb, var(--win) 16%, var(--card)), var(--card) 70%); }
+.story-down { background: linear-gradient(180deg, color-mix(in srgb, var(--loss) 14%, var(--card)), var(--card) 70%); }
+.story-gold { background: linear-gradient(180deg, color-mix(in srgb, var(--gold) 18%, var(--card)), var(--card) 70%); }
+.story-cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; width: 100%; max-width: 300px; margin: 8px 0 4px; }
+.story-cal i { aspect-ratio: 1; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+  font-style: normal; font-size: 12px; color: var(--hint); background: var(--soft); }
+.story-cal i.story-cal-pad { background: none; }
+.story-cal i.is-w { background: var(--win); color: #fff; font-weight: 700; }
+.story-cal i.is-l { background: var(--loss); color: #fff; font-weight: 700; }
+.story-cal i.is-e { background: var(--hint); color: #fff; font-weight: 700; }
+.story-link { border: 0; background: none; color: var(--accent); font: 700 18px var(--font); padding: 6px 10px; cursor: pointer; }
+.story-stamp { position: static; transform: rotate(-6deg); margin: 10px 0 4px; font-size: 20px; }
+.story-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 8px; width: 100%; margin: 6px 0 10px; }
+.story-stat-value { font-size: 30px; line-height: 1.1; }
+.story-stat-label { font-size: 12px; color: var(--hint); }
+.story-final .share-btn { width: auto; }
+.month-ready { position: relative; padding-right: 40px; margin-bottom: 12px; animation: since-in .45s ease-out both; }
+@media (prefers-reduced-motion: reduce) { .month-ready { animation: none; } }
+.story-stamp.mood-comeback, .story-stamp.mood-boss { color: var(--gold); }
+.story-stamp.mood-rally { color: var(--win); }
+.story-stamp.mood-blowout { color: var(--loss); }
+.story-stamp.mood-deuce { color: var(--accent); }
