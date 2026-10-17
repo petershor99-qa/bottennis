@@ -52,13 +52,18 @@ async def save_snapshot(session: AsyncSession, kind: str, club_text: str) -> Non
         await session.rollback()
 
 
-async def deliver_digest(bot: Bot, player: Player, kind: str, full_text: str, short_text: str) -> None:
-    """Отправить сводку игроку: короткую с кнопкой в приложение или полную."""
+async def deliver_digest(bot: Bot, player: Player, kind: str, full_text: str, short_text: str,
+                         extra: list[tuple[str, str]] | None = None) -> None:
+    """Отправить сводку игроку: короткую с кнопкой в приложение или полную.
+    extra — дополнительные кнопки в приложение (v2.203.0): (подпись, экран), под основной."""
     url = webapp_link(player.telegram_id, f"summary/{kind}")
     if url is None:
         await safe_send(bot, player.telegram_id, full_text)
         return
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=DIGEST_BUTTONS[kind], web_app=WebAppInfo(url=url)),
-    ]])
+    rows = [[InlineKeyboardButton(text=DIGEST_BUTTONS[kind], web_app=WebAppInfo(url=url))]]
+    for text, route in extra or []:
+        link = webapp_link(player.telegram_id, route)
+        if link:
+            rows.append([InlineKeyboardButton(text=text, web_app=WebAppInfo(url=link))])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
     await safe_send(bot, player.telegram_id, short_text, reply_markup=kb)
