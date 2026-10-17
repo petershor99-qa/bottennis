@@ -61,6 +61,11 @@ from bot.webapp.reactions import most_discussed_line
 
 logger = logging.getLogger(__name__)
 
+# v2.203.0: кнопки в приложение в сводках (тексты утверждены владельцем)
+WEEK_GOALS_BUTTON = "🎯 Цели недели"
+MONTH_NAMES_NOM = ["", "январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август",
+                   "сентябрь", "октябрь", "ноябрь", "декабрь"]
+
 
 # ── Общие блоки для итогов недели/месяца ──────────────────────────────────────
 
@@ -740,7 +745,9 @@ async def send_weekly_digest(bot: Bot) -> None:
 
             text = header + "\n" + club_block
             # Короткая версия + кнопка в приложение, если оно у игрока есть (v2.168.0)
-            await deliver_digest(bot, player, "week", text, header + "\n" + club_short)
+            # v2.203.0: повод заглянуть в приложение — цели недели на главной
+            await deliver_digest(bot, player, "week", text, header + "\n" + club_short,
+                                 extra=[(WEEK_GOALS_BUTTON, "")])
 
     logger.info("Еженедельный дайджест отправлен")
 
@@ -1264,7 +1271,11 @@ async def send_monthly_summary(bot: Bot) -> None:
 
             text = header + "\n" + club_block
             # Короткая версия + кнопка в приложение, если оно у игрока есть (v2.168.0)
-            await deliver_digest(bot, player, "month", text, header + "\n" + club_short)
+            # v2.203.0: сыгравшим в месяце — «Твой октябрь» (сторис месяца в приложении)
+            month_story = ([(f"📅 Твой {MONTH_NAMES_NOM[month_start_msk.month]}",
+                             f"month/{month_start_msk.year}{month_start_msk.month:02d}")]
+                           if p_matches else None)
+            await deliver_digest(bot, player, "month", text, header + "\n" + club_short, extra=month_story)
 
     logger.info("Итоги месяца за %s отправлены", month_label)
 

@@ -79,8 +79,11 @@ async def cmd_start(message: Message, command: CommandObject, session: AsyncSess
         )
         player.last_menu_message_id = sent.message_id
         await session.commit()
-        await message.answer(REPLY_KB_TEXT, reply_markup=main_reply_kb())
-        player.reply_kb_version = REPLY_KB_VERSION
+        # v2.203.0: /start — одним сообщением; клавиатуру снизу — только тем, у кого её
+        # нет или она старая (по данным /usage сессии часто начинаются с /start)
+        if (player.reply_kb_version or 0) < REPLY_KB_VERSION:
+            await message.answer(REPLY_KB_TEXT, reply_markup=main_reply_kb(player.telegram_id))
+            player.reply_kb_version = REPLY_KB_VERSION
         return
 
     if INVITE_CODE:
@@ -110,7 +113,7 @@ async def cmd_start(message: Message, command: CommandObject, session: AsyncSess
     player.last_menu_message_id = sent.message_id
     await session.commit()
     await message.answer("🎮 Choose your destiny")
-    await message.answer(REPLY_KB_TEXT, reply_markup=main_reply_kb())
+    await message.answer(REPLY_KB_TEXT, reply_markup=main_reply_kb(player.telegram_id))
     player.reply_kb_version = REPLY_KB_VERSION
 
 

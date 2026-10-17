@@ -119,7 +119,7 @@ def test_notification_menu_uses_rating_link_instead_of_plain_open(app_on):
     url = webapp_link(ADMIN, "rating", **{"from": 2})
     kb = main_menu_kb(rematch_opponent_id=7, viewer_telegram_id=ADMIN, app_url=url)
     app = [b for b in _buttons(kb) if b.web_app]
-    assert len(app) == 1 and app[0].text == WEBAPP_RATING_TEXT
+    assert app[0].text == WEBAPP_RATING_TEXT and [b.text for b in app[1:]] == ["📊 Мой рейтинг"]   # v2.203.0
 
 
 def test_result_screen_without_app_has_no_app_button(app_off):

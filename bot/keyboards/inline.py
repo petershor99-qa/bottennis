@@ -10,6 +10,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.services.digests import DIGEST_KINDS
 from bot.services.year_vote import YEAR_VOTE_NOMINATIONS
 from bot.utils import (
+    REPLY_KB_APP,
     REPLY_KB_LEADERBOARD,
     REPLY_KB_PROFILE,
     favor_icon,
@@ -21,6 +22,8 @@ from bot.webapp.config import (
     WEBAPP_MATCH_TEXT,
     WEBAPP_MORE_TEXT,
     WEBAPP_RATING_TEXT,
+    slim_bot_for,
+    webapp_link,
     webapp_url_for,
 )
 
@@ -28,11 +31,12 @@ from bot.webapp.config import (
 # свернуть), 2 — закреплённая (is_persistent). Меняя клавиатуру так, что старая
 # у игроков должна замениться, поднимай число: ReplyKeyboardMiddleware
 # (bot/middleware.py) один раз пришлёт новую при следующем действии игрока.
-REPLY_KB_VERSION = 2
+# 3 — v2.203.0: у кого есть приложение, третья кнопка «📱 Приложение».
+REPLY_KB_VERSION = 3
 REPLY_KB_TEXT = "👇 Быстрый доступ"
 
 
-def main_reply_kb() -> ReplyKeyboardMarkup:
+def main_reply_kb(viewer_telegram_id: int | None = None) -> ReplyKeyboardMarkup:
     """Постоянная клавиатура под строкой ввода — три самых частых действия
     всегда под рукой, не нужно подниматься к инлайн-кнопкам главного меню.
 
@@ -46,11 +50,16 @@ def main_reply_kb() -> ReplyKeyboardMarkup:
     хендлер в challenge.py матчит ПУЛ вариантов (F.text.in_(...)), не одну
     строку, иначе после смены подписи кнопка перестала бы что-либо делать.
     """
+    # v2.203.0: бот — вызов и рейтинг, остальное в приложении. Если приложение
+    # игроку доступно, третья кнопка открывает его сразу (web_app), иначе — «Мой рейтинг»
+    app_url = webapp_url_for(viewer_telegram_id) if viewer_telegram_id is not None else None
+    third = (KeyboardButton(text=REPLY_KB_APP, web_app=WebAppInfo(url=app_url)) if app_url
+             else KeyboardButton(text=REPLY_KB_PROFILE))
     return ReplyKeyboardMarkup(
         keyboard=[[
             KeyboardButton(text=random_challenge_button_label()),
             KeyboardButton(text=REPLY_KB_LEADERBOARD),
-            KeyboardButton(text=REPLY_KB_PROFILE),
+            third,
         ]],
         resize_keyboard=True,
         # Постоянная (v2.166.0): по данным usage 38% сессий начинались с /start —
@@ -111,11 +120,18 @@ def main_menu_kb(
         if open_url:
             b.row(InlineKeyboardButton(text=WEBAPP_BUTTON_TEXT, web_app=WebAppInfo(url=open_url)))
     b.row(InlineKeyboardButton(text="🏆 Рейтинг клуба", callback_data="menu_leaderboard"))
-    b.row(
-        InlineKeyboardButton(text="📊 Мой рейтинг", callback_data="menu_stats"),
-        InlineKeyboardButton(text="🎯 С кем сыграть?", callback_data="menu_matches"),
-    )
-    b.row(InlineKeyboardButton(text="❓ Справка", callback_data="menu_help"))
+    me_url = webapp_link(viewer_telegram_id, "me") if viewer_telegram_id is not None else None
+    if me_url and slim_bot_for(viewer_telegram_id):
+        # v2.203.0 (решение владельца по /usage): с приложением бот — вызов и
+        # рейтинг; «Мой рейтинг» открывает профиль в приложении, «С кем сыграть?»
+        # и «Справка» из меню убраны (/help и обработчики остаются)
+        b.row(InlineKeyboardButton(text="📊 Мой рейтинг", web_app=WebAppInfo(url=me_url)))
+    else:
+        b.row(
+            InlineKeyboardButton(text="📊 Мой рейтинг", callback_data="menu_stats"),
+            InlineKeyboardButton(text="🎯 С кем сыграть?", callback_data="menu_matches"),
+        )
+        b.row(InlineKeyboardButton(text="❓ Справка", callback_data="menu_help"))
     return b.as_markup()
 
 
