@@ -253,8 +253,12 @@
     stage.addEventListener("click", function (e) {
       if (suppress) { suppress = false; return; }
       var rect = stage.getBoundingClientRect();
+      var target = e.clientX - rect.left < rect.width / 3 ? index - 1 : index + 1;
+      // v2.203.1: на первой и последней карточке дальше листать некуда — раньше
+      // карточка рисовалась заново и её анимация (и конфетти) повторялись
+      if (target < 0 || target > d.cards.length - 1) return;
       haptic("select");
-      show(e.clientX - rect.left < rect.width / 3 ? index - 1 : index + 1);
+      show(target);
       hint.classList.add("is-hidden");
     });
     show(0);

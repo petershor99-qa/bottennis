@@ -99,3 +99,13 @@ def test_digest_buttons_wired_in_scheduler():
     src = (ROOT / "bot" / "scheduler.py").read_text(encoding="utf-8")
     assert 'WEEK_GOALS_BUTTON = "🎯 Цели недели"' in src and "extra=[(WEEK_GOALS_BUTTON, \"\")]" in src
     assert 'f"📅 Твой {MONTH_NAMES_NOM[month_start_msk.month]}"' in src and "if p_matches else None" in src
+
+
+def test_fullscreen_mark_set_on_launch_and_safe_area():
+    # v2.203.1: открылось сразу во весь экран — отметка и отступ под камерой всё равно ставятся
+    src = (ROOT / "webapp" / "src" / "app" / "25-new.js").read_text(encoding="utf-8")
+    setup = src[src.index("function setupFullscreen()"):]
+    assert setup.index("syncFullscreenClass();") < setup.index("if (!fullscreenAvailable()) return;")
+    routes = (ROOT / "webapp" / "src" / "app" / "90-routes.js").read_text(encoding="utf-8")
+    assert 'tg.onEvent("safeAreaChanged", syncFullscreenClass);' in routes
+    assert "var target = relaunchRoute(location.hash, location.search);" in routes
