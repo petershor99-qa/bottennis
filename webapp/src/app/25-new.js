@@ -156,6 +156,9 @@
   }
 
   function setupFullscreen() {
+    // v2.203.1: приложение могло открыться сразу во весь экран — без события
+    // fullscreenChanged отметки не было, и верх экрана уезжал под камеру
+    syncFullscreenClass();
     if (!fullscreenAvailable()) return;
     if (wantFullscreen()) enterFullscreen();
     if (isPhoneClient(clientInfo().platform) || fsButton) return;
