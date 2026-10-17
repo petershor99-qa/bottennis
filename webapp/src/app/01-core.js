@@ -1,6 +1,16 @@
   // ── Тема, вибрация ─────────────────────────────────────────────────────────
   // Параметры запуска из адреса: «#tgWebAppData=…&tgWebAppVersion=…» -> объект.
   // Разбор как у telegram-web-app.js; адрес-маршрут «#/rating» — пустой объект.
+  // v2.203.1: повторный запуск в уже открытом приложении — Telegram меняет только
+  // хвост адреса после # (#tgWebAppData=…), страница не перезагружается. Экран
+  // берётся из ?r= (как при обычном старте); null — это не запуск.
+  function relaunchRoute(hash, search) {
+    if (!parseLaunchParams(hash).tgWebAppData) return null;
+    var r = null;
+    try { r = new URLSearchParams(search || "").get("r"); } catch (e) { r = null; }
+    return r !== null && /^[a-z0-9_\/]{0,60}$/.test(r) ? r : "";
+  }
+
   function parseLaunchParams(hash) {
     var out = {};
     hash = String(hash || "").replace(/^#/, "");

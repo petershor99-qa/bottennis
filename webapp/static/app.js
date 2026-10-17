@@ -17,7 +17,7 @@
       toggledReactions: toggledReactions, matchMood: matchMood, tapGuard: tapGuard, chipSets: chipSets, isPhoneClient: isPhoneClient, replayTiming: replayTiming, ballHeight: ballHeight,
       nextNav: nextNav, sparkPoints: sparkPoints, odometerDigits: odometerDigits, raceOrder: raceOrder,
       edgeProgress: edgeProgress, isRootRoute: isRootRoute, playerFromRoute: playerFromRoute,
-      reignClock: reignClock, timelineShares: timelineShares, goalsFresh: goalsFresh, desktopFullscreenDefault: desktopFullscreenDefault, deltaTone: deltaTone
+      reignClock: reignClock, timelineShares: timelineShares, goalsFresh: goalsFresh, desktopFullscreenDefault: desktopFullscreenDefault, deltaTone: deltaTone, relaunchRoute: relaunchRoute
     };
     return;
   }
@@ -46,6 +46,16 @@
   // ── Тема, вибрация ─────────────────────────────────────────────────────────
   // Параметры запуска из адреса: «#tgWebAppData=…&tgWebAppVersion=…» -> объект.
   // Разбор как у telegram-web-app.js; адрес-маршрут «#/rating» — пустой объект.
+  // v2.203.1: повторный запуск в уже открытом приложении — Telegram меняет только
+  // хвост адреса после # (#tgWebAppData=…), страница не перезагружается. Экран
+  // берётся из ?r= (как при обычном старте); null — это не запуск.
+  function relaunchRoute(hash, search) {
+    if (!parseLaunchParams(hash).tgWebAppData) return null;
+    var r = null;
+    try { r = new URLSearchParams(search || "").get("r"); } catch (e) { r = null; }
+    return r !== null && /^[a-z0-9_\/]{0,60}$/.test(r) ? r : "";
+  }
+
   function parseLaunchParams(hash) {
     var out = {};
     hash = String(hash || "").replace(/^#/, "");
@@ -3685,8 +3695,12 @@
     stage.addEventListener("click", function (e) {
       if (suppress) { suppress = false; return; }
       var rect = stage.getBoundingClientRect();
+      var target = e.clientX - rect.left < rect.width / 3 ? index - 1 : index + 1;
+      // v2.203.1: на первой и последней карточке дальше листать некуда — раньше
+      // карточка рисовалась заново и её анимация (и конфетти) повторялись
+      if (target < 0 || target > d.cards.length - 1) return;
       haptic("select");
-      show(e.clientX - rect.left < rect.width / 3 ? index - 1 : index + 1);
+      show(target);
       hint.classList.add("is-hidden");
     });
     show(0);
@@ -4585,6 +4599,9 @@
   }
 
   function setupFullscreen() {
+    // v2.203.1: приложение могло открыться сразу во весь экран — без события
+    // fullscreenChanged отметки не было, и верх экрана уезжал под камеру
+    syncFullscreenClass();
     if (!fullscreenAvailable()) return;
     if (wantFullscreen()) enterFullscreen();
     if (isPhoneClient(clientInfo().platform) || fsButton) return;
@@ -4921,6 +4938,10 @@
       if (tg.isVersionAtLeast && tg.isVersionAtLeast("7.7") && tg.disableVerticalSwipes) tg.disableVerticalSwipes();
       tg.onEvent("themeChanged", function () { applyTheme(); shell = null; render(true); });
       tg.onEvent("fullscreenChanged", syncFullscreenClass);
+      // v2.203.1: отступ под камерой — и когда Telegram открыл приложение сразу во весь
+      // экран (события fullscreenChanged тогда нет) или поменял безопасную зону
+      tg.onEvent("safeAreaChanged", syncFullscreenClass);
+      tg.onEvent("contentSafeAreaChanged", syncFullscreenClass);
       setupFullscreen();
       if (tg.BackButton) {
         tg.BackButton.onClick(function () { history.back(); });
@@ -4941,7 +4962,16 @@
   if (location.hash && location.hash.indexOf("#/") !== 0 && launch.tgWebAppData) {
     try { history.replaceState(null, "", location.pathname + location.search + "#/"); } catch (e) { /* старый браузер */ }
   }
-  window.addEventListener("hashchange", function () { render(); });
+  window.addEventListener("hashchange", function () {
+    var target = relaunchRoute(location.hash, location.search);
+    if (target !== null) {
+      // повторный запуск: свежие параметры Telegram и экран из ?r= (было — «Клуб»)
+      launch = parseLaunchParams(location.hash);
+      try { window.sessionStorage.setItem("__telegram__initParams", JSON.stringify(launch)); } catch (e) { /* нет памяти */ }
+      try { history.replaceState(null, "", location.pathname + location.search + "#/" + target); } catch (e) { /* старый браузер */ }
+    }
+    render();
+  });
   // Переход из бота сразу на нужный экран (v2.167.0): ?r=player/5, ?r=rating&from=3.
   try {
     var params = new URLSearchParams(location.search);
