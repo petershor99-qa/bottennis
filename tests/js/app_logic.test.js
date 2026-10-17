@@ -263,3 +263,10 @@ test("deltaTone: плюс — победа, минус — поражение, �
   assert.equal(app.deltaTone("0.0"), "");
   assert.equal(app.deltaTone(""), "");
 });
+
+test("relaunchRoute: повторный запуск в открытом приложении — экран из ?r=", () => {
+  assert.equal(app.relaunchRoute("#tgWebAppData=query_id%3D1&tgWebAppVersion=8.0", "?r=me"), "me");
+  assert.equal(app.relaunchRoute("#tgWebAppData=x", ""), "");
+  assert.equal(app.relaunchRoute("#tgWebAppData=x", "?r=../evil"), "");
+  assert.equal(app.relaunchRoute("#/player/1", "?r=me"), null);
+});

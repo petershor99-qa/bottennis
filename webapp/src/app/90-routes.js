@@ -236,6 +236,10 @@
       if (tg.isVersionAtLeast && tg.isVersionAtLeast("7.7") && tg.disableVerticalSwipes) tg.disableVerticalSwipes();
       tg.onEvent("themeChanged", function () { applyTheme(); shell = null; render(true); });
       tg.onEvent("fullscreenChanged", syncFullscreenClass);
+      // v2.203.1: отступ под камерой — и когда Telegram открыл приложение сразу во весь
+      // экран (события fullscreenChanged тогда нет) или поменял безопасную зону
+      tg.onEvent("safeAreaChanged", syncFullscreenClass);
+      tg.onEvent("contentSafeAreaChanged", syncFullscreenClass);
       setupFullscreen();
       if (tg.BackButton) {
         tg.BackButton.onClick(function () { history.back(); });
@@ -256,7 +260,16 @@
   if (location.hash && location.hash.indexOf("#/") !== 0 && launch.tgWebAppData) {
     try { history.replaceState(null, "", location.pathname + location.search + "#/"); } catch (e) { /* старый браузер */ }
   }
-  window.addEventListener("hashchange", function () { render(); });
+  window.addEventListener("hashchange", function () {
+    var target = relaunchRoute(location.hash, location.search);
+    if (target !== null) {
+      // повторный запуск: свежие параметры Telegram и экран из ?r= (было — «Клуб»)
+      launch = parseLaunchParams(location.hash);
+      try { window.sessionStorage.setItem("__telegram__initParams", JSON.stringify(launch)); } catch (e) { /* нет памяти */ }
+      try { history.replaceState(null, "", location.pathname + location.search + "#/" + target); } catch (e) { /* старый браузер */ }
+    }
+    render();
+  });
   // Переход из бота сразу на нужный экран (v2.167.0): ?r=player/5, ?r=rating&from=3.
   try {
     var params = new URLSearchParams(location.search);

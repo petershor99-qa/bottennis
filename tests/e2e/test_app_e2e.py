@@ -192,3 +192,36 @@ def test_screen_opens_from_top_on_phone(browser, base_url):
     page.wait_for_timeout(800)
     assert page.evaluate("scrollY") == 0
     ctx.close()
+
+
+def test_relaunch_in_open_app_goes_to_requested_screen(browser, base_url):
+    """v2.203.1: повторное «Мой рейтинг» в уже открытом приложении — Telegram меняет
+    только хвост адреса после #, страница не перезагружается; раньше открывался «Клуб»."""
+    page = open_page(browser, f"{base_url}/preview?r=me")
+    wait_screen(page)
+    assert page.evaluate("location.hash") == "#/player/1"
+    page.evaluate("location.hash = '#/'")
+    wait_screen(page)
+    page.evaluate("location.hash = '#tgWebAppData=' + encodeURIComponent(window.Telegram.WebApp.initData)")
+    wait_screen(page)
+    page.wait_for_timeout(300)
+    assert page.evaluate("location.hash") == "#/player/1"
+    assert page.errors == []
+    page.context.close()
+
+
+def test_month_last_card_does_not_replay(browser, base_url):
+    """v2.203.1: нажатие «дальше» на последней карточке её не перерисовывает."""
+    page = open_page(browser, f"{base_url}/preview#/month")
+    page.wait_for_selector(".story-card")
+    box = page.locator(".story").bounding_box()
+    n = page.evaluate("document.querySelectorAll('.story-bars i').length")
+    for _ in range(n + 2):
+        page.mouse.click(box["x"] + box["width"] - 20, box["y"] + 150)
+        page.wait_for_timeout(120)
+    page.evaluate("window.__card = document.querySelector('.story-card')")
+    page.mouse.click(box["x"] + box["width"] - 20, box["y"] + 150)
+    page.wait_for_timeout(200)
+    assert page.evaluate("document.querySelector('.story-card') === window.__card")
+    assert page.evaluate("document.querySelector('.story-card').classList.contains('story-final')")
+    page.context.close()
