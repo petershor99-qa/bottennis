@@ -1307,6 +1307,8 @@ REPLY_KB_LEADERBOARD = "🏆 Рейтинг"
 REPLY_KB_PROFILE = "📊 Мой рейтинг"
 REPLY_KB_LEADERBOARD_ALL = {REPLY_KB_LEADERBOARD, "🏆 Клуб", "📊 Рейтинг"}
 REPLY_KB_PROFILE_ALL = {REPLY_KB_PROFILE, "👤 Профиль", "📈 Статистика"}
+# v2.203.0: у кого есть приложение — третья кнопка открывает его (не шлёт текст)
+REPLY_KB_APP = "📱 Приложение"
 
 
 # ── Разнообразие текста на экране вызова (v2.117.0) ─────────────────────────────

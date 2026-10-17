@@ -42,9 +42,11 @@ def test_menu_for_admin_has_app_row_right_under_challenge(env):
     rows = _rows(kb)
     assert rows[1] == [WEBAPP_BUTTON_TEXT]  # вторая строка — сразу под «Вызвать на матч»
     assert "Рейтинг клуба" in rows[2][0]
-    [button] = _app_buttons(kb)
+    # v2.203.0: вторая кнопка в приложение — «Мой рейтинг» (профиль)
+    button, me = _app_buttons(kb)
     assert button.web_app.url == "https://club.example/"
     assert WEBAPP_BUTTON_TEXT == "📱 Открыть приложение"
+    assert me.text == "📊 Мой рейтинг" and me.web_app.url == "https://club.example/?r=me"
 
 
 def test_menu_for_regular_player_hidden_while_admin_only(env):
@@ -53,7 +55,7 @@ def test_menu_for_regular_player_hidden_while_admin_only(env):
 
 def test_menu_for_everyone_when_audience_all(env, monkeypatch):
     monkeypatch.setenv("WEBAPP_AUDIENCE", "all")
-    assert len(_app_buttons(main_menu_kb(viewer_telegram_id=PLAYER))) == 1
+    assert len(_app_buttons(main_menu_kb(viewer_telegram_id=PLAYER))) == 2   # приложение и «Мой рейтинг»
 
 
 def test_menu_has_no_app_row_when_switched_off(env, monkeypatch):

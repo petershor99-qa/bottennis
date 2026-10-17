@@ -162,7 +162,7 @@ class ReplyKeyboardMiddleware(BaseMiddleware):
             player = await get_player(session, user.id)
             if player is None or (player.reply_kb_version or 0) >= REPLY_KB_VERSION:
                 return result
-            await bot.send_message(user.id, REPLY_KB_TEXT, reply_markup=main_reply_kb(),
+            await bot.send_message(user.id, REPLY_KB_TEXT, reply_markup=main_reply_kb(user.id),
                                    disable_notification=True)
             player.reply_kb_version = REPLY_KB_VERSION
         except Exception:
