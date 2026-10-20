@@ -17,7 +17,7 @@
       toggledReactions: toggledReactions, matchMood: matchMood, tapGuard: tapGuard, chipSets: chipSets, isPhoneClient: isPhoneClient, replayTiming: replayTiming, ballHeight: ballHeight,
       nextNav: nextNav, sparkPoints: sparkPoints, odometerDigits: odometerDigits, raceOrder: raceOrder,
       edgeProgress: edgeProgress, isRootRoute: isRootRoute, playerFromRoute: playerFromRoute,
-      reignClock: reignClock, timelineShares: timelineShares, goalsFresh: goalsFresh, desktopFullscreenDefault: desktopFullscreenDefault, deltaTone: deltaTone, relaunchRoute: relaunchRoute
+      reignClock: reignClock, timelineShares: timelineShares, thinPoints: thinPoints, isOpaqueScriptError: isOpaqueScriptError, selfVersusTarget: selfVersusTarget, goalsFresh: goalsFresh, desktopFullscreenDefault: desktopFullscreenDefault, deltaTone: deltaTone, relaunchRoute: relaunchRoute
     };
     return;
   }
@@ -440,7 +440,26 @@
     requestAnimationFrame(frame);
   }
 
-  function num(cls, text) { var n = el("div", cls); countUp(n, text); return n; }
+  function num(cls, text) {
+    var n = el("div", cls);
+    countUp(n, text);
+    // v2.204.0: слово в плитке («Поражение») не рвётся посередине — уменьшается шрифт
+    if (/(^| )tile-value( |$)/.test(cls) && !/\d/.test(text)) { n.classList.add("is-word"); fitWord(n); }
+    return n;
+  }
+
+  // Шрифт меньше на 1 px, пока слово не влезет в ширину (не мельче minPx)
+  function fitWord(node, minPx) {
+    var tries = 0;
+    requestAnimationFrame(function fit() {
+      if (!node.isConnected || !node.clientWidth) { if (++tries < 20) requestAnimationFrame(fit); return; }
+      var size = parseFloat(window.getComputedStyle(node).fontSize) || 28;
+      while (node.scrollWidth > node.clientWidth + 1 && size > (minPx || 13)) {
+        size -= 1;
+        node.style.fontSize = size + "px";
+      }
+    });
+  }
 
   // v2.201.0: «+» — победа, «−» — поражение, «0.0» — без цвета (ничья с нулевой дельтой)
   function deltaTone(text) {
@@ -491,8 +510,16 @@
   // Ошибки JS на устройстве (v2.177.0): после запуска — в журнал сервера, не
   // больше трёх за сессию. Только запись в лог, без уведомлений.
   var reportedErrors = 0;
+
+  // «Script error.» без файла — так браузер прячет ошибку чужого скрипта (встроенного
+  // клиентом Telegram): подробностей нет, приложение работает (v2.204.0) — не шлём
+  function isOpaqueScriptError(message, filename) {
+    return /^Script error\.?$/.test(String(message || "").trim()) && !filename;
+  }
+
   window.addEventListener("error", function (e) {
     if (reportedErrors >= 3 || !initDataNow() || !e || !e.message) return;
+    if (isOpaqueScriptError(e.message, e.filename)) return;
     reportedErrors += 1;
     var info = clientInfo();
     try {
@@ -2032,7 +2059,17 @@
 
   // История дуэли (v2.177.0): кто вёл по ходу встреч (баланс побед), лучшие
   // серии, лучший матч пары и последние месяцы
+  // Не больше max точек: каждая k-я встреча плюс последняя (v2.204.0) — при сотнях
+  // встреч шаги ±1 сливались в «пилу», форма «кто вёл» терялась
+  function thinPoints(points, max) {
+    if (points.length <= max) return points;
+    var step = (points.length - 1) / (max - 1), out = [];
+    for (var i = 0; i < max; i++) out.push(points[Math.round(i * step)]);
+    return out;
+  }
+
   function balanceSvg(points) {
+    points = thinPoints(points, 60);
     var W = 320, H = 110, T = 10, B = 18;
     var vals = points.map(function (p) { return p.v; });
     var lo = Math.min.apply(null, vals.concat([0])), hi = Math.max.apply(null, vals.concat([0]));
@@ -4761,6 +4798,15 @@
     });
   }
 
+  // Чистая часть (проверяется в Node): адрес профиля вместо «против себя» или null
+  function selfVersusTarget(route, viewer) {
+    var h = /^h2h\/(\d+)$/.exec(route);
+    if (h && viewer !== null && viewer !== undefined && h[1] === String(viewer)) return "player/" + h[1];
+    var p = /^pair\/(\d+)\/(\d+)$/.exec(route);
+    if (p && p[1] === p[2]) return "player/" + p[1];
+    return null;
+  }
+
   function currentRoute() { return location.hash.replace(/^#\/?/, ""); }
 
   // Позиция прокрутки — по записи истории (v2.201.0), а не по адресу. Переход по
@@ -4809,6 +4855,9 @@
     // новый экран — наверх сразу, до каркаса загрузки (не после: браузер успевал «запомнить» середину)
     if (!nav.restore) window.scrollTo(0, 0);
     if (route === "me") { location.replace("#/player/" + viewerId); return; }
+    // v2.204.0: «Ты против себя» и пара из одного игрока — на профиль, а не экран ошибки
+    var selfPair = selfVersusTarget(route, viewerId);
+    if (selfPair) { location.replace("#/" + selfPair); return; }
     // «Твой месяц» во весь экран (v2.183.0); остальные экраны — если так выбрано (v2.186.0)
     if (!/^month/.test(route) && !wantFullscreen()) leaveFullscreen();
 

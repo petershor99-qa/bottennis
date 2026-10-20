@@ -13,7 +13,17 @@
 
   // История дуэли (v2.177.0): кто вёл по ходу встреч (баланс побед), лучшие
   // серии, лучший матч пары и последние месяцы
+  // Не больше max точек: каждая k-я встреча плюс последняя (v2.204.0) — при сотнях
+  // встреч шаги ±1 сливались в «пилу», форма «кто вёл» терялась
+  function thinPoints(points, max) {
+    if (points.length <= max) return points;
+    var step = (points.length - 1) / (max - 1), out = [];
+    for (var i = 0; i < max; i++) out.push(points[Math.round(i * step)]);
+    return out;
+  }
+
   function balanceSvg(points) {
+    points = thinPoints(points, 60);
     var W = 320, H = 110, T = 10, B = 18;
     var vals = points.map(function (p) { return p.v; });
     var lo = Math.min.apply(null, vals.concat([0])), hi = Math.max.apply(null, vals.concat([0]));

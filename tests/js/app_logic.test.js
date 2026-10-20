@@ -270,3 +270,28 @@ test("relaunchRoute: повторный запуск в открытом при�
   assert.equal(app.relaunchRoute("#tgWebAppData=x", "?r=../evil"), "");
   assert.equal(app.relaunchRoute("#/player/1", "?r=me"), null);
 });
+
+test("thinPoints: не больше max точек, первая и последняя на месте", () => {
+  const pts = Array.from({ length: 300 }, (_, i) => ({ v: i % 7, d: String(i) }));
+  const out = app.thinPoints(pts, 60);
+  assert.equal(out.length, 60);
+  assert.equal(out[0], pts[0]);
+  assert.equal(out[59], pts[299]);
+  assert.equal(app.thinPoints(pts.slice(0, 10), 60).length, 10);
+});
+
+test("isOpaqueScriptError: пустой «Script error» без файла не шлётся", () => {
+  assert.equal(app.isOpaqueScriptError("Script error.", ""), true);
+  assert.equal(app.isOpaqueScriptError("Script error", undefined), true);
+  assert.equal(app.isOpaqueScriptError("Script error.", "https://x/static/app.js"), false);
+  assert.equal(app.isOpaqueScriptError("TypeError: x is null", ""), false);
+});
+
+test("selfVersusTarget: «против себя» и пара из одного игрока — в профиль", () => {
+  assert.equal(app.selfVersusTarget("h2h/7", 7), "player/7");
+  assert.equal(app.selfVersusTarget("h2h/3", 7), null);
+  assert.equal(app.selfVersusTarget("h2h/7", null), null);
+  assert.equal(app.selfVersusTarget("pair/4/4", 7), "player/4");
+  assert.equal(app.selfVersusTarget("pair/4/5", 7), null);
+  assert.equal(app.selfVersusTarget("rating", 7), null);
+});

@@ -1274,3 +1274,13 @@ html.has-fs-toggle .screen-head { padding-right: 40px; }
 .story-stamp.mood-rally { color: var(--win); }
 .story-stamp.mood-blowout { color: var(--loss); }
 .story-stamp.mood-deuce { color: var(--accent); }
+
+/* ── v2.204.0: исправления по проверке 20.10 ─────────────────────────── */
+/* Слово в плитке («Поражение») — целиком, шрифт подбирается под ширину (fitWord) */
+.tile-value.is-word { overflow-wrap: normal; word-break: normal; white-space: nowrap; }
+/* Длинное имя из одного слова не вылезает за карточку */
+.hero-name, .versus-name, .hero-tile .rec-name, .quick-who .sheet-title { overflow-wrap: anywhere; }
+.hero-tile .rec-name { white-space: normal; }
+/* Название ачивки из одного длинного слова — перенос по слогам, а не обрезка по краю */
+.badge-name { hyphens: auto; -webkit-hyphens: auto; overflow-wrap: anywhere; }
+@media (max-width: 380px) { .badge-name { font-size: 11px; } }

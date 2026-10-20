@@ -395,7 +395,26 @@
     requestAnimationFrame(frame);
   }
 
-  function num(cls, text) { var n = el("div", cls); countUp(n, text); return n; }
+  function num(cls, text) {
+    var n = el("div", cls);
+    countUp(n, text);
+    // v2.204.0: слово в плитке («Поражение») не рвётся посередине — уменьшается шрифт
+    if (/(^| )tile-value( |$)/.test(cls) && !/\d/.test(text)) { n.classList.add("is-word"); fitWord(n); }
+    return n;
+  }
+
+  // Шрифт меньше на 1 px, пока слово не влезет в ширину (не мельче minPx)
+  function fitWord(node, minPx) {
+    var tries = 0;
+    requestAnimationFrame(function fit() {
+      if (!node.isConnected || !node.clientWidth) { if (++tries < 20) requestAnimationFrame(fit); return; }
+      var size = parseFloat(window.getComputedStyle(node).fontSize) || 28;
+      while (node.scrollWidth > node.clientWidth + 1 && size > (minPx || 13)) {
+        size -= 1;
+        node.style.fontSize = size + "px";
+      }
+    });
+  }
 
   // v2.201.0: «+» — победа, «−» — поражение, «0.0» — без цвета (ничья с нулевой дельтой)
   function deltaTone(text) {

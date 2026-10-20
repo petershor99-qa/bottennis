@@ -41,6 +41,11 @@ STANDINGS = {"week": "Топ недели", "month": "Топ месяца", "qua
 MATCH_TITLES = {"week": "Матч недели", "month": "Матч месяца", "quarter": "Топ-матч квартала",
                 "year": "Топ-матч года"}
 COMPARE_NOTES = {"week": "к среднему за 4 недели", "month": "к прошлому месяцу", "quarter": "к прошлому кварталу"}
+# v2.204.0: период ещё идёт — сравнение с тем же отрезком от начала прошлых периодов.
+# Раньше незаконченную неделю сравнивали с целыми прошлыми, и во вторник табло
+# показывало «−83%» — спад, которого нет.
+COMPARE_NOTES_SO_FAR = {"week": "к тому же сроку 4 прошлых недель", "month": "к тому же сроку прошлого месяца",
+                        "quarter": "к тому же сроку прошлого квартала"}
 YOU_TITLES = {"week": "Твоя неделя", "quarter": "Твой квартал"}
 SWING_MIN = 20   # как «Американские горки» в сводках бота
 
@@ -249,16 +254,26 @@ async def period_payload(session: AsyncSession, viewer: Player, kind: str, day_i
 
     # Табло: объём и сравнение (неделя — со средним за 4 недели, как «Клубный пульс»)
     cur = _totals(matches)
+    now = _now()
+    elapsed = now - _utc(start) if _utc(start) <= now < _utc(end) else None   # период ещё идёт
     if kind == "week":
-        base_matches = await _completed(session, _utc(start - timedelta(days=28)), _utc(start))
+        if elapsed is None:
+            base_matches = await _completed(session, _utc(start - timedelta(days=28)), _utc(start))
+        else:
+            base_matches = []
+            for weeks_back in range(1, 5):
+                ws = _utc(start - timedelta(days=7 * weeks_back))
+                base_matches += await _completed(session, ws, ws + elapsed)
         base = {k: v / 4 for k, v in _totals(base_matches).items()}
     elif kind in ("month", "quarter"):
-        base = _totals(await _completed(session, _utc(prev_start), _utc(start)))
+        base_end = _utc(start) if elapsed is None else min(_utc(prev_start) + elapsed, _utc(start))
+        base = _totals(await _completed(session, _utc(prev_start), base_end))
     else:
         base = {}
     payload["board"] = [{"label": label, "value": str(int(cur[key])), "delta": _pct(cur[key], base.get(key, 0))}
                         for key, label in (("matches", "Матчей"), ("sets", "Партий"), ("points", "Очков"))]
-    payload["compare_note"] = COMPARE_NOTES.get(kind, "") if any(t["delta"] for t in payload["board"]) else ""
+    notes = COMPARE_NOTES if elapsed is None else COMPARE_NOTES_SO_FAR
+    payload["compare_note"] = notes.get(kind, "") if any(t["delta"] for t in payload["board"]) else ""
 
     # Топ периода: по победам, затем по матчам (как в сводке бота)
     stats: dict[int, list] = {}
