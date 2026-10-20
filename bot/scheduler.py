@@ -484,6 +484,29 @@ async def check_champion_auto_release(bot: Bot) -> None:
 
 
 THRONE_CRACKING_GAP = 20.0  # порог разрыва (pts) для уведомления «Трон трещит»
+THRONE_CRACKING_COOLDOWN = timedelta(hours=24)  # не чаще раза в сутки (v2.204.1)
+
+
+def _should_warn_throne(
+    prev_chaser_id: int | None,
+    prev_gap: float | None,
+    prev_at: datetime | None,
+    chaser_id: int,
+    gap: float,
+    now: datetime,
+) -> bool:
+    """Решение «слать ли чемпиону предупреждение» (v2.204.1).
+
+    Слать, если догоняющий ВПЕРВЫЕ вошёл в зону (прошлого состояния нет или
+    зона пустела), сменился или разрыв СОКРАТИЛСЯ относительно прошлого
+    предупреждения, и с прошлого прошло не меньше суток. Рейтинг меняется
+    только после матча, а джоба идёт каждый час, поэтому без этой проверки
+    чемпион получал одно и то же сообщение каждый час, пока никто не играл."""
+    if prev_at is not None and now - prev_at < THRONE_CRACKING_COOLDOWN:
+        return False
+    if prev_chaser_id != chaser_id or prev_gap is None:
+        return True
+    return gap < prev_gap
 
 
 async def check_throne_cracking(bot: Bot) -> None:
@@ -499,12 +522,12 @@ async def check_throne_cracking(bot: Bot) -> None:
     планка, что и у права на статус претендента, иначе предупреждали бы про
     случайного новичка с 3 матчами, который явно не реальная угроза.
 
-    Уведомляет КАЖДЫЙ раз, когда джоба видит разрыв ниже порога — без
-    отдельного флага «уже предупреждали» в БД. Если разрыв то расширяется, то
-    снова сужается, чемпион может получить несколько уведомлений подряд по
-    разным часам — осознанно принятый компромисс простоты (согласовано с
-    пользователем: доп. поле на Player ради дедупликации сочли лишней
-    сложностью для 5-игрокового клуба)."""
+    Дедупликация (v2.204.1): состояние последнего предупреждения хранится на
+    чемпионе (`throne_warn_*`), решение — `_should_warn_throne`. До этого
+    джоба слала одно и то же каждый час при неизменном разрыве (живая жалоба
+    игрока). Когда зона пустеет, догоняющий и разрыв сбрасываются (повторный
+    вход снова считается «впервые»), время последней отправки остаётся — суточный
+    лимит действует и на «вход-выход» вокруг порога."""
     async with async_session() as session:
         champion = await get_champion(session)
         if champion is None:
@@ -517,12 +540,24 @@ async def check_throne_cracking(bot: Bot) -> None:
             and p.rating < champion.rating
             and counts.get(p.id, 0) >= NEWCOMER_THRESHOLD
         ]
-        if not candidates:
+        chaser = max(candidates, key=lambda p: p.rating) if candidates else None
+        gap = round(champion.rating - chaser.rating, 1) if chaser else 0.0
+        if chaser is None or gap <= 0 or gap >= THRONE_CRACKING_GAP:
+            if champion.throne_warn_chaser_id is not None or champion.throne_warn_gap is not None:
+                champion.throne_warn_chaser_id = None
+                champion.throne_warn_gap = None
+                await session.commit()
             return
-        chaser = max(candidates, key=lambda p: p.rating)
-        gap = round(champion.rating - chaser.rating, 1)
-        if gap <= 0 or gap >= THRONE_CRACKING_GAP:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        if not _should_warn_throne(
+            champion.throne_warn_chaser_id, champion.throne_warn_gap,
+            champion.throne_warn_at, chaser.id, gap, now,
+        ):
             return
+        champion.throne_warn_chaser_id = chaser.id
+        champion.throne_warn_gap = gap
+        champion.throne_warn_at = now
+        await session.commit()
         await safe_send(
             bot,
             champion.telegram_id,

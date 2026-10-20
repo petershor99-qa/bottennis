@@ -39,6 +39,12 @@ class Player(Base):
     # Telegram хранит у чата последнюю присланную клавиатуру, и у кого она старше
     # REPLY_KB_VERSION (bot/keyboards/inline.py), бот один раз присылает новую.
     reply_kb_version: Mapped[int] = mapped_column(default=0, server_default="0")
+    # Последнее предупреждение «Трон трещит», отправленное этому игроку как
+    # чемпиону (v2.204.1): кто подбирался, какой был разрыв и когда. Нужно,
+    # чтобы часовая джоба не слала одно и то же при неизменном разрыве.
+    throne_warn_chaser_id: Mapped[int | None]
+    throne_warn_gap: Mapped[float | None]
+    throne_warn_at: Mapped[datetime | None]
     created_at: Mapped[datetime | None] = mapped_column(
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
