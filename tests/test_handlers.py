@@ -2236,7 +2236,7 @@ async def test_my_stats_shows_legend_index_with_rank(db):
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Индекс легенды" in text
-    assert "из 3" in text
+    assert "из 2" in text   # v2.204.0: Cara без матчей не в счёт — как в рейтинге
 
 
 async def test_player_profile_shows_legend_index(db):

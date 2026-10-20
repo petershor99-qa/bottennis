@@ -27,8 +27,16 @@
   // Ошибки JS на устройстве (v2.177.0): после запуска — в журнал сервера, не
   // больше трёх за сессию. Только запись в лог, без уведомлений.
   var reportedErrors = 0;
+
+  // «Script error.» без файла — так браузер прячет ошибку чужого скрипта (встроенного
+  // клиентом Telegram): подробностей нет, приложение работает (v2.204.0) — не шлём
+  function isOpaqueScriptError(message, filename) {
+    return /^Script error\.?$/.test(String(message || "").trim()) && !filename;
+  }
+
   window.addEventListener("error", function (e) {
     if (reportedErrors >= 3 || !initDataNow() || !e || !e.message) return;
+    if (isOpaqueScriptError(e.message, e.filename)) return;
     reportedErrors += 1;
     var info = clientInfo();
     try {

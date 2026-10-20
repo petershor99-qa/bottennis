@@ -158,6 +158,16 @@ async def month_payload(session: AsyncSession, player: Player, ym: str | None) -
         year, month = today.year, today.month
         start = _month_start(year, month)
         if not await _player_matches(session, player.id, start, _now() + timedelta(seconds=1)):
+            # v2.204.0: ни одного матча за всё время — текущий месяц с понятным текстом,
+            # а не «В сентябре ты не играл»
+            never = not await _player_matches(session, player.id, datetime(2000, 1, 1), _now() + timedelta(seconds=1))
+            if never:
+                ny, nm = _shift(year, month, 1)
+                py_, pm = _shift(year, month, -1)
+                return {"title": f"Твой {MONTHS_NOM[month - 1]}", "ym": f"{year}{month:02d}",
+                        "label": f"{MONTHS_NOM[month - 1].capitalize()} {year}", "prev": f"{py_}{pm:02d}",
+                        "next": None, "cards": [],
+                        "empty": "Ты ещё не сыграл ни одного матча. Сыграй — и здесь появится история месяца."}
             year, month = _shift(year, month, -1)   # в этом месяце ещё не играл — прошлый
     start = _month_start(year, month)
     ny, nm = _shift(year, month, 1)
