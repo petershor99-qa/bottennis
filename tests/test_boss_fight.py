@@ -854,6 +854,159 @@ async def test_throne_cracking_picks_closest_chaser_among_several(monkeypatch, d
     assert "Far" not in calls[0].args[1]
 
 
+# ── «Трон трещит»: дедупликация (v2.204.1) ───────────────────────────────────
+
+async def _cracking_setup(factory, champion_rating=1100.0, chaser_rating=1090.0):
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    async with factory() as s:
+        champion = _player(1, "Champion", rating=champion_rating)
+        champion.is_champion = True
+        chaser = _player(2, "Chaser", rating=chaser_rating)
+        s.add_all([champion, chaser])
+        await s.flush()
+        await _seed_matches(s, chaser, champion, NEWCOMER_THRESHOLD, base)
+        await s.commit()
+
+
+async def _set_ratings(factory, champion_rating, chaser_rating):
+    async with factory() as s:
+        for pid, rating in ((1, champion_rating), (2, chaser_rating)):
+            p = (await s.execute(select(Player).where(Player.id == pid))).scalar_one()
+            p.rating = rating
+        await s.commit()
+
+
+async def _age_last_warning(factory, hours):
+    """Сдвинуть время последнего предупреждения назад (имитация прошедших часов)."""
+    async with factory() as s:
+        champ = (await s.execute(select(Player).where(Player.id == 1))).scalar_one()
+        champ.throne_warn_at = champ.throne_warn_at - timedelta(hours=hours)
+        await s.commit()
+
+
+async def test_throne_cracking_same_gap_not_repeated(monkeypatch, db_factory):
+    """Разрыв не менялся (никто не играл) — второй тик ничего не шлёт."""
+    import bot.scheduler as sched
+
+    monkeypatch.setattr(sched, "async_session", db_factory)
+    await _cracking_setup(db_factory)
+
+    bot = AsyncMock()
+    await sched.check_throne_cracking(bot)
+    await sched.check_throne_cracking(bot)
+    assert bot.send_message.await_count == 1
+
+    await _age_last_warning(db_factory, 25)  # прошли сутки, разрыв тот же
+    await sched.check_throne_cracking(bot)
+    assert bot.send_message.await_count == 1
+
+
+async def test_throne_cracking_shrinking_gap_waits_for_cooldown(monkeypatch, db_factory):
+    """Разрыв сократился: внутри суток не шлём, после суток — шлём новый."""
+    import bot.scheduler as sched
+
+    monkeypatch.setattr(sched, "async_session", db_factory)
+    await _cracking_setup(db_factory)  # разрыв 10.0
+
+    bot = AsyncMock()
+    await sched.check_throne_cracking(bot)
+    assert bot.send_message.await_count == 1
+
+    await _set_ratings(db_factory, 1100.0, 1095.0)  # разрыв 5.0
+    await sched.check_throne_cracking(bot)
+    assert bot.send_message.await_count == 1  # суточный лимит
+
+    await _age_last_warning(db_factory, 25)
+    await sched.check_throne_cracking(bot)
+    assert bot.send_message.await_count == 2
+    assert "5.0 pts" in bot.send_message.await_args_list[-1].args[1]
+
+
+async def test_throne_cracking_widening_gap_not_sent(monkeypatch, db_factory):
+    """Разрыв вырос (но остался в зоне) — предупреждать не о чем."""
+    import bot.scheduler as sched
+
+    monkeypatch.setattr(sched, "async_session", db_factory)
+    await _cracking_setup(db_factory)  # разрыв 10.0
+
+    bot = AsyncMock()
+    await sched.check_throne_cracking(bot)
+    await _set_ratings(db_factory, 1100.0, 1083.0)  # разрыв 17.0
+    await _age_last_warning(db_factory, 25)
+    await sched.check_throne_cracking(bot)
+    assert bot.send_message.await_count == 1
+
+
+async def test_throne_cracking_reentry_after_leaving_zone(monkeypatch, db_factory):
+    """Вышел из зоны и вернулся: после суток снова «впервые вошёл» (даже при
+    большем разрыве, чем был), раньше суток — тишина."""
+    import bot.scheduler as sched
+
+    monkeypatch.setattr(sched, "async_session", db_factory)
+    await _cracking_setup(db_factory)  # разрыв 10.0
+
+    bot = AsyncMock()
+    await sched.check_throne_cracking(bot)
+    await _set_ratings(db_factory, 1100.0, 1000.0)  # ушёл из зоны, состояние сброшено
+    await sched.check_throne_cracking(bot)
+    async with db_factory() as s:
+        champ = (await s.execute(select(Player).where(Player.id == 1))).scalar_one()
+        assert champ.throne_warn_chaser_id is None and champ.throne_warn_gap is None
+        assert champ.throne_warn_at is not None
+
+    await _set_ratings(db_factory, 1100.0, 1085.0)  # вернулся, разрыв 15.0 (был 10.0)
+    await sched.check_throne_cracking(bot)
+    assert bot.send_message.await_count == 1  # сутки ещё не прошли
+
+    await _age_last_warning(db_factory, 25)
+    await sched.check_throne_cracking(bot)
+    assert bot.send_message.await_count == 2
+
+
+async def test_throne_cracking_new_chaser_notified_after_cooldown(monkeypatch, db_factory):
+    import bot.scheduler as sched
+
+    monkeypatch.setattr(sched, "async_session", db_factory)
+    base = datetime(2026, 6, 1, 12, 0, 0)
+    await _cracking_setup(db_factory, chaser_rating=1085.0)  # разрыв 15.0
+    async with db_factory() as s:
+        other = _player(3, "Other", rating=1050.0)
+        s.add(other)
+        await s.flush()
+        champ = (await s.execute(select(Player).where(Player.id == 1))).scalar_one()
+        await _seed_matches(s, other, champ, NEWCOMER_THRESHOLD, base)
+        await s.commit()
+
+    bot = AsyncMock()
+    await sched.check_throne_cracking(bot)
+    assert "Chaser" in bot.send_message.await_args_list[-1].args[1]
+
+    async with db_factory() as s:  # Other обгоняет Chaser, но разрыв 20-ти не менее
+        o = (await s.execute(select(Player).where(Player.id == 3))).scalar_one()
+        o.rating = 1092.0  # разрыв 8.0
+        await s.commit()
+    await _age_last_warning(db_factory, 25)
+    await sched.check_throne_cracking(bot)
+    assert bot.send_message.await_count == 2
+    assert "Other" in bot.send_message.await_args_list[-1].args[1]
+
+
+def test_should_warn_throne_rules():
+    from bot.scheduler import THRONE_CRACKING_COOLDOWN, _should_warn_throne
+
+    now = datetime(2026, 10, 20, 12, 0, 0)
+    old = now - THRONE_CRACKING_COOLDOWN - timedelta(minutes=1)
+    recent = now - timedelta(hours=1)
+    assert _should_warn_throne(None, None, None, 2, 10.0, now)       # первый раз
+    assert not _should_warn_throne(None, None, recent, 2, 10.0, now)  # сутки не прошли
+    assert _should_warn_throne(None, None, old, 2, 10.0, now)        # вошёл заново
+    assert _should_warn_throne(2, 10.0, old, 2, 9.9, now)            # сократился
+    assert not _should_warn_throne(2, 10.0, old, 2, 10.0, now)       # тот же
+    assert not _should_warn_throne(2, 10.0, old, 2, 12.0, now)       # вырос
+    assert _should_warn_throne(2, 10.0, old, 3, 14.0, now)           # другой догоняющий
+    assert not _should_warn_throne(2, 10.0, recent, 3, 4.0, now)     # лимит важнее
+
+
 async def test_champion_auto_release_no_candidates_keeps_throne(monkeypatch, db_factory):
     import bot.scheduler as sched
 
