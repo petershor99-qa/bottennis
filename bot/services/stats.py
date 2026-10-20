@@ -18,6 +18,7 @@ from bot.utils import (
     activity_counts_by_day,
     busiest_msk_hour,
     get_career_matches,
+    get_match_counts,
     match_rating_delta,
     pluralize_losses,
     pluralize_matches,
@@ -743,12 +744,17 @@ async def _legend_indices(session: AsyncSession, players: list) -> dict[int, int
 async def _legend_index_with_rank(session: AsyncSession, player, players_all: list) -> tuple[int, int, int]:
     """(индекс, место в клубе, всего игроков) для ОДНОГО игрока — обёртка над
     _legend_indices(), чтобы вызывающему (profile.py) не считать ранжирование
-    самому."""
-    indices = await _legend_indices(session, players_all)
+    самому.
+
+    v2.204.0: место — среди игравших (как в рейтинге), иначе «#7 из 8» рядом с
+    «#7 из 7»: зарегистрированный без единого матча занимал строку в индексе."""
+    counts = await get_match_counts(session)
+    field = [p for p in players_all if counts.get(p.id, 0) > 0 or p.id == player.id]
+    indices = await _legend_indices(session, field)
     my_index = indices[player.id]
     ranked = sorted(indices.items(), key=lambda kv: -kv[1])
     my_rank = next(i for i, (pid, _) in enumerate(ranked, start=1) if pid == player.id)
-    return my_index, my_rank, len(players_all)
+    return my_index, my_rank, len(field)
 
 
 # ── Career narrative (v2.112.0) ─────────────────────────────────────────────────

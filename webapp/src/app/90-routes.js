@@ -59,6 +59,15 @@
     });
   }
 
+  // Чистая часть (проверяется в Node): адрес профиля вместо «против себя» или null
+  function selfVersusTarget(route, viewer) {
+    var h = /^h2h\/(\d+)$/.exec(route);
+    if (h && viewer !== null && viewer !== undefined && h[1] === String(viewer)) return "player/" + h[1];
+    var p = /^pair\/(\d+)\/(\d+)$/.exec(route);
+    if (p && p[1] === p[2]) return "player/" + p[1];
+    return null;
+  }
+
   function currentRoute() { return location.hash.replace(/^#\/?/, ""); }
 
   // Позиция прокрутки — по записи истории (v2.201.0), а не по адресу. Переход по
@@ -107,6 +116,9 @@
     // новый экран — наверх сразу, до каркаса загрузки (не после: браузер успевал «запомнить» середину)
     if (!nav.restore) window.scrollTo(0, 0);
     if (route === "me") { location.replace("#/player/" + viewerId); return; }
+    // v2.204.0: «Ты против себя» и пара из одного игрока — на профиль, а не экран ошибки
+    var selfPair = selfVersusTarget(route, viewerId);
+    if (selfPair) { location.replace("#/" + selfPair); return; }
     // «Твой месяц» во весь экран (v2.183.0); остальные экраны — если так выбрано (v2.186.0)
     if (!/^month/.test(route) && !wantFullscreen()) leaveFullscreen();
 

@@ -49,13 +49,14 @@ async def test_week_payload_board_standings_heroes_you(db):
         _m(a, b, a.id, [(11, 5), (11, 7)], MONDAY + timedelta(hours=10)),
         _m(a, b, a.id, [(9, 11), (11, 9), (11, 8)], MONDAY + timedelta(hours=11), rc=22.0),
         _m(c, b, c.id, [(11, 3)], MONDAY + timedelta(hours=12)),
-        _m(a, c, c.id, [(11, 6), (11, 4)], MONDAY - timedelta(days=3)),     # прошлая неделя
+        _m(a, c, c.id, [(11, 6), (11, 4)], MONDAY - timedelta(days=6)),     # прошлая неделя, вторник
     ])
     await db.commit()
     d = await api_period.period_payload(db, a, "week", None)
     assert d["label"] == "Неделя 12–18 октября" and d["prev"] == "2026-10-05" and d["next"] is None
     assert d["board"][0] == {"label": "Матчей", "value": "3", "delta": "+1100%"}
-    assert d["compare_note"] == "к среднему за 4 недели"
+    # v2.204.0: неделя ещё идёт — сравнение с тем же сроком прошлых недель
+    assert d["compare_note"] == "к тому же сроку 4 прошлых недель"
     assert [r["name"] for r in d["standings"]] == ["Алиса", "Вика", "Боб"]
     assert d["standings"][0]["record"] == "2–0 (100%)" and d["standings"][0]["form"] == ["w", "w"]
     keys = {h["key"]: h for h in d["heroes"]}
