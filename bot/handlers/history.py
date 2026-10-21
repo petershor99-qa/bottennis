@@ -42,6 +42,7 @@ from bot.utils import (
     get_career_matches,
     get_player,
     get_rec_signal,
+    pluralize_matches,
     rating_chart_url,
     style_compare_url,
     style_radar_url,
@@ -99,7 +100,7 @@ async def _send_rating_chart(
             caption=(
                 f"📊 Динамика рейтинга — <b>{h(target.display_name)}</b>\n"
                 f"Сейчас: <b>{round(target.rating, 1)} pts</b>  "
-                f"<i>(последние {len(values)} матчей)</i>"
+                f"<i>(последние {pluralize_matches(len(values))})</i>"
             ),
         )
         _last_chart_msg[chat_id] = sent.message_id
