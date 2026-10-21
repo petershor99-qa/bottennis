@@ -1781,7 +1781,7 @@ async def test_club_records_shows_longest_boss_fight(db):
 
     text = cb.message.edit_text.await_args.args[0]
     assert "Самый долгий боссфайт" in text
-    assert "4 партий" in text
+    assert "4 партии" in text
 
 
 # -- Личная статистика: боссфайты сыграно/выиграно --
