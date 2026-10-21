@@ -384,14 +384,18 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
         reply_markup=active_match_kb(match.id, h2h_url=webapp_link(challenger.telegram_id, f"h2h/{opponent.id}")),
     )
 
-    # Пасхалка: вызвал текущего лидера рейтинга. Раньше текст был "Похоже это
-    # босс-файт" — путал с настоящей механикой боссфайта (Player.is_champion,
-    # ×2 к рейтингу, запрет ничьей), т.к. это просто топ-1 по сырому рейтингу
-    # без привязки к реальному чемпиону — переименовано в v2.89.0.
-    top_r = await session.execute(
-        select(func.count()).select_from(Player).where(Player.rating > opponent.rating)
-    )
-    if top_r.scalar() == 0:
+    # Пасхалка: вызвал настоящего лидера клуба — чемпиона (Player.is_champion). Раньше
+    # лидером считался игрок с самым высоким рейтингом, но при обгоне чемпиона по очкам
+    # это претендент, а не владелец трона. Пока чемпиона нет (боссфайт не активирован),
+    # лидер — по рейтингу.
+    if champion is not None:
+        is_leader = opponent.id == champion.id
+    else:
+        top_r = await session.execute(
+            select(func.count()).select_from(Player).where(Player.rating > opponent.rating)
+        )
+        is_leader = top_r.scalar() == 0
+    if is_leader:
         await safe_send(bot, challenger.telegram_id, "💀 О, местную легенду вызвал. Смело.")
 
     await callback.answer()
