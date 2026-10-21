@@ -4787,7 +4787,7 @@ def _egg_ctx(**overrides) -> dict:
         "comeback": False, "marathon": False,
         "old_winner_rating": 1000.0, "old_loser_rating": 1000.0,
         "previous_wins": 1, "streak": 1, "loss_streak_before": 0,
-        "first_blood": False, "revenge": False, "first_time_top1": False, "winner_total": 5,
+        "first_blood": False, "revenge": False, "took_throne": False, "winner_total": 5,
         "loss_streak": 0, "prev_losses": 0, "loser_total": 5,
     }
     ctx.update(overrides)
