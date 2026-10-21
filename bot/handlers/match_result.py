@@ -10,7 +10,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import and_, desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import Match, MatchStatus, Player
+from bot.db.models import ChampionReign, Match, MatchStatus, Player
 from bot.keyboards.inline import after_set_kb, back_to_menu_kb, main_menu_kb, rematch_kb
 from bot.phrases import (
     EGG_CLEAN_SWEEP,
@@ -188,6 +188,7 @@ async def _collect_egg_context(
     old_winner_rating: float,
     old_loser_rating: float,
     h2h_matches: list[Match],
+    completed_at: datetime | None = None,
 ) -> dict:
     """Собирает все данные для пасхалок из БД. Возвращает контекст.
 
@@ -219,7 +220,7 @@ async def _collect_egg_context(
     for m in w_matches:
         if m.id == match_id:
             continue
-        if m.winner_id != winner.id:
+        if m.winner_id is not None and m.winner_id != winner.id:
             loss_streak_before += 1
         else:
             break
@@ -228,21 +229,22 @@ async def _collect_egg_context(
     first_blood = not any(m.winner_id == winner.id for m in h2h_matches)
     revenge = bool(h2h_matches) and h2h_matches[0].winner_id == loser.id
 
-    # ── Впервые на #1 ────────────────────────────────────────────────────────
-    first_time_top1 = False
-    top1_r = await session.execute(
-        select(func.count()).select_from(Player).where(Player.rating > winner.rating)
-    )
-    if top1_r.scalar() == 0:
-        others_r = await session.execute(
-            select(func.count()).select_from(Player).where(
-                Player.rating > old_winner_rating,
-                Player.id != winner.id,
-                Player.id != loser.id,
+    # ── Трон взят в этом матче ───────────────────────────────────────────────
+    # «Первое место» — это чемпион (Player.is_champion), а не лидер по очкам: обгон
+    # чемпиона по рейтингу трон не даёт, его отдаёт только победа в босс-файте.
+    # Перенос трона открывает правление ровно в момент завершения матча
+    # (try_transfer_champion(at=match.completed_at)), по нему и узнаём, что трон
+    # перешёл именно сейчас: защита трона и обычные матчи чемпиона правление не открывают.
+    took_throne = False
+    if completed_at is not None:
+        reign_r = await session.execute(
+            select(ChampionReign.id).where(
+                ChampionReign.player_id == winner.id,
+                ChampionReign.ended_at.is_(None),
+                ChampionReign.started_at == completed_at,
             )
         )
-        was_top1 = (others_r.scalar() == 0 and old_loser_rating <= old_winner_rating)
-        first_time_top1 = not was_top1
+        took_throne = reign_r.first() is not None
 
     # ── Матчи проигравшего ───────────────────────────────────────────────────
     l_r = await session.execute(
@@ -284,7 +286,7 @@ async def _collect_egg_context(
         "loss_streak_before": loss_streak_before,
         "first_blood":       first_blood,
         "revenge":           revenge,
-        "first_time_top1":   first_time_top1,
+        "took_throne":       took_throne,
         "winner_total":      len(w_matches),
         # проигравший
         "loss_streak":       loss_streak,
@@ -332,7 +334,7 @@ async def _send_winner_eggs(bot: Bot, winner: Player, loser: Player, ctx: dict) 
         await _msg(_pick_egg(EGG_REVENGE, mid, "egg_revenge"))
     if ctx["comeback"]:
         await _msg(_pick_egg(EGG_COMEBACK, mid, "egg_comeback"))
-    if ctx["first_time_top1"]:
+    if ctx["took_throne"]:
         await _msg("👑 Трон твой. Пока.")
     if ctx["first_blood"]:
         await _msg(f"🩸 Первая кровь — <b>{h(loser.display_name)}</b>")
@@ -491,6 +493,7 @@ async def _send_easter_eggs(
     """Пасхалки после матча — победителю, проигравшему и обоим."""
     ctx = await _collect_egg_context(
         session, winner, loser, final_sets, match_id, old_winner_rating, old_loser_rating, h2h_matches,
+        completed_at=completed_at,
     )
     await _send_winner_eggs(bot, winner, loser, ctx)
     await _send_loser_eggs(bot, loser, winner, ctx, old_loser_rating)
