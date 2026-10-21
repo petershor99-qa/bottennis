@@ -42,7 +42,9 @@ from bot.utils import (
     msk_day_start,
     pluralize_days,
     pluralize_defenses,
+    pluralize_draws,
     pluralize_matches,
+    pluralize_sets,
     pluralize_times,
     pluralize_wins,
     shortest_champion_reign,
@@ -443,7 +445,7 @@ async def _collect_club_records(session: AsyncSession) -> dict[str, list[str]] |
         if draw_count[most_draws_id] >= 3:
             volume_lines.append(
                 f"🤝 Больше всего ничьих — <b>{h(name_map.get(most_draws_id, '?'))}</b>: "
-                f"{draw_count[most_draws_id]} ничьих"
+                f"{pluralize_draws(draw_count[most_draws_id])}"
             )
 
     # Самый жаркий день клуба — сумма матчей всех игроков за один день (не одного игрока)
@@ -588,7 +590,7 @@ async def _collect_club_records(session: AsyncSession) -> dict[str, list[str]] |
         date_str = longest.completed_at.strftime("%d.%m.%y") if longest.completed_at else ""
         streak_lines.append(
             f"🎯 Самый длинный матч — <b>{h(ch)}</b> vs <b>{h(cd)}</b>: "
-            f"{len(longest.sets_data or [])} партий  <i>{score_str}  {date_str}</i>"
+            f"{pluralize_sets(len(longest.sets_data or []))}  <i>{score_str}  {date_str}</i>"
         )
 
     # Самый долгий боссфайт (больше всего партий среди боссфайтов) — та же
@@ -602,7 +604,7 @@ async def _collect_club_records(session: AsyncSession) -> dict[str, list[str]] |
         date_str = longest_bf.completed_at.strftime("%d.%m.%y") if longest_bf.completed_at else ""
         streak_lines.append(
             f"⚔️ Самый долгий боссфайт — <b>{h(ch)}</b> vs <b>{h(cd)}</b>: "
-            f"{len(longest_bf.sets_data or [])} партий  <i>{score_str}  {date_str}</i>"
+            f"{pluralize_sets(len(longest_bf.sets_data or []))}  <i>{score_str}  {date_str}</i>"
         )
 
     # «Самый быстрый матч» убран в v2.174.0: accepted_at — момент вызова, а

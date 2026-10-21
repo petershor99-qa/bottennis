@@ -148,7 +148,7 @@ async def test_no_loss_streak_record_fires_via_draw(db):
     await db.flush()
 
     msgs = await check_personal_records_on_draw(db, p1, m2)
-    assert any("Ты не пройдёшь" in t and "2 матчей" in t for t in msgs)
+    assert any("Ты не пройдёшь" in t and "2 матча" in t for t in msgs)
 
 
 # ── #3 Побед за один день ─────────────────────────────────────────────────────
@@ -163,7 +163,7 @@ async def test_wins_in_a_day_record_fires(db):
     await db.flush()
 
     msgs = await check_personal_records_on_win(db, p1, m3)
-    assert any("День сурка" in t and "2 побед за сегодня" in t for t in msgs)
+    assert any("День сурка" in t and "2 победы за сегодня" in t for t in msgs)
 
 
 # ── #4 Разгром по очкам ────────────────────────────────────────────────────────
@@ -231,7 +231,7 @@ async def test_longest_match_record_fires_on_draw(db):
     await db.flush()
 
     msgs = await check_personal_records_on_draw(db, p1, m2)
-    assert any("Санта Барбара" in t and "4 партий" in t for t in msgs)
+    assert any("Санта Барбара" in t and "4 партии" in t for t in msgs)
 
 
 # ── #6 Больше всего очков за матч ─────────────────────────────────────────────

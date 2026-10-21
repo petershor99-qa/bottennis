@@ -51,8 +51,10 @@ from bot.utils import (
     match_rating_delta,
     msg_user,
     pluralize_days,
+    pluralize_draws,
     pluralize_losses,
     pluralize_matches,
+    pluralize_times,
     pluralize_wins,
     rank_progress,
     rank_title,
@@ -78,6 +80,12 @@ async def _load_ranking_context(session: AsyncSession, player: Player):
 
 
 # ── Общий рендер строк статистики ─────────────────────────────────────────────
+
+def _bold_count(n: int, plural) -> str:
+    """«<b>3</b> победы»: число жирным, слово — в нужной форме (хелперы pluralize_* отдают «3 победы»)."""
+    num, word = plural(n).split(" ", 1)
+    return f"<b>{num}</b> {word}"
+
 
 def _stats_groups(player, s: dict) -> dict[str, list[str]]:
     """Формирует группы строк статистики (форма, серии, соперники, рекорды и т.д.).
@@ -108,7 +116,7 @@ def _stats_groups(player, s: dict) -> dict[str, list[str]]:
                 form_icons.append("🔴")
         total_recent = len(form_icons)
         display_icons = form_icons[-10:]
-        suffix = f"  <i>({total_recent} матчей)</i>" if total_recent > 10 else ""
+        suffix = f"  <i>({pluralize_matches(total_recent)})</i>" if total_recent > 10 else ""
         form_lines.append(f"🗓 Форма (7 дней): {''.join(display_icons)}{suffix}")
 
     streak = s["streak"]
@@ -132,7 +140,7 @@ def _stats_groups(player, s: dict) -> dict[str, list[str]]:
         top_draws_str = f" 🤝{top_opp['draws']}" if top_opp["draws"] else ""
         opponent_lines.append(
             f"⚔️ Чаще всего: <b>{h(top_opp['name'])}</b> "
-            f"({top_opp['total']} матчей, {top_opp['wins']}–{top_opp['losses']}{top_draws_str})"
+            f"({pluralize_matches(top_opp['total'])}, {top_opp['wins']}–{top_opp['losses']}{top_draws_str})"
         )
     if s["unresolved_debts"]:
         debts = s["unresolved_debts"]
@@ -152,7 +160,7 @@ def _stats_groups(player, s: dict) -> dict[str, list[str]]:
     if s["trend_30d"] is not None:
         sign = "+" if s["trend_30d"] >= 0 else ""
         rating_lines.append(
-            f"📅 За 30 дней: <b>{sign}{s['trend_30d']} pts</b> ({s['trend_30d_matches']} матчей)"
+            f"📅 За 30 дней: <b>{sign}{s['trend_30d']} pts</b> ({pluralize_matches(s['trend_30d_matches'])})"
         )
     avg_delta = s["avg_delta"]
     if avg_delta is not None:
@@ -178,7 +186,7 @@ def _stats_groups(player, s: dict) -> dict[str, list[str]]:
         word = "партия" if n == 1 else "партии" if 2 <= n <= 4 else "партий"
         misc_lines.append(f"❤️ Любимый формат: <b>{n} {word}</b>")
     if s["best_day"]:
-        misc_lines.append(f"📅 Активный день: <b>{s['best_day']}</b> ({s['best_day_count']} матчей)")
+        misc_lines.append(f"📅 Активный день: <b>{s['best_day']}</b> ({pluralize_matches(s['best_day_count'])})")
     if s["fav_hour"]:
         hour, hour_count = s["fav_hour"]
         misc_lines.append(
@@ -191,12 +199,12 @@ def _stats_groups(player, s: dict) -> dict[str, list[str]]:
     if s["post_loss"]:
         wr, n = s["post_loss"]
         if wr >= 50:
-            insight_lines.append(f"💪 После поражений отыгрываешься: <b>{wr}%</b> побед ({n} матчей)")
+            insight_lines.append(f"💪 После поражений отыгрываешься: <b>{wr}%</b> побед ({pluralize_matches(n)})")
         else:
-            insight_lines.append(f"😮‍💨 После поражений тяжело: <b>{wr}%</b> побед ({n} матчей)")
+            insight_lines.append(f"😮‍💨 После поражений тяжело: <b>{wr}%</b> побед ({pluralize_matches(n)})")
     if s["favorite_score"]:
         score, cnt = s["favorite_score"]
-        insight_lines.append(f"🎯 Любимый счёт партии: <b>{score}</b> ({cnt} раз)")
+        insight_lines.append(f"🎯 Любимый счёт партии: <b>{score}</b> ({pluralize_times(cnt)})")
     if s["style_insight"]:
         style, own_wr, other_wr = s["style_insight"]
         if style == "sprinter":
@@ -609,11 +617,11 @@ async def show_career_recap(callback: CallbackQuery, session: AsyncSession):
     pr_count = await get_personal_records_count(session, player.id)
     pr_line = f"💎 Личных рекордов покорено: <b>{pr_count}/7</b>"
 
-    draws_part = f" / <b>{s['draws']}</b> ничьих" if s["draws"] > 0 else ""
+    draws_part = f" / {_bold_count(s['draws'], pluralize_draws)}" if s["draws"] > 0 else ""
     lines = [
         f"🎬 <b>Моя история — {h(player.display_name)}</b>\n",
         f"В клубе с <b>{joined_str}</b>. Позади <b>{pluralize_matches(total)}</b>: "
-        f"<b>{s['wins']}</b> побед / <b>{s['losses']}</b> поражений{draws_part} "
+        f"{_bold_count(s['wins'], pluralize_wins)} / {_bold_count(s['losses'], pluralize_losses)}{draws_part} "
         f"(<b>{s['win_rate']}%</b> винрейт).",
     ]
 

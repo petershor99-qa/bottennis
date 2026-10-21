@@ -3128,7 +3128,7 @@ async def test_club_records_shows_most_draws(db):
 
     text = cb.message.edit_text.call_args[0][0]
     assert "Больше всего ничьих" in text
-    assert "3 ничьих" in text
+    assert "3 ничьи" in text
 
 
 async def test_no_most_draws_below_threshold(db):

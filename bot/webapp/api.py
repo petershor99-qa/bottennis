@@ -50,6 +50,7 @@ from bot.utils import (
     msk_day_start,
     pick_match_of_day,
     pluralize_days,
+    pluralize_losses,
     pluralize_wins,
     rank_title,
 )
@@ -399,7 +400,7 @@ async def player_payload(session: AsyncSession, player: Player, viewer: Player) 
     tiles = [
         {"label": "Побед", "value": f"{s['win_rate']}%", "sub": f"{s['wins']} из {total}"},
         streak_tile,
-        {"label": "Матчей", "value": str(total), "sub": f"{s['wins']} побед · {s['losses']} поражений"},
+        {"label": "Матчей", "value": str(total), "sub": f"{pluralize_wins(s['wins'])} · {pluralize_losses(s['losses'])}"},
         {"label": "Партий выиграно", "value": f"{s['sets_win_rate']}%", "sub": "доля выигранных партий"},
         {"label": "Пик рейтинга", "value": f"{peak:.1f}", "sub": "максимум за всё время"},
         {"label": "Индекс легенды", "value": str(legend_index), "sub": f"#{legend_rank} из {legend_total}",

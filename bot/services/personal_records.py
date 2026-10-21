@@ -23,7 +23,16 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Match, PersonalRecordEarned, Player
-from bot.utils import MSK_OFFSET, as_naive, compute_alltime_streak, get_career_matches, pluralize_wins
+from bot.utils import (
+    MSK_OFFSET,
+    as_naive,
+    compute_alltime_streak,
+    get_career_matches,
+    pluralize_matches,
+    pluralize_points,
+    pluralize_sets,
+    pluralize_wins,
+)
 
 
 async def _get_matches_asc(session: AsyncSession, player_id: int) -> list[Match]:
@@ -120,7 +129,7 @@ def _check_outcome_agnostic_records(
     sets_before = max((_sets_count(m) for m in prior), default=0)
     if sets_before > 0 and sets_now > sets_before:
         records.append((
-            f"🕰 Длиннее, чем «Санта Барбара». {sets_now} партий — твой самый долгий матч.",
+            f"🕰 Длиннее, чем «Санта Барбара». {pluralize_sets(sets_now)} — твой самый долгий матч.",
             "longest_match", sets_now,
         ))
 
@@ -128,7 +137,7 @@ def _check_outcome_agnostic_records(
     pts_before = max((_total_points(m) for m in prior), default=0)
     if pts_before > 0 and pts_now > pts_before:
         records.append((
-            f"📖 Эпичнее, чем «Война и мир». {pts_now} очков разыграно за матч — твой личный рекорд.",
+            f"📖 Эпичнее, чем «Война и мир». {pluralize_points(pts_now)} разыграно за матч — твой личный рекорд.",
             "most_points", pts_now,
         ))
 
@@ -170,7 +179,7 @@ async def check_personal_records_on_win(session: AsyncSession, winner: Player, m
     noloss_before = _max_no_loss_streak(prior, winner.id)
     if noloss_before > 0 and noloss_now > noloss_before:
         records.append((
-            f"🛡 «Ты не пройдёшь!» {noloss_now} матчей без поражений — личный рекорд.",
+            f"🛡 «Ты не пройдёшь!» {pluralize_matches(noloss_now)} без поражений — личный рекорд.",
             "no_loss_streak", noloss_now,
         ))
 
@@ -178,7 +187,7 @@ async def check_personal_records_on_win(session: AsyncSession, winner: Player, m
     day_before = max(_wins_by_day(prior, winner.id).values(), default=0)
     if day_before > 0 and day_now > day_before:
         records.append((
-            f"🌞 День сурка, только выигрышный. {day_now} побед за сегодня — твой лучший день за всю историю.",
+            f"🌞 День сурка, только выигрышный. {pluralize_wins(day_now)} за сегодня — твой лучший день за всю историю.",
             "wins_per_day", day_now,
         ))
 
@@ -186,7 +195,7 @@ async def check_personal_records_on_win(session: AsyncSession, winner: Player, m
     margin_before = max((_set_margin(m) for m in prior if m.winner_id == winner.id), default=0)
     if margin_before > 0 and margin_now > margin_before:
         records.append((
-            f"💥 Hasta la vista, разница в {margin_now} очков — твой личный рекорд разгрома.",
+            f"💥 Hasta la vista, разница в {pluralize_points(margin_now)} — твой личный рекорд разгрома.",
             "set_margin", margin_now,
         ))
 
@@ -225,7 +234,7 @@ async def check_personal_records_on_draw(session: AsyncSession, player: Player, 
     noloss_before = _max_no_loss_streak(prior, player.id)
     if noloss_before > 0 and noloss_now > noloss_before:
         records.append((
-            f"🛡 «Ты не пройдёшь!» {noloss_now} матчей без поражений — личный рекорд.",
+            f"🛡 «Ты не пройдёшь!» {pluralize_matches(noloss_now)} без поражений — личный рекорд.",
             "no_loss_streak", noloss_now,
         ))
 
