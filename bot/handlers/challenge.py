@@ -369,6 +369,7 @@ async def send_challenge(callback: CallbackQuery, session: AsyncSession, bot: Bo
             f"<b>{h(challenger_p.display_name)}</b> бросает вызов чемпиону "
             f"<b>{h(champion.display_name)}</b>.\n"
             f"Ничья невозможна — в конце останется только один.",
+            silent=True,
         )
 
     win_chance = round(win_probability(challenger.rating, opponent.rating) * 100)

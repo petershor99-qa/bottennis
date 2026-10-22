@@ -51,6 +51,9 @@ MSK_OFFSET = timedelta(hours=3)
 # не тянули друг друга и не заводили циклический импорт.
 NEWCOMER_THRESHOLD = 15
 
+# Чемпиону «Тебя догнал по очкам» — не чаще раза в сутки (v2.206.0).
+CHAMPION_OVERTAKE_COOLDOWN = timedelta(hours=24)
+
 
 def env_int(name: str, default: int = 0) -> int:
     """Безопасно читает целочисленную переменную окружения.
@@ -710,11 +713,15 @@ async def safe_send(bot: Bot, chat_id: int, text: str, **kwargs) -> bool:
     return False
 
 
-async def notify_all_players(bot: Bot, session: AsyncSession, text: str) -> None:
-    """Рассылает text всем зарегистрированным игрокам, молча пропуская недоступных."""
+async def notify_all_players(bot: Bot, session: AsyncSession, text: str, silent: bool = False) -> None:
+    """Рассылает text всем зарегистрированным игрокам, молча пропуская недоступных.
+    silent=True — без звука (disable_notification): так идут рассылки про босс-файт."""
     players_r = await session.execute(select(Player))
     for p in players_r.scalars().all():
-        await safe_send(bot, p.telegram_id, text)
+        if silent:
+            await safe_send(bot, p.telegram_id, text, disable_notification=True)
+        else:
+            await safe_send(bot, p.telegram_id, text)
 
 
 async def get_champion_and_challenger(session: AsyncSession) -> tuple[Player | None, Player | None]:
