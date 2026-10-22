@@ -49,6 +49,7 @@ from bot.services.rating import calculate_draw_rating_change, calculate_rating_c
 from bot.services.validation import validate_set_score
 from bot.states.states import MatchResultStates
 from bot.utils import (
+    CHAMPION_OVERTAKE_COOLDOWN,
     NEWCOMER_THRESHOLD,
     StandingRow,
     _stable_pool_index,
@@ -1009,7 +1010,7 @@ async def _handle_boss_fight_outcome(
                 await session.commit()
                 await notify_new_achievements(bot, loser, new_ach_denied)
     if bf_result_text is not None:
-        await notify_all_players(bot, session, bf_result_text)
+        await notify_all_players(bot, session, bf_result_text, silent=True)
 
 
 async def _award_draw_achievements_and_eggs(
@@ -1134,12 +1135,20 @@ async def _notify_challenger_status_change(
             "⚔️ <b>Ты обошёл чемпиона по очкам!</b>\n"
             "Чтобы занять 1-е место, победи его в босс-файте.",
         )
-        await safe_send(
-            bot,
-            champion_after.telegram_id,
-            f"⚔️ Тебя догнал по очкам <b>{h(challenger_after.display_name)}</b> — "
-            f"он может вызвать тебя на босс-файт.",
-        )
+        # Чемпиону — не чаще раза в сутки и без звука (v2.206.0): претенденты меняются
+        # часто, а новость всегда одна — «тебя можно вызвать».
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        warned_at = champion_after.throne_warn_at
+        if warned_at is None or now - warned_at >= CHAMPION_OVERTAKE_COOLDOWN:
+            champion_after.throne_warn_at = now
+            await session.commit()
+            await safe_send(
+                bot,
+                champion_after.telegram_id,
+                f"⚔️ Тебя догнал по очкам <b>{h(challenger_after.display_name)}</b> — "
+                f"он может вызвать тебя на босс-файт.",
+                disable_notification=True,
+            )
 
     # ── Претендент потерял статус, не дойдя до боссфайта — «Просран шанс» ──────
     # Не для боссфайтов: поражение НЕПОСРЕДСТВЕННО в боссфайте уже даёт
