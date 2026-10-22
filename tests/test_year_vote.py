@@ -248,10 +248,39 @@ def test_render_bulletin_marks_chosen_and_not_chosen():
 def test_render_nomination_screen_includes_hint():
     nomination = next(n for n in YEAR_VOTE_NOMINATIONS if n.hint)
     text = render_nomination_screen(nomination)
-    assert nomination.hint in text
-    nomination_no_hint = next(n for n in YEAR_VOTE_NOMINATIONS if not n.hint)
-    text2 = render_nomination_screen(nomination_no_hint)
-    assert "Выбери кандидата" in text2
+    assert nomination.hint in text and "Выбери кандидата" in text
+    # без подписи (в списке сейчас её нет только у воображаемой номинации) — экран тоже целый
+    bare = YEAR_VOTE_NOMINATIONS[0].__class__("x", "🏆", "Без подписи", None)
+    assert "<i>" not in render_nomination_screen(bare) and "Выбери кандидата" in render_nomination_screen(bare)
+
+
+# ── Названия номинаций (v2.207.0) ─────────────────────────────────────────────
+
+def test_nomination_ids_are_stable_and_names_are_verbatim():
+    # id нельзя менять: по ним хранятся голоса и строятся callback_data
+    assert [n.id for n in YEAR_VOTE_NOMINATIONS] == ["gentleman", "excuse", "commentator", "loudest", "magnet", "toughest"]
+    assert [n.name for n in YEAR_VOTE_NOMINATIONS] == [
+        "фэйр плейщина года", "стол кривой. ракетка не та", "любитель попиздеть",
+        "Самый орущий у стола", "все хотят посамбоваться с ним", "хрен обыграешь",
+    ]
+    assert all(n.hint for n in YEAR_VOTE_NOMINATIONS)
+
+
+def test_bulletin_shows_hint_under_every_nomination_and_fits_telegram():
+    choices = {n.id: None for n in YEAR_VOTE_NOMINATIONS}
+    text = render_bulletin(2026, choices, {})
+    for n in YEAR_VOTE_NOMINATIONS:
+        assert f"{n.emoji} {n.name} — <i>не выбрано</i>\n<i>{n.hint}</i>" in text
+    assert len(text) < 1000
+
+
+def test_bulletin_buttons_keep_callback_ids_and_fit_one_row():
+    from bot.keyboards.inline import year_vote_bulletin_kb
+
+    rows = year_vote_bulletin_kb().inline_keyboard
+    nomination_buttons = [r[0] for r in rows[:-1]]
+    assert [b.callback_data for b in nomination_buttons] == [f"yv_nom_{n.id}" for n in YEAR_VOTE_NOMINATIONS]
+    assert all(len(b.text) <= 40 for b in nomination_buttons)       # длиннее обрежется многоточием
 
 
 # ── Джобы (scheduler.py) ──────────────────────────────────────────────────────

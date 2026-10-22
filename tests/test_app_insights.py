@@ -146,10 +146,10 @@ async def test_year_extras_votes_after_close_and_tie(db, monkeypatch):
     extras = await api_insights.year_extras(db, c)
     assert "mine" not in extras                            # у Вики матчей нет
     items = {i["label"]: i for i in extras["vote"]["items"]}
-    assert items["Джентльмен года"] == {"label": "Джентльмен года", "value": "Алиса", "note": "1 голос"}
-    assert items["Отмазка года"]["note"] == "1 голос у каждого"
-    assert set(items["Отмазка года"]["value"].split(" и ")) == {"Боб", "Вика"}
-    assert "Комментатор года" not in items                 # без голосов — не показывается
+    assert items["фэйр плейщина года"] == {"label": "фэйр плейщина года", "value": "Алиса", "note": "1 голос"}
+    assert items["стол кривой. ракетка не та"]["note"] == "1 голос у каждого"
+    assert set(items["стол кривой. ракетка не та"]["value"].split(" и ")) == {"Боб", "Вика"}
+    assert "любитель попиздеть" not in items               # без голосов — не показывается
 
 
 async def test_year_from_snapshot(db):

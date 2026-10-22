@@ -29,15 +29,19 @@ class YearVoteNomination:
     hint: str | None
 
 
-# Названия — дословно от пользователя (согласовано 2026-09-26). Порядок этого
-# списка — порядок кнопок в бюллетене; менять состав/порядок одной правкой здесь.
+# Названия — дословно от владельца (v2.207.0, 2026-10-22; до этого — «Джентльмен
+# года», «Отмазка года», «Комментатор года», «Самый орущий у стола», «Все хотят
+# посамбоваться», «С кем сложнее всего»), строчные буквы — как он написал. id НЕ менять:
+# по ним хранятся голоса и строятся callback_data (yv_nom_{id}, yv_pick_{id}_{nomineeId}).
+# Подпись (hint) — что значит номинация: на экране выбора кандидата и в бюллетене.
+# Порядок списка — порядок кнопок в бюллетене; менять состав/порядок одной правкой здесь.
 YEAR_VOTE_NOMINATIONS: list[YearVoteNomination] = [
-    YearVoteNomination("gentleman", "🤝", "Джентльмен года", "самый честный и спортивный"),
-    YearVoteNomination("excuse", "💬", "Отмазка года", "лучшее оправдание поражения"),
-    YearVoteNomination("commentator", "🎙", "Комментатор года", "больше всех болтает у стола"),
-    YearVoteNomination("loudest", "📢", "Самый орущий у стола", None),
-    YearVoteNomination("magnet", "🧲", "Все хотят посамбоваться", None),
-    YearVoteNomination("toughest", "🧱", "С кем сложнее всего", None),
+    YearVoteNomination("gentleman", "🤝", "фэйр плейщина года", "самый честный и спортивный"),
+    YearVoteNomination("excuse", "💬", "стол кривой. ракетка не та", "лучшее оправдание поражения"),
+    YearVoteNomination("commentator", "🎙", "любитель попиздеть", "больше всех болтает у стола"),
+    YearVoteNomination("loudest", "📢", "Самый орущий у стола", "громче всех у стола"),
+    YearVoteNomination("magnet", "🧲", "все хотят посамбоваться с ним", "самый желанный соперник"),
+    YearVoteNomination("toughest", "🧱", "хрен обыграешь", "самый неудобный соперник"),
 ]
 _NOMINATIONS_BY_ID = {n.id: n for n in YEAR_VOTE_NOMINATIONS}
 
@@ -247,7 +251,11 @@ def render_bulletin(year: int, choices: dict[str, int | None], name_map: dict[in
             lines.append(f"{n.emoji} {n.name} — ✅ <b>{h(name_map[nominee_id])}</b>")
         else:
             lines.append(f"{n.emoji} {n.name} — <i>не выбрано</i>")
-    lines.append("")
+        if n.hint:
+            # v2.207.0: с шутливыми названиями не сразу понятно, за что голосуем —
+            # подпись и в бюллетене, не только на экране номинации
+            lines.append(f"<i>{n.hint}</i>")
+        lines.append("")
     lines.append("Нажми на номинацию, чтобы выбрать или сменить кандидата.")
     return "\n".join(lines)
 
