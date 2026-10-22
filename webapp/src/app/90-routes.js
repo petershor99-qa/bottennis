@@ -254,7 +254,7 @@
       tg.onEvent("contentSafeAreaChanged", syncFullscreenClass);
       setupFullscreen();
       if (tg.BackButton) {
-        tg.BackButton.onClick(function () { history.back(); });
+        tg.BackButton.onClick(appBack);
         if (renderedRoute !== null && renderedRoute !== "" && renderedRoute !== "rating" &&
             renderedRoute !== "player/" + viewerId) tg.BackButton.show();
       }

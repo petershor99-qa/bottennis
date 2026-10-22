@@ -32,6 +32,7 @@ TMP = tempfile.mkdtemp(prefix="miniapp_")
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TMP}/preview.db"
 os.environ["WEBAPP_URL"] = "https://preview.example/"
 os.environ["ADMIN_ID"] = "1001"
+os.environ.setdefault("WEBAPP_AUDIENCE", "all")   # как на проде: приложение открыто всем игрокам (v2.208.0)
 sys.path.insert(0, REPO)
 os.chdir(TMP)
 
@@ -70,7 +71,39 @@ def set_score(rng):
     return {"w": 11, "l": loser}
 
 
+VARIANT = os.environ.get("PREVIEW_VARIANT", "default")   # default | tiny | empty (v2.208.0)
+
+
+async def seed_variant():
+    """Крайние случаи клуба: tiny — трое, один матч, чемпиона нет; empty — трое без матчей.
+    Везде «Новичок» (1099) зарегистрирован и не играл."""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    async with async_session() as s:
+        alice = Player(telegram_id=1001, display_name="Алиса", rating=1000.0, peak_rating=1000.0,
+                       achievements=json.dumps(["press_start"]), backfill_version=0)
+        bob = Player(telegram_id=1002, display_name="Боб", rating=1000.0, peak_rating=1000.0,
+                     achievements="[]", backfill_version=0)
+        newbie = Player(telegram_id=1099, display_name="Новичок", rating=1000.0, peak_rating=1000.0,
+                        achievements="[]", backfill_version=0)
+        s.add_all([alice, bob, newbie])
+        await s.flush()
+        if VARIANT == "tiny":
+            when = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
+            data = [{"w": 11, "l": 6}, {"w": 11, "l": 8}]
+            delta = calculate_rating_change(alice.rating, bob.rating, data)
+            alice.rating, bob.rating = round(alice.rating + delta, 1), round(max(1000.0, bob.rating - delta), 1)
+            alice.peak_rating = alice.rating
+            s.add(Match(challenger_id=alice.id, challenged_id=bob.id, status=MatchStatus.completed,
+                        winner_id=alice.id, sets_data=data, rating_change=delta, created_at=when,
+                        accepted_at=when, completed_at=when))
+        await s.commit()
+
+
 async def seed():
+    if VARIANT in ("tiny", "empty"):
+        await seed_variant()
+        return
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     rng = random.Random(7)
@@ -155,7 +188,8 @@ function makeTelegram() {
     ready(){}, expand(){}, onEvent(){}, setHeaderColor(){}, setBackgroundColor(){},
     openTelegramLink(u){ window.__openedLink = u; },
     HapticFeedback: { selectionChanged(){}, impactOccurred(){} },
-    BackButton: { show(){}, hide(){}, onClick(){} } } };
+    // v2.208.0: «Назад» записывает состояние — проверка, что видимая кнопка что-то делает
+    BackButton: { visible: false, show(){ this.visible = true; }, hide(){ this.visible = false; }, onClick(f){ this.cb = f; } } } };
 }
 if (mode === "now") {
   window.Telegram = makeTelegram();
@@ -174,7 +208,13 @@ if (mode === "late") setTimeout(function () {
 
 
 async def preview(request):
-    return web.Response(text=PREVIEW_HTML % json.dumps(init_data(1001)), content_type="text/html")
+    # ?u=<telegram_id> — открыть приложение от лица другого игрока (v2.208.0): новичок,
+    # незарегистрированный (7777) и т.п. По умолчанию — «Алиса», зритель превью
+    try:
+        viewer = int(request.query.get("u", 1001))
+    except ValueError:
+        viewer = 1001
+    return web.Response(text=PREVIEW_HTML % json.dumps(init_data(viewer)), content_type="text/html")
 
 
 class _SilentBot:

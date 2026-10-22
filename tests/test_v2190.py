@@ -23,7 +23,7 @@ def test_gestures_present():
     g = (SRC / "22-gestures.js").read_text(encoding="utf-8")
     assert "function playerSheet(id)" in g and "challengeButton(id)" in g
     assert 'document.addEventListener("contextmenu"' in g
-    assert "isRootRoute(currentRoute(), viewerId)" in g and "history.back();" in g
+    assert "isRootRoute(currentRoute(), viewerId)" in g and "appBack();" in g
     assert "touch.swipe = false" in g          # от края — не листание разделов профиля
 
 
