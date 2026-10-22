@@ -292,14 +292,20 @@
     return s;
   }
 
-  function emptyState(container, text, isError) {
+  function emptyState(container, text, isError, err) {
+    var view = isError ? errorView(err && err.status, text, !!(tg && tg.close)) : null;
     var box = el("div", "state" + (isError ? " state-error" : ""));
     box.appendChild(isError ? useIcon("info-circle", "state-ico") : tableArt());
-    box.appendChild(el("p", "state-text", text));
-    if (isError) {
-      var again = el("button", "more", "Повторить");
+    box.appendChild(el("p", "state-text", view ? view.text : text));
+    if (view && view.action !== "none") {
+      var again = el("button", "more", view.label);
       again.type = "button";
-      again.addEventListener("click", function () { haptic("impact"); apiCache = {}; shell = null; render(); });
+      again.addEventListener("click", function () {
+        haptic("impact");
+        if (view.action === "close") { try { tg.close(); } catch (e) { /* закрыть нечем */ } return; }
+        if (view.action === "home") { location.hash = "#/"; return; }
+        apiCache = {}; shell = null; render();
+      });
       box.appendChild(again);
     }
     container.appendChild(box);
