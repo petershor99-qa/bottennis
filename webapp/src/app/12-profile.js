@@ -129,7 +129,7 @@
     }, function (err) {
       if (token !== renderToken) return;
       body.textContent = "";
-      emptyState(body, err.message, true);
+      emptyState(body, err.message, true, err);
     });
   }
 

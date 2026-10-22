@@ -296,6 +296,17 @@ test("selfVersusTarget: «против себя» и пара из одного 
   assert.equal(app.selfVersusTarget("rating", 7), null);
 });
 
+test("errorView: кнопка под ошибкой зависит от кода ответа", () => {
+  const closed = app.errorView(403, "Сначала зарегистрируйтесь в боте.", true);
+  assert.deepEqual([closed.action, closed.label, closed.text], ["close", "Вернуться в бот", "Сначала зарегистрируйтесь в боте."]);
+  assert.equal(app.errorView(401, "Откройте приложение из бота.", false).action, "none");   // не из Telegram — закрывать нечем
+  const missing = app.errorView(404, "Не найдено.", true);
+  assert.deepEqual([missing.action, missing.label], ["home", "На главную"]);
+  assert.match(missing.text, /^Здесь ничего нет/);
+  assert.equal(app.errorView(undefined, "Нет связи с сервером. Попробуйте ещё раз.", true).action, "retry");
+  assert.equal(app.errorView(500, "x", true).label, "Повторить");
+});
+
 test("canGoBack: назад по истории только если есть предыдущий экран приложения", () => {
   assert.equal(app.canGoBack([]), false);
   assert.equal(app.canGoBack(["match/5"]), false);          // открыли по ссылке из бота — назад на главную

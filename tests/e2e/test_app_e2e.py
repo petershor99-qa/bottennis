@@ -227,6 +227,29 @@ def test_month_last_card_does_not_replay(browser, base_url):
     page.context.close()
 
 
+def test_missing_player_shows_not_found_with_home_button(browser, base_url):
+    """v2.209.0: несуществующий игрок — своя фраза и «На главную» вместо «Повторить»."""
+    page = open_page(browser, f"{base_url}/preview#/player/99999")
+    page.wait_for_selector(".state-error", timeout=10000)
+    assert "Здесь ничего нет" in page.inner_text(".state-error")
+    assert page.locator(".state-error button", has_text="Повторить").count() == 0
+    page.click(".state-error button:has-text('На главную')")
+    wait_screen(page)
+    assert page.evaluate("location.hash") == "#/"
+    page.context.close()
+
+
+def test_unregistered_viewer_gets_back_to_bot_button(browser, base_url):
+    """v2.209.0: не зарегистрирован (403) — кнопка «Вернуться в бот» закрывает приложение."""
+    page = open_page(browser, f"{base_url}/preview?u=7777#/")
+    page.wait_for_selector(".state-error", timeout=10000)
+    assert "зарегистрируйтесь" in page.inner_text(".state-error")
+    assert page.locator(".state-error button", has_text="Повторить").count() == 0
+    page.click(".state-error button:has-text('Вернуться в бот')")
+    assert page.evaluate("window.__closed") is True
+    page.context.close()
+
+
 def test_back_from_deep_link_goes_home(browser, base_url):
     """v2.208.0: экран открыт сразу по ссылке из бота («Матч» после результата) — в истории
     приложения нет предыдущего экрана. «Назад» Telegram раньше не делала ничего."""

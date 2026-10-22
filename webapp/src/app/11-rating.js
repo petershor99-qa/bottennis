@@ -111,7 +111,7 @@
         s.list.classList.add("board");
         p.rows.forEach(function (row) { s.list.appendChild(periodRow(row)); });
         area.appendChild(s);
-      }, function (err) { area.textContent = ""; emptyState(area, err.message, true); });
+      }, function (err) { area.textContent = ""; emptyState(area, err.message, true, err); });
     }));
     c.appendChild(area);
     var board = section();

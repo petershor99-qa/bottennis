@@ -185,7 +185,7 @@ var INIT = %s;
 function makeTelegram() {
   return { WebApp: { colorScheme: dark ? "dark" : "light", initData: INIT, themeParams: {},
     platform: "tdesktop", version: "7.0",
-    ready(){}, expand(){}, onEvent(){}, setHeaderColor(){}, setBackgroundColor(){},
+    ready(){}, expand(){}, close(){ window.__closed = true; }, onEvent(){}, setHeaderColor(){}, setBackgroundColor(){},
     openTelegramLink(u){ window.__openedLink = u; },
     HapticFeedback: { selectionChanged(){}, impactOccurred(){} },
     // v2.208.0: «Назад» записывает состояние — проверка, что видимая кнопка что-то делает
