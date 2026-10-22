@@ -67,9 +67,7 @@ async def _migrate_db() -> None:
         "ALTER TABLE players ADD COLUMN photo_file_id TEXT",
         # v2.179.0 — версия постоянной клавиатуры у игрока
         "ALTER TABLE players ADD COLUMN reply_kb_version INTEGER NOT NULL DEFAULT 0",
-        # v2.204.1 — состояние предупреждения «Трон трещит»
-        "ALTER TABLE players ADD COLUMN throne_warn_chaser_id INTEGER",
-        "ALTER TABLE players ADD COLUMN throne_warn_gap FLOAT",
+        # v2.204.1 — время последнего уведомления чемпиону (с v2.206.0 — «Тебя догнал по очкам»)
         "ALTER TABLE players ADD COLUMN throne_warn_at DATETIME",
         # v2.180.0 — неудачные запуски Mini App тоже в app_boots
         "ALTER TABLE app_boots ADD COLUMN failed BOOLEAN NOT NULL DEFAULT 0",
