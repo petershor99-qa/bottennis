@@ -58,7 +58,7 @@ the output. If something fails, fix the cause; never bypass it (`--no-verify`,
 ## Step 1 — Tests and lint gate everything
 
 ```bash
-py -3.13 -m pytest -q
+py -3.13 -m pytest -q -n auto
 ruff check .
 py -3.13 scripts/build_app_js.py --check     # app.js собран из webapp/src/app (v2.176.0)
 node --test tests/js/*.test.js
