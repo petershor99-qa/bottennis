@@ -111,7 +111,7 @@ def test_pull_ball_and_set_replay_wiring():
 
 def test_ci_prints_coverage():
     wf = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
-    assert "pytest -v --cov=bot --cov-report=term" in wf and "GITHUB_STEP_SUMMARY" in wf
+    assert "pytest -v -n auto --cov=bot --cov-report=term" in wf and "GITHUB_STEP_SUMMARY" in wf
     assert "pytest-cov==" in (ROOT / "requirements-dev.txt").read_text(encoding="utf-8")
 
 
