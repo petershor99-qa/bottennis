@@ -225,3 +225,30 @@ def test_month_last_card_does_not_replay(browser, base_url):
     assert page.evaluate("document.querySelector('.story-card') === window.__card")
     assert page.evaluate("document.querySelector('.story-card').classList.contains('story-final')")
     page.context.close()
+
+
+def test_back_from_deep_link_goes_home(browser, base_url):
+    """v2.208.0: экран открыт сразу по ссылке из бота («Матч» после результата) — в истории
+    приложения нет предыдущего экрана. «Назад» Telegram раньше не делала ничего."""
+    page = open_page(browser, f"{base_url}/preview?r=match/96")
+    wait_screen(page)
+    assert page.evaluate("location.hash") == "#/match/96"
+    assert page.evaluate("Telegram.WebApp.BackButton.visible") is True
+    page.evaluate("Telegram.WebApp.BackButton.cb()")
+    wait_screen(page)
+    assert page.evaluate("location.hash") == "#/"
+    assert page.evaluate("Telegram.WebApp.BackButton.visible") is False
+    assert page.errors == []
+    page.context.close()
+
+
+def test_back_inside_app_still_uses_history(browser, base_url):
+    page = open_page(browser, f"{base_url}/preview#/")
+    wait_screen(page)
+    page.evaluate("location.hash = '#/match/96'")
+    wait_screen(page)
+    page.evaluate("Telegram.WebApp.BackButton.cb()")
+    wait_screen(page)
+    page.wait_for_timeout(300)
+    assert page.evaluate("location.hash") == "#/"
+    page.context.close()

@@ -142,7 +142,7 @@
     if (goBack && cur.ready) {
       mark.classList.add("is-going");
       haptic("impact");
-      history.back();
+      appBack();
     } else {
       mark.style.transform = "translateX(0) scale(0.7)";
       mark.style.opacity = "0";

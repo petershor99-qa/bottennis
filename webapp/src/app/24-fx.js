@@ -20,6 +20,17 @@
     return ["forward", stack.concat([route])];
   }
 
+  // v2.208.0: «Назад» (кнопка Telegram, свайп от края). Если в приложении есть
+  // предыдущий экран — назад по истории; если экран открыт сразу по ссылке из бота
+  // («Матч», «Рейтинг в приложении») и вернуться некуда — на главную. Раньше
+  // нажатие в этом случае не делало ничего: видимая кнопка «Назад» была мёртвой.
+  function canGoBack(stack) { return stack.length > 1; }
+
+  function appBack() {
+    if (canGoBack(navStack)) history.back();
+    else location.replace("#/");
+  }
+
   function navDirection(route) {
     var r = nextNav(navStack, route, viewerId);
     navStack = r[1];
