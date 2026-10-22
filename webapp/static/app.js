@@ -17,7 +17,7 @@
       toggledReactions: toggledReactions, matchMood: matchMood, tapGuard: tapGuard, chipSets: chipSets, isPhoneClient: isPhoneClient, replayTiming: replayTiming, ballHeight: ballHeight,
       nextNav: nextNav, sparkPoints: sparkPoints, odometerDigits: odometerDigits, raceOrder: raceOrder,
       edgeProgress: edgeProgress, isRootRoute: isRootRoute, playerFromRoute: playerFromRoute,
-      reignClock: reignClock, timelineShares: timelineShares, thinPoints: thinPoints, isOpaqueScriptError: isOpaqueScriptError, selfVersusTarget: selfVersusTarget, goalsFresh: goalsFresh, desktopFullscreenDefault: desktopFullscreenDefault, deltaTone: deltaTone, relaunchRoute: relaunchRoute
+      reignClock: reignClock, timelineShares: timelineShares, thinPoints: thinPoints, isOpaqueScriptError: isOpaqueScriptError, selfVersusTarget: selfVersusTarget, goalsFresh: goalsFresh, desktopFullscreenDefault: desktopFullscreenDefault, deltaTone: deltaTone, relaunchRoute: relaunchRoute, canGoBack: canGoBack
     };
     return;
   }
@@ -3886,7 +3886,7 @@
     if (goBack && cur.ready) {
       mark.classList.add("is-going");
       haptic("impact");
-      history.back();
+      appBack();
     } else {
       mark.style.transform = "translateX(0) scale(0.7)";
       mark.style.opacity = "0";
@@ -4339,6 +4339,17 @@
     var i = stack.lastIndexOf(route);
     if (i >= 0) return ["back", stack.slice(0, i + 1)];
     return ["forward", stack.concat([route])];
+  }
+
+  // v2.208.0: «Назад» (кнопка Telegram, свайп от края). Если в приложении есть
+  // предыдущий экран — назад по истории; если экран открыт сразу по ссылке из бота
+  // («Матч», «Рейтинг в приложении») и вернуться некуда — на главную. Раньше
+  // нажатие в этом случае не делало ничего: видимая кнопка «Назад» была мёртвой.
+  function canGoBack(stack) { return stack.length > 1; }
+
+  function appBack() {
+    if (canGoBack(navStack)) history.back();
+    else location.replace("#/");
   }
 
   function navDirection(route) {
@@ -4993,7 +5004,7 @@
       tg.onEvent("contentSafeAreaChanged", syncFullscreenClass);
       setupFullscreen();
       if (tg.BackButton) {
-        tg.BackButton.onClick(function () { history.back(); });
+        tg.BackButton.onClick(appBack);
         if (renderedRoute !== null && renderedRoute !== "" && renderedRoute !== "rating" &&
             renderedRoute !== "player/" + viewerId) tg.BackButton.show();
       }

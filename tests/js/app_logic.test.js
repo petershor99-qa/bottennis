@@ -295,3 +295,9 @@ test("selfVersusTarget: «против себя» и пара из одного 
   assert.equal(app.selfVersusTarget("pair/4/5", 7), null);
   assert.equal(app.selfVersusTarget("rating", 7), null);
 });
+
+test("canGoBack: назад по истории только если есть предыдущий экран приложения", () => {
+  assert.equal(app.canGoBack([]), false);
+  assert.equal(app.canGoBack(["match/5"]), false);          // открыли по ссылке из бота — назад на главную
+  assert.equal(app.canGoBack(["", "match/5"]), true);
+});
