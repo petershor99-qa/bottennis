@@ -28,7 +28,7 @@ WEBAPP_MENU_BUTTON_TEXT = "Клуб"
 WEBAPP_MORE_TEXT = "📱 Подробнее в приложении"
 WEBAPP_RATING_TEXT = "📱 Рейтинг в приложении"
 # v2.179.0: матч после записи результата и личные встречи на уведомлении о вызове
-WEBAPP_MATCH_TEXT = "🏓 Матч"
+WEBAPP_MATCH_TEXT = "📊 Разбор матча"
 WEBAPP_H2H_TEXT = "📊 Личные встречи"
 
 

@@ -17,7 +17,7 @@
       toggledReactions: toggledReactions, matchMood: matchMood, tapGuard: tapGuard, chipSets: chipSets, isPhoneClient: isPhoneClient, replayTiming: replayTiming, ballHeight: ballHeight,
       nextNav: nextNav, sparkPoints: sparkPoints, odometerDigits: odometerDigits, raceOrder: raceOrder,
       edgeProgress: edgeProgress, isRootRoute: isRootRoute, playerFromRoute: playerFromRoute,
-      reignClock: reignClock, timelineShares: timelineShares, thinPoints: thinPoints, isOpaqueScriptError: isOpaqueScriptError, selfVersusTarget: selfVersusTarget, goalsFresh: goalsFresh, desktopFullscreenDefault: desktopFullscreenDefault, deltaTone: deltaTone, relaunchRoute: relaunchRoute, canGoBack: canGoBack
+      reignClock: reignClock, timelineShares: timelineShares, thinPoints: thinPoints, isOpaqueScriptError: isOpaqueScriptError, selfVersusTarget: selfVersusTarget, goalsFresh: goalsFresh, desktopFullscreenDefault: desktopFullscreenDefault, deltaTone: deltaTone, relaunchRoute: relaunchRoute, canGoBack: canGoBack, errorView: errorView
     };
     return;
   }
@@ -337,14 +337,20 @@
     return s;
   }
 
-  function emptyState(container, text, isError) {
+  function emptyState(container, text, isError, err) {
+    var view = isError ? errorView(err && err.status, text, !!(tg && tg.close)) : null;
     var box = el("div", "state" + (isError ? " state-error" : ""));
     box.appendChild(isError ? useIcon("info-circle", "state-ico") : tableArt());
-    box.appendChild(el("p", "state-text", text));
-    if (isError) {
-      var again = el("button", "more", "Повторить");
+    box.appendChild(el("p", "state-text", view ? view.text : text));
+    if (view && view.action !== "none") {
+      var again = el("button", "more", view.label);
       again.type = "button";
-      again.addEventListener("click", function () { haptic("impact"); apiCache = {}; shell = null; render(); });
+      again.addEventListener("click", function () {
+        haptic("impact");
+        if (view.action === "close") { try { tg.close(); } catch (e) { /* закрыть нечем */ } return; }
+        if (view.action === "home") { location.hash = "#/"; return; }
+        apiCache = {}; shell = null; render();
+      });
       box.appendChild(again);
     }
     container.appendChild(box);
@@ -488,15 +494,35 @@
   var CACHE_TTL_MS = 60 * 1000;
   var apiCache = {};
 
+  // Ошибка с кодом ответа (v2.209.0): по нему экран ошибки выбирает кнопку
+  function statusError(message, status) {
+    var e = new Error(message);
+    e.status = status;
+    return e;
+  }
+
+  // Что показать под ошибкой (v2.209.0): 401/403 — «Повторить» не поможет, выход —
+  // закрыть приложение и вернуться в бот (кнопки нет, если открыто не из Telegram);
+  // 404 — своя фраза и «На главную»; остальное — «Повторить»
+  function errorView(status, message, canClose) {
+    if (status === 401 || status === 403) {
+      return { text: message, action: canClose ? "close" : "none", label: "Вернуться в бот" };
+    }
+    if (status === 404) {
+      return { text: "Здесь ничего нет. Возможно, такого игрока или матча уже нет.", action: "home", label: "На главную" };
+    }
+    return { text: message, action: "retry", label: "Повторить" };
+  }
+
   function api(path) {
     var initData = initDataNow();
-    if (!initData) return Promise.reject(new Error("Откройте приложение из бота."));
+    if (!initData) return Promise.reject(statusError("Откройте приложение из бота.", 401));
     var hit = apiCache[path];
     if (hit && Date.now() - hit.t < CACHE_TTL_MS) return hit.p;
     var p = timedFetch("api/" + path, { headers: { "Authorization": "tma " + initData } })
       .then(function (resp) {
         return resp.json().then(function (body) {
-          if (!resp.ok) throw new Error(body.error || "Не удалось загрузить данные.");
+          if (!resp.ok) throw statusError(body.error || "Не удалось загрузить данные.", resp.status);
           return body;
         });
       }, function (e) {
@@ -1332,7 +1358,7 @@
         s.list.classList.add("board");
         p.rows.forEach(function (row) { s.list.appendChild(periodRow(row)); });
         area.appendChild(s);
-      }, function (err) { area.textContent = ""; emptyState(area, err.message, true); });
+      }, function (err) { area.textContent = ""; emptyState(area, err.message, true, err); });
     }));
     c.appendChild(area);
     var board = section();
@@ -1489,7 +1515,7 @@
     }, function (err) {
       if (token !== renderToken) return;
       body.textContent = "";
-      emptyState(body, err.message, true);
+      emptyState(body, err.message, true, err);
     });
   }
 
@@ -4905,7 +4931,7 @@
       }, function (err) {
         if (token !== renderToken) return;
         app.textContent = "";
-        emptyState(app, err.message, true);
+        emptyState(app, err.message, true, err);
       });
       return;
     }
@@ -4933,7 +4959,7 @@
     }, function (err) {
       if (token !== renderToken) return;
       app.textContent = "";
-      emptyState(app, err.message, true);
+      emptyState(app, err.message, true, err);
     });
   }
 

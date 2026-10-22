@@ -155,7 +155,7 @@
       }, function (err) {
         if (token !== renderToken) return;
         app.textContent = "";
-        emptyState(app, err.message, true);
+        emptyState(app, err.message, true, err);
       });
       return;
     }
@@ -183,7 +183,7 @@
     }, function (err) {
       if (token !== renderToken) return;
       app.textContent = "";
-      emptyState(app, err.message, true);
+      emptyState(app, err.message, true, err);
     });
   }
 

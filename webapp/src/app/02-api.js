@@ -5,15 +5,35 @@
   var CACHE_TTL_MS = 60 * 1000;
   var apiCache = {};
 
+  // Ошибка с кодом ответа (v2.209.0): по нему экран ошибки выбирает кнопку
+  function statusError(message, status) {
+    var e = new Error(message);
+    e.status = status;
+    return e;
+  }
+
+  // Что показать под ошибкой (v2.209.0): 401/403 — «Повторить» не поможет, выход —
+  // закрыть приложение и вернуться в бот (кнопки нет, если открыто не из Telegram);
+  // 404 — своя фраза и «На главную»; остальное — «Повторить»
+  function errorView(status, message, canClose) {
+    if (status === 401 || status === 403) {
+      return { text: message, action: canClose ? "close" : "none", label: "Вернуться в бот" };
+    }
+    if (status === 404) {
+      return { text: "Здесь ничего нет. Возможно, такого игрока или матча уже нет.", action: "home", label: "На главную" };
+    }
+    return { text: message, action: "retry", label: "Повторить" };
+  }
+
   function api(path) {
     var initData = initDataNow();
-    if (!initData) return Promise.reject(new Error("Откройте приложение из бота."));
+    if (!initData) return Promise.reject(statusError("Откройте приложение из бота.", 401));
     var hit = apiCache[path];
     if (hit && Date.now() - hit.t < CACHE_TTL_MS) return hit.p;
     var p = timedFetch("api/" + path, { headers: { "Authorization": "tma " + initData } })
       .then(function (resp) {
         return resp.json().then(function (body) {
-          if (!resp.ok) throw new Error(body.error || "Не удалось загрузить данные.");
+          if (!resp.ok) throw statusError(body.error || "Не удалось загрузить данные.", resp.status);
           return body;
         });
       }, function (e) {
