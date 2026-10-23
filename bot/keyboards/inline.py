@@ -369,21 +369,27 @@ def players_list_kb(
     inactive_ids: set[int] | None = None,
     champion_id: int | None = None,
     challenger_id: int | None = None,
-    boss_fight_target: tuple[int, str] | None = None,
+    boss_fight_target: tuple | None = None,
     mvp_id: int | None = None,
 ) -> InlineKeyboardMarkup:
-    """boss_fight_target — (champion_id, champion_name), передаётся только когда
-    зритель сам является текущим претендентом: первой строкой добавляется
-    ярлык прямого вызова на босс-файт. Чемпион также остаётся в обычном
-    списке ниже — двойная точка входа, это осознанно (см. CLAUDE.md)."""
+    """boss_fight_target — (champion_id, champion_name[, champion_rating]),
+    передаётся только когда зритель сам является текущим претендентом: первой
+    строкой добавляется ярлык прямого вызова на босс-файт с рейтингом
+    чемпиона. Строки чемпиона в обычном списке ниже нет (v2.211.0): оба
+    входа вели в один и тот же босс-файт, двойная кнопка только путала."""
     b = InlineKeyboardBuilder()
+    boss_id = None
     if boss_fight_target is not None:
-        bf_id, bf_name = boss_fight_target
+        bf_id, bf_name, *bf_rest = boss_fight_target
+        boss_id = bf_id
+        rating = f" ({round(bf_rest[0])} pts)" if bf_rest else ""
         b.row(InlineKeyboardButton(
-            text=f"⚔️ БОСС-ФАЙТ — {bf_name}",
+            text=f"⚔️ БОСС-ФАЙТ — {bf_name}{rating}",
             callback_data=f"challenge_{bf_id}",
         ))
     for p in players:
+        if p.id == boss_id:
+            continue
         if p.telegram_id != exclude_telegram_id:
             rank_str = f"#{rank_map[p.id]}  " if rank_map and p.id in rank_map else ""
             icon = favor_icon(p.rating - my_rating) if my_rating is not None else ""

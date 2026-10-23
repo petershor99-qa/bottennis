@@ -169,7 +169,7 @@ async def _build_challenge_screen(session: AsyncSession, telegram_id: int):
             session, current_player.id, champion.id
         )
         if current_player.id == challenger_id and not viewer_champion_blocked:
-            boss_fight_target = (champion.id, champion.display_name)
+            boss_fight_target = (champion.id, champion.display_name, champion.rating)
 
     # Та же блокировка реванша прячет чемпиона и из обычного списка ниже —
     # иначе кнопка «Вызвать» на его строке вела бы в тот же тупик.

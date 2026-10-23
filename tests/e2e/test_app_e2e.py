@@ -102,6 +102,31 @@ def test_swipe_switches_profile_tab(browser, base_url):
     page.context.close()
 
 
+def test_day_table_shows_rating_and_hour_counts(browser, base_url):
+    """v2.211.0: «Таблица за день» — рейтинг за день вместо одних прочерков; «По часам» — числа над столбиками."""
+    page = open_page(browser, f"{base_url}/preview#/summary/day")
+    wait_screen(page)
+    moves = page.locator(".row .move").all_inner_texts()
+    assert moves and any(("+" in t or "−" in t or "-" in t) and any(ch.isdigit() for ch in t) for t in moves), moves
+    assert page.locator(".hour-count").count() >= 1
+    assert "каждый час" in page.inner_text("body")
+    page.context.close()
+
+
+def test_back_with_dead_history_falls_back_to_profile(browser, base_url):
+    """v2.211.0: «Назад» с раздела своего профиля не молчит, даже если history.back() ничего не делает."""
+    page = open_page(browser, f"{base_url}/preview#/")
+    wait_screen(page)
+    page.evaluate("location.hash = '#/player/1'")
+    wait_screen(page)
+    page.evaluate("location.hash = '#/player/1/style'")
+    wait_screen(page)
+    page.evaluate("history.back = function () {}")
+    page.evaluate("Telegram.WebApp.BackButton.cb()")
+    page.wait_for_function("location.hash === '#/player/1'", timeout=3000)
+    page.context.close()
+
+
 def test_share_sends_png_to_bot(browser, base_url):
     page = open_page(browser, f"{base_url}/preview#/summary/day")
     wait_screen(page)

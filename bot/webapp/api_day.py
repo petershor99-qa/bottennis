@@ -222,7 +222,8 @@ async def day_payload(session: AsyncSession, viewer: Player, day_iso: str | None
         was = before.get(pid)
         movement.append({**_person(by_id[pid]), "place": place,
                          "change": (was - place) if was else None, "new": was is None,
-                         "played": pid in stats})
+                         "played": pid in stats,
+                         "delta": _signed(round(stats[pid]["delta"], 1)) if pid in stats else ""})
     payload["movement"] = movement
 
     # D. Матч дня и матч, который обсуждали
