@@ -307,6 +307,13 @@ test("errorView: кнопка под ошибкой зависит от кода
   assert.equal(app.errorView(500, "x", true).label, "Повторить");
 });
 
+test("backFallback: из раздела профиля — на профиль, иначе на главную", () => {
+  assert.equal(app.backFallback("player/5/style"), "#/player/5");
+  assert.equal(app.backFallback("player/5"), "#/");
+  assert.equal(app.backFallback("match/9"), "#/");
+  assert.equal(app.backFallback(""), "#/");
+});
+
 test("canGoBack: назад по истории только если есть предыдущий экран приложения", () => {
   assert.equal(app.canGoBack([]), false);
   assert.equal(app.canGoBack(["match/5"]), false);          // открыли по ссылке из бота — назад на главную

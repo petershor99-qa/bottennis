@@ -128,6 +128,22 @@ def test_players_list_kb_boss_fight_shortcut_row():
     assert any("БОСС-ФАЙТ" in t and "Чемпион" in t for t in first_row_texts)
 
 
+def test_players_list_kb_boss_fight_replaces_champion_row_and_shows_rating():
+    """v2.211.0: чемпион — одна кнопка «БОСС-ФАЙТ» с его рейтингом, без второй строки в списке."""
+    champ = _player(1, "Чемпион", rating=1419.7)
+    champ.id = 1
+    other = _player(2, "Другой", rating=1100.0)
+    other.id = 2
+    kb = players_list_kb(
+        [champ, other], exclude_telegram_id=999, champion_id=1,
+        boss_fight_target=(1, "Чемпион", 1419.7),
+    )
+    texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert texts[0] == "⚔️ БОСС-ФАЙТ — Чемпион (1420 pts)"
+    assert sum("Чемпион" in t for t in texts) == 1
+    assert any("Другой" in t for t in texts)
+
+
 def test_players_list_kb_rating_rounded_to_integer():
     """На экране «Вызвать на матч» рейтинг округлён до целого (v2.115.0) —
     исключение из общего правила «везде один знак после запятой», по прямой

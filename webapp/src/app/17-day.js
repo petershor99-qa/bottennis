@@ -33,17 +33,23 @@
   }
 
   function hourBars(hours) {
-    var W = 320, H = 70, B = 16, gap = 3;
+    var W = 320, H = 82, B = 16, T = 12, gap = 3;
     var max = Math.max.apply(null, hours.map(function (x) { return x.n; }).concat([1]));
     var bw = (W - gap * (hours.length - 1)) / hours.length;
     var s = svg("svg", { "class": "chart hour-bars", viewBox: "0 0 " + W + " " + H, role: "img" });
     hours.forEach(function (x, i) {
-      var left = i * (bw + gap), h = x.n ? Math.max(3, (H - B) * x.n / max) : 2;
+      var left = i * (bw + gap), h = x.n ? Math.max(3, (H - B - T) * x.n / max) : 2;
       var t = svg("title");
       t.textContent = x.h + ":00 — " + x.n;
       var r = svg("rect", { x: left, y: H - B - h, width: bw, height: h, rx: 2, "class": x.n ? "hour-bar" : "hour-bar is-empty" });
       r.appendChild(t);
       s.appendChild(r);
+      if (x.n) {
+        // число матчей над столбиком (v2.211.0): без него одинаковые столбики ничего не говорили
+        var count = svg("text", { x: left + bw / 2, y: H - B - h - 3, "text-anchor": "middle", "class": "chart-label hour-count" });
+        count.textContent = String(x.n);
+        s.appendChild(count);
+      }
       if (hours.length <= 8 || i % 2 === 0) {
         var label = svg("text", { x: left + bw / 2, y: H - 3, "text-anchor": "middle", "class": "chart-label" });
         label.textContent = String(x.h);
@@ -117,9 +123,11 @@
         var b = el("div", "body");
         b.appendChild(el("div", "name", r.name));
         li.appendChild(b);
-        var ch = r.new ? el("span", "move move-new", "новый") :
-          r.change > 0 ? el("span", "move tone-win", "▲" + r.change) :
-          r.change < 0 ? el("span", "move tone-loss", "▼" + (-r.change)) : el("span", "move move-same", "—");
+        // справа — сколько рейтинга набрал или потерял за день (v2.211.0; были одни прочерки
+        // «место не менялось»); сдвиг места — стрелкой рядом
+        var arrow = r.new ? "новый " : r.change > 0 ? "▲" + r.change + " " : r.change < 0 ? "▼" + (-r.change) + " " : "";
+        var ch = r.played ? el("span", "move " + deltaTone(r.delta), (arrow ? arrow : "") + r.delta) :
+          el("span", "move move-same", arrow ? arrow.trim() : "—");
         li.appendChild(ch);
         mv.list.appendChild(li);
       });
@@ -143,6 +151,7 @@
 
     var when = el("section", "group");
     when.appendChild(el("h2", "group-title", "По часам"));
+    when.appendChild(el("p", "footnote footnote-top", "Сколько матчей закончилось в каждый час."));
     var chart = el("div", "card");
     chart.appendChild(hourBars(d.hours));
     when.appendChild(chart);

@@ -26,9 +26,20 @@
   // нажатие в этом случае не делало ничего: видимая кнопка «Назад» была мёртвой.
   function canGoBack(stack) { return stack.length > 1; }
 
+  // v2.211.0: раздел своего профиля («Стиль», «Матчи») — назад на сам профиль, не на главную
+  function backFallback(route) {
+    var m = String(route).match(/^(player\/\d+)\/[a-z]+$/);
+    return "#/" + (m ? m[1] : "");
+  }
+
   function appBack() {
-    if (canGoBack(navStack)) history.back();
-    else location.replace("#/");
+    var fallback = backFallback(currentRoute());
+    if (!canGoBack(navStack)) { location.replace(fallback); return; }
+    var before = location.hash;
+    history.back();
+    // в истории WebView может не оказаться записи (повторный запуск из бота подменил адрес):
+    // тогда «Назад» молчала — через мгновение, если адрес не сменился, идём по запасному пути
+    setTimeout(function () { if (location.hash === before) location.replace(fallback); }, 400);
   }
 
   function navDirection(route) {
