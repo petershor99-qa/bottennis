@@ -113,6 +113,9 @@ async def test_day_payload_movement_uses_rating_at_that_moment(db):
     moves = {r["name"]: (r["place"], r["change"]) for r in d["movement"]}
     assert moves["Боб"] == (1, 2)
     assert moves["Алиса"][1] == -1 and moves["Вика"][1] == -1
+    # v2.211.0: справа в таблице — рейтинг за день, а не только сдвиг места
+    deltas = {r["name"]: r["delta"] for r in d["movement"]}
+    assert deltas["Боб"].startswith("+") and deltas["Алиса"].startswith(("−", "-"))
 
 
 async def test_day_payload_champion_pinned_and_newcomer(db):
