@@ -120,5 +120,5 @@ async def test_hall_of_fame_defenses_and_records(db):
 def test_throne_art_wiring():
     # v2.191.0: рисунок из ракеток заменён картинкой владельца (tests/test_v2191.py)
     club = (SRC / "14-club.js").read_text(encoding="utf-8")
-    assert "function throneArt" not in club and "c.appendChild(throneCard(d.current, d.art, prev))" in club
+    assert "function throneArt" not in club and "c.appendChild(throneCard(d.current, d.art, timeline))" in club
     assert ".throne-sitter" in CSS and "@keyframes throne-fan" not in CSS

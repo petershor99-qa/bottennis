@@ -319,3 +319,13 @@ test("canGoBack: назад по истории только если есть �
   assert.equal(app.canGoBack(["match/5"]), false);          // открыли по ссылке из бота — назад на главную
   assert.equal(app.canGoBack(["", "match/5"]), true);
 });
+
+test("throneChange: смена чемпиона с прошлого визита", () => {
+  const timeline = [{ player_id: 3, name: "Гоша" }, { player_id: 2, name: "Боб" }, { player_id: 1, name: "Вика" }];
+  const cur = { player_id: 1 };
+  assert.equal(app.throneChange(null, cur, timeline), null);                  // не заходил — сравнивать не с чем
+  assert.equal(app.throneChange("1", cur, timeline), null);                   // тот же чемпион
+  assert.equal(app.throneChange(1, cur, timeline), null);
+  assert.deepEqual(app.throneChange("2", cur, timeline), { old: timeline[1] });   // видел Боба, теперь Вика
+  assert.deepEqual(app.throneChange("9", cur, timeline), { old: null });          // давно: нет в летописи
+});
