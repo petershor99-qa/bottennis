@@ -17,7 +17,7 @@
       toggledReactions: toggledReactions, matchMood: matchMood, tapGuard: tapGuard, chipSets: chipSets, isPhoneClient: isPhoneClient, replayTiming: replayTiming, ballHeight: ballHeight,
       nextNav: nextNav, sparkPoints: sparkPoints, odometerDigits: odometerDigits, raceOrder: raceOrder,
       edgeProgress: edgeProgress, isRootRoute: isRootRoute, playerFromRoute: playerFromRoute,
-      reignClock: reignClock, timelineShares: timelineShares, thinPoints: thinPoints, isOpaqueScriptError: isOpaqueScriptError, selfVersusTarget: selfVersusTarget, goalsFresh: goalsFresh, desktopFullscreenDefault: desktopFullscreenDefault, deltaTone: deltaTone, relaunchRoute: relaunchRoute, canGoBack: canGoBack, errorView: errorView, backFallback: backFallback
+      reignClock: reignClock, throneChange: throneChange, timelineShares: timelineShares, thinPoints: thinPoints, isOpaqueScriptError: isOpaqueScriptError, selfVersusTarget: selfVersusTarget, goalsFresh: goalsFresh, desktopFullscreenDefault: desktopFullscreenDefault, deltaTone: deltaTone, relaunchRoute: relaunchRoute, canGoBack: canGoBack, errorView: errorView, backFallback: backFallback
     };
     return;
   }
@@ -2553,6 +2553,16 @@
     return raw.map(function (x) { return Math.round(x / sum * 10000) / 100; });
   }
 
+  // Смена чемпиона с прошлого визита на этом устройстве (v2.212.0). seen — id чемпиона, которого
+  // игрок видел в прошлый раз (null — не видел, значит и сравнивать не с чем), cur — текущий чемпион,
+  // timeline — летопись правлений. old — запись летописи о том, кого видел игрок (null — слишком давно)
+  function throneChange(seen, cur, timeline) {
+    if (seen === null || seen === undefined || String(seen) === String(cur.player_id)) return null;
+    var old = null;
+    (timeline || []).forEach(function (r) { if (String(r.player_id) === String(seen)) old = r; });
+    return { old: old };
+  }
+
   function throneSparks() {
     var box = el("div", "throne-sparks");
     for (var i = 0; i < 12; i++) {
@@ -2565,17 +2575,36 @@
     return box;
   }
 
-  function throneCard(cur, art, prev) {
+  // Подпись в «окошке повествования» комикса-нуар: чёрная плашка, жёлтая полоса слева
+  function noirCaption(text) {
+    return el("div", "throne-noir", text);
+  }
+
+  // Сцена «претендент вытесняет чемпиона» (v2.212.0): старый чемпион сидит на троне, новый
+  // влетает сбоку, «БАМ!», старый улетает, корона переворачивается на новом. Один раз на устройство,
+  // нажатие пропускает; без анимации (уменьшить движение) — сразу итог с подписью.
+  var SCENE_MS = 2800;
+
+  function throneCard(cur, art, timeline) {
     var card = clickable(el("div", "card throne-card"), "player/" + cur.player_id);
     var seen = null;
     try {
       seen = window.localStorage.getItem(SEEN_CHAMPION_KEY);
       window.localStorage.setItem(SEEN_CHAMPION_KEY, String(cur.player_id));
     } catch (e) { /* без памяти — без анимации смены */ }
-    var newKing = seen !== null && seen !== String(cur.player_id);
+    var change = throneChange(seen, cur, timeline);
+    var newKing = change !== null;
+    var old = newKing ? change.old : null;
+    var scene = newKing && old !== null && !reduceMotion;
     if (newKing) {
       card.classList.add("is-new-king");
-      card.appendChild(el("div", "throne-news", prev ? "Трон сменился: " + prev + " → " + cur.name : "Новый чемпион"));
+      if (scene) card.classList.add("is-scene");
+      if (old) {
+        card.appendChild(noirCaption(cur.name + " занял трон. " + old.name + " это запомнит."));
+      } else {
+        var prev = timeline.length > 1 ? timeline[timeline.length - 2].name : "";
+        card.appendChild(el("div", "throne-news", prev ? "Трон сменился: " + prev + " → " + cur.name : "Новый чемпион"));
+      }
     }
 
     var stage = el("div", "throne-stage" + (art ? "" : " no-art"));
@@ -2593,8 +2622,27 @@
     stage.appendChild(throneSparks());
     var seat = el("div", "throne-sitter");
     seat.appendChild(icon("crown", "crown crown-big"));
-    seat.appendChild(avatar({ id: cur.player_id, initial: cur.name.charAt(0).toUpperCase() }, "xl"));
+    if (scene) {
+      var oldAvatar = avatar({ id: old.player_id, initial: old.name.charAt(0).toUpperCase() }, "xl");
+      oldAvatar.classList.add("throne-old");
+      seat.appendChild(oldAvatar);
+    }
+    var kingAvatar = avatar({ id: cur.player_id, initial: cur.name.charAt(0).toUpperCase() }, "xl");
+    if (scene) kingAvatar.classList.add("throne-new");
+    seat.appendChild(kingAvatar);
     stage.appendChild(seat);
+    if (scene) {
+      var bang = el("div", "throne-bang");
+      bang.appendChild(el("span", "", "БАМ!"));
+      stage.appendChild(bang);
+      var finish = function () { card.classList.add("scene-done"); };
+      stage.addEventListener("click", function (e) {
+        if (card.classList.contains("scene-done")) return;
+        e.stopPropagation();           // нажатие во время сцены пропускает её, а не открывает профиль
+        finish();
+      });
+      setTimeout(finish, SCENE_MS + 200);
+    }
     card.appendChild(stage);
     card.appendChild(el("div", "hero-name", cur.name));
 
@@ -2611,7 +2659,12 @@
         clock.textContent = reignClock(Date.now() - cur.since_ts);
       }, 1000);
     }
-    if (newKing) setTimeout(function () { haptic("impact"); confetti(seat); }, reduceMotion ? 0 : 900);
+    if (scene) {
+      setTimeout(function () { haptic("impact"); }, Math.round(SCENE_MS * 0.3));          // удар
+      setTimeout(function () { if (!card.classList.contains("scene-done")) confetti(seat); }, Math.round(SCENE_MS * 0.55));
+    } else if (newKing) {
+      setTimeout(function () { haptic("impact"); confetti(seat); }, reduceMotion ? 0 : 900);
+    }
     return card;
   }
 
@@ -2687,8 +2740,7 @@
     c.appendChild(header(d.title, d.facts.map(function (f) { return f.label + ": " + f.value; }).join(" · ")));
     if (d.empty) { emptyState(c, d.empty); return; }
     var timeline = d.timeline || [];
-    var prev = timeline.length > 1 ? timeline[timeline.length - 2].name : "";
-    if (d.current) c.appendChild(throneCard(d.current, d.art, prev));
+    if (d.current) c.appendChild(throneCard(d.current, d.art, timeline));
     if (d.contender) c.appendChild(contenderCard(d.contender));
     if (d.records && d.records.length) {
       var tiles = el("div", "tiles throne-records");
