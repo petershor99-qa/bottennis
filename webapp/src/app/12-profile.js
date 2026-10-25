@@ -246,7 +246,52 @@
     d.blocks.forEach(function (b) {
       var s = section(b.title);
       b.items.forEach(function (it) { s.list.appendChild(itemRow(it)); });
+      // «Положение» — две-три короткие строки, остальное (с кем играю, рейтинг в цифрах,
+      // привычки) — длинные списки: свёрнуты, раскрываются по заголовку (v2.212.0)
+      if (b.title !== "Положение") foldSection(s, b.title);
       c.appendChild(s);
+    });
+    // Своя настройка автосводок — ссылка внизу своего профиля (v2.212.0)
+    if (String(playerId) === String(viewerId)) {
+      var ns = section();
+      var nrow = clickable(el("li", "row"), "notifications");
+      var nbody = el("div", "body");
+      nbody.appendChild(el("div", "name", "Рассылки"));
+      nbody.appendChild(el("div", "sub", "Какие автосводки присылать"));
+      nrow.appendChild(nbody);
+      nrow.appendChild(icon("chevron", "ico-lead"));
+      ns.list.appendChild(nrow);
+      c.appendChild(ns);
+    }
+  }
+
+  // Название из одного длинного слова («Прошаренный», «Дьюсмейкер») в клетке на 4 значка не
+  // помещалось и переносилось по одной букве — шрифт чуть меньше по длине самого длинного слова (v2.212.0)
+  function badgeNameSize(name) {
+    var longest = String(name).split(/\s+/).reduce(function (m, w) { return Math.max(m, w.length); }, 0);
+    return longest >= 11 ? " is-xlong" : (longest >= 9 ? " is-long" : "");
+  }
+
+  // Заголовок блока превращается в кнопку «раскрыть / свернуть»
+  var unfolded = {};
+  function foldSection(s, title) {
+    var head = s.querySelector(".group-title");
+    if (!head) return;
+    s.classList.add("is-fold");
+    if (!unfolded[title]) s.classList.add("is-folded");
+    head.setAttribute("role", "button");
+    head.setAttribute("tabindex", "0");
+    head.setAttribute("aria-expanded", unfolded[title] ? "true" : "false");
+    head.appendChild(icon("chevron", "ico-fold"));
+    function toggle() {
+      var folded = s.classList.toggle("is-folded");
+      unfolded[title] = !folded;
+      head.setAttribute("aria-expanded", folded ? "false" : "true");
+      haptic("select");
+    }
+    head.addEventListener("click", toggle);
+    head.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
     });
   }
 
@@ -603,7 +648,7 @@
         if (a.hidden) badge.appendChild(el("span", "badge-q", "?"));
         else badge.appendChild(useIcon(a.icon || "trophy"));
         cell.appendChild(badge);
-        cell.appendChild(el("span", "badge-name", a.name));
+        cell.appendChild(el("span", "badge-name" + badgeNameSize(a.name), a.name));
         cell.addEventListener("click", function () { achievementSheet(a); });
         return cell;
       }

@@ -32,6 +32,8 @@
   GET /api/feed?offset=N                    — лента клуба порциями (v2.171.0)
   GET /api/when?who=club|me                 — «Когда играют»: день недели × час (v2.170.0)
   GET /api/usage                            — «Использование», только администратор (v2.170.0)
+  GET /api/notifications                    — «Рассылки»: какие автосводки включены (v2.212.0)
+  POST /api/notifications                   — включить/отключить автосводку {key, muted} (v2.212.0)
   POST /api/track                           — счётчик показанных экранов (v2.166.0)
   POST /api/share                           — «Поделиться»: картинка игроку в чат с ботом (v2.176.0)
   POST /api/feed/react                      — реакция на ачивку или рекорд в ленте (v2.176.0)
@@ -581,7 +583,31 @@ async def matches(request, session, viewer):
         offset = int(request.query.get("offset", "0"))
     except ValueError:
         offset = 0
-    return await api.club_matches_payload(session, offset)
+    try:
+        player_id = int(request.query["player"]) if "player" in request.query else None
+    except ValueError:
+        player_id = None
+    return await api.club_matches_payload(session, offset, player_id)
+
+
+async def notifications(request, session, viewer):
+    return api.notifications_payload(viewer)
+
+
+async def notifications_set(request, session, viewer):
+    """Включить или отключить автосводку (v2.212.0). Меняется только свой `muted_digests`."""
+    from bot.services.digests import set_digest_muted
+
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_error(400, "Не удалось прочитать запрос.")
+    if not isinstance(body, dict) or not isinstance(body.get("muted"), bool):
+        return _json_error(400, "Не удалось прочитать запрос.")
+    if not set_digest_muted(viewer, str(body.get("key", "")), body["muted"]):
+        return None
+    await session.commit()
+    return api.notifications_payload(viewer)
 
 
 async def throne(request, session, viewer):
@@ -659,6 +685,7 @@ def create_app(bot_token: str, session_factory, bot=None, storage=None) -> web.A
         ("/api/player/{player_id}/chart", chart),
         ("/api/matches", matches),
         ("/api/throne", throne),
+        ("/api/notifications", notifications),
         ("/api/when", when),
         ("/api/feed", feed),
         ("/api/usage", usage),
@@ -676,6 +703,7 @@ def create_app(bot_token: str, session_factory, bot=None, storage=None) -> web.A
     app.router.add_post("/api/challenge/open", endpoint(challenge_open))
     app.router.add_post("/api/photo/open", endpoint(photo_open))
     app.router.add_post("/api/goals/skill", endpoint(goals_skill))
+    app.router.add_post("/api/notifications", endpoint(notifications_set))
     app.router.add_post("/api/match/{match_id}/react", endpoint(react))
     app.router.add_static("/static/", STATIC_DIR, show_index=False)
     return app

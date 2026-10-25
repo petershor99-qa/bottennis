@@ -25,6 +25,8 @@
     [/^when(?:\/(me))?$/, "home", function (m) { return api("when?who=" + (m[1] || "club")); },
       function (c, d, m) { renderWhen(c, d, m[1] || "club"); }, "when"],
     [/^usage$/, "home", one("usage"), renderUsage, "usage"],
+    // v2.212.0: «Рассылки» — переключатели автосводок (ссылка с «Я»)
+    [/^notifications$/, "home", one("notifications"), renderNotifications, "notifications"],
     [/^pairs$/, "home", one("pairs"), renderPairs, "pairs"],
     [/^race$/, "home", one("race"), renderRace, "race"],
     // v2.177.0: летопись, счета клуба, «Твой месяц»

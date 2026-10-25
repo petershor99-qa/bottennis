@@ -1,5 +1,7 @@
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
+from functools import partial
 from html import escape as h
 
 from aiogram import Bot, F, Router
@@ -167,11 +169,21 @@ def _fmt_delta(d: float) -> str:
     return f"+{d}" if d >= 0 else str(d)
 
 
+async def _send_quiet(bot: Bot, chat_id: int, text: str) -> bool:
+    """Пасхалки и личные рекорды — без звука (v2.212.0): сообщение остаётся в чате,
+    но телефон не пищит на каждую фразу после матча."""
+    return await safe_send(bot, chat_id, text, disable_notification=True)
+
+
 async def _send_personal_records(bot: Bot, player: Player, messages: list[str]) -> None:
-    """Отправляет игроку все сработавшие уведомления о личных рекордах
-    (bot/services/personal_records.py) — их может быть несколько за один матч."""
-    for text in messages:
-        await safe_send(bot, player.telegram_id, text)
+    """Отправляет игроку сработавшие личные рекорды (bot/services/personal_records.py)
+    одним сообщением без звука (v2.212.0; раньше — по сообщению на рекорд, до пяти
+    за матч). Один рекорд — его текст как есть, несколько — под общей шапкой."""
+    if not messages:
+        return
+    gap = chr(10) * 2
+    text = messages[0] if len(messages) == 1 else "💎 <b>Личные рекорды</b>" + gap + gap.join(messages)
+    await _send_quiet(bot, player.telegram_id, text)
 
 
 def _pick_egg(pool: list[str], match_id: int, salt: str) -> str:
@@ -300,7 +312,7 @@ async def _send_winner_eggs(bot: Bot, winner: Player, loser: Player, ctx: dict) 
     """Отправляет пасхалки победителю."""
 
     async def _msg(text: str, **kw) -> None:
-        await safe_send(bot, winner.telegram_id, text, **kw)
+        await _send_quiet(bot, winner.telegram_id, text)
 
     mid = ctx.get("match_id", 0)
     if ctx["flawless"]:
@@ -337,7 +349,7 @@ async def _send_winner_eggs(bot: Bot, winner: Player, loser: Player, ctx: dict) 
         await _msg(_pick_egg(EGG_COMEBACK, mid, "egg_comeback"))
     if ctx["took_throne"]:
         await _msg("👑 Трон твой. Пока.")
-    if ctx["first_blood"]:
+    if ctx["first_blood"] and not ctx.get("career_first_win"):
         await _msg(f"🩸 Первая кровь — <b>{h(loser.display_name)}</b>")
     if ctx["loss_streak_before"] >= 3:
         await _msg("💪 Вылез из жопы")
@@ -358,7 +370,7 @@ async def _send_loser_eggs(
     """Отправляет пасхалки проигравшему."""
 
     async def _msg(text: str, **kw) -> None:
-        await safe_send(bot, loser.telegram_id, text, **kw)
+        await _send_quiet(bot, loser.telegram_id, text)
 
     mid = ctx.get("match_id", 0)
     if ctx["prev_losses"] == 0:
@@ -396,7 +408,7 @@ async def _send_time_based_eggs(
     else:
         return
     for p in players:
-        await safe_send(bot, p.telegram_id, text)
+        await _send_quiet(bot, p.telegram_id, text)
 
 
 async def _send_welcome_back_egg(
@@ -423,7 +435,7 @@ async def _send_welcome_back_egg(
             continue
         gap_days = (completed_at - prev_completed_at).days
         if gap_days >= 14:
-            await safe_send(
+            await _send_quiet(
                 bot,
                 p.telegram_id,
                 f"🧟 Восстал из мёртвых. Рейтинг за {pluralize_days(gap_days)} успел заскучать без тебя.",
@@ -446,7 +458,7 @@ async def _send_h2h_milestone_egg(bot: Bot, session: AsyncSession, p1: Player, p
         return
     text = f"🎉 Юбилейная битва — {total}-я встреча между вами!"
     for p in (p1, p2):
-        await safe_send(bot, p.telegram_id, text)
+        await _send_quiet(bot, p.telegram_id, text)
 
 
 async def _send_quick_rematch_egg(
@@ -475,7 +487,7 @@ async def _send_quick_rematch_egg(
         return
     text = _pick_egg(EGG_QUICK_REMATCH, match_id, "egg_quick_rematch")
     for p in (p1, p2):
-        await safe_send(bot, p.telegram_id, text)
+        await _send_quiet(bot, p.telegram_id, text)
 
 
 async def _send_easter_eggs(
@@ -490,19 +502,23 @@ async def _send_easter_eggs(
     h2h_matches: list[Match],
     completed_at: datetime | None = None,
     created_at: datetime | None = None,
+    winner_new_achievements: list[str] | None = None,
 ) -> None:
     """Пасхалки после матча — победителю, проигравшему и обоим."""
     ctx = await _collect_egg_context(
         session, winner, loser, final_sets, match_id, old_winner_rating, old_loser_rating, h2h_matches,
         completed_at=completed_at,
     )
+    # Первая победа в карьере уже получила ачивку «Первая кровь» (v2.212.0) — пасхалку
+    # «Первая кровь — Имя» следом не шлём: это тот же повод, два сообщения подряд.
+    ctx["career_first_win"] = "first_blood" in (winner_new_achievements or [])
     await _send_winner_eggs(bot, winner, loser, ctx)
     await _send_loser_eggs(bot, loser, winner, ctx, old_loser_rating)
 
     # ── Обоим игрокам ─────────────────────────────────────────────────────────
     if ctx["marathon"]:
         for p in (winner, loser):
-            await safe_send(bot, p.telegram_id, "🕰 Три часа спустя…")
+            await _send_quiet(bot, p.telegram_id, "🕰 Три часа спустя…")
 
     today_start = msk_day_start()
     for p in (winner, loser):
@@ -514,7 +530,7 @@ async def _send_easter_eggs(
             )
         )
         if today_r.scalar() == 7:
-            await safe_send(bot, p.telegram_id, "7 матчей за сегодня! А поработать не хочешь? 😄")
+            await _send_quiet(bot, p.telegram_id, "7 матчей за сегодня! А поработать не хочешь? 😄")
 
     if completed_at is not None:
         await _send_time_based_eggs(bot, [winner, loser], completed_at, match_id)
@@ -959,8 +975,13 @@ async def redo_result(callback: CallbackQuery, state: FSMContext):
 async def _handle_boss_fight_outcome(
     session: AsyncSession, bot: Bot, match: Match,
     challenger: Player, challenged: Player, winner: Player, loser: Player,
-) -> None:
+) -> Callable[[], Awaitable[None]]:
     """Боссфайт: перенос трона + клубное уведомление об исходе + ачивки защиты/поражения претендента.
+
+    Перенос трона и запись ачивок в БД — сразу (места «после» должны учитывать трон), а
+    сообщения (ачивки, «Новый чемпион» / «Трон удержан») возвращаются отложенной отправкой
+    — вызывающий запускает её ПОСЛЕ сообщений о результате матча (v2.212.0: раньше
+    проигравший читал «Мимо трона» и «Трон удержан» раньше, чем «Результат матча внесён»).
 
     is_champion берём с challenger/challenged ДО этого блока — рейтинги уже
     обновлены и закоммичены выше (в confirm_result), но флаг трона ещё не
@@ -971,6 +992,7 @@ async def _handle_boss_fight_outcome(
         challenged if challenged.is_champion else None
     )
     bf_result_text = None
+    deferred: list[Callable[[], Awaitable[None]]] = []
     if champion_role is not None:
         if winner.id != champion_role.id:
             # CAS: если трон уже сменился где-то ещё (гонка с авто-освобождением
@@ -987,7 +1009,7 @@ async def _handle_boss_fight_outcome(
                 if new_ach_guard:
                     record_achievements_earned(session, loser.id, new_ach_guard, match.completed_at)
                     await session.commit()
-                    await notify_new_achievements(bot, loser, new_ach_guard)
+                    deferred.append(partial(notify_new_achievements, bot, loser, new_ach_guard))
         else:
             bf_result_text = (
                 f"🛡 <b>Трон удержан!</b> {h(winner.display_name)} остаётся чемпионом."
@@ -996,21 +1018,27 @@ async def _handle_boss_fight_outcome(
             if new_ach_defense:
                 record_achievements_earned(session, winner.id, new_ach_defense, match.completed_at)
                 await session.commit()
-                await notify_new_achievements(bot, winner, new_ach_defense)
+                deferred.append(partial(notify_new_achievements, bot, winner, new_ach_defense))
             new_ach_fortress = await check_boss_fight_fortress_achievement(session, winner)
             if new_ach_fortress:
                 record_achievements_earned(session, winner.id, new_ach_fortress, match.completed_at)
                 await session.commit()
-                await notify_new_achievements(bot, winner, new_ach_fortress)
+                deferred.append(partial(notify_new_achievements, bot, winner, new_ach_fortress))
             # loser здесь по построению — проигравший претендент (winner
             # уже подтверждён как champion_role в этой ветке "трон удержан")
             new_ach_denied = await check_boss_fight_challenger_defeat_achievement(loser)
             if new_ach_denied:
                 record_achievements_earned(session, loser.id, new_ach_denied, match.completed_at)
                 await session.commit()
-                await notify_new_achievements(bot, loser, new_ach_denied)
+                deferred.append(partial(notify_new_achievements, bot, loser, new_ach_denied))
     if bf_result_text is not None:
-        await notify_all_players(bot, session, bf_result_text, silent=True)
+        deferred.append(partial(notify_all_players, bot, session, bf_result_text, silent=True))
+
+    async def _flush() -> None:
+        for send in deferred:
+            await send()
+
+    return _flush
 
 
 async def _award_draw_achievements_and_eggs(
@@ -1029,13 +1057,13 @@ async def _award_draw_achievements_and_eggs(
 
     # Пасхалка — ничья
     for p in (challenger, challenged):
-        await safe_send(bot, p.telegram_id, "🤝 Договорнячок")
+        await _send_quiet(bot, p.telegram_id, "🤝 Договорнячок")
 
     # Пасхалка — марафон (5+ партий) при ничье
     marathon = len(final_sets) >= 5
     if marathon:
         for p in (challenger, challenged):
-            await safe_send(bot, p.telegram_id, "🕰 Три часа спустя…")
+            await _send_quiet(bot, p.telegram_id, "🕰 Три часа спустя…")
 
     # Пасхалка — 7 матчей за день (ничья)
     today_start = msk_day_start()
@@ -1048,7 +1076,7 @@ async def _award_draw_achievements_and_eggs(
             )
         )
         if today_count_r.scalar() == 7:
-            await safe_send(bot, p.telegram_id, "7 матчей за сегодня! А поработать не хочешь? 😄")
+            await _send_quiet(bot, p.telegram_id, "7 матчей за сегодня! А поработать не хочешь? 😄")
 
     await _send_time_based_eggs(bot, [challenger, challenged], match.completed_at, match_id)
     await _send_h2h_milestone_egg(bot, session, challenger, challenged)
@@ -1091,6 +1119,7 @@ async def _award_win_achievements_and_eggs(
     await _send_easter_eggs(
         bot, session, winner, loser, old_winner_rating, old_loser_rating, final_sets, match_id,
         h2h_matches, completed_at=match.completed_at, created_at=match.created_at,
+        winner_new_achievements=new_ach_winner,
     )
 
     personal_records_winner = await check_personal_records_on_win(session, winner, match)
@@ -1509,8 +1538,11 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
         await state.clear()
 
         # ── Босс-файт: перенос трона + клубное уведомление об исходе + ачивки ──
+        send_boss_fight_news = None
         if match.is_boss_fight:
-            await _handle_boss_fight_outcome(session, bot, match, challenger, challenged, winner, loser)
+            send_boss_fight_news = await _handle_boss_fight_outcome(
+                session, bot, match, challenger, challenged, winner, loser,
+            )
         # Места «после» — уже с учётом перехода трона в боссфайте
         standings_after = await _snapshot_standings_safe(session)
 
@@ -1574,6 +1606,10 @@ async def confirm_result(callback: CallbackQuery, session: AsyncSession, state: 
                     app_url=_rating_link(winner.telegram_id, ranks_before, winner.id), match_url=_match_link(winner.telegram_id, match_id),
                 ),
             )
+
+        # Новости босс-файта (ачивки, «Новый чемпион» / «Трон удержан») — после результата
+        if send_boss_fight_news is not None:
+            await send_boss_fight_news()
 
         # Достижения победителя/проигравшего, пасхалки, серия 10x подряд
         await _award_win_achievements_and_eggs(
