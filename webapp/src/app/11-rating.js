@@ -101,7 +101,12 @@
     var area = el("div");
     c.appendChild(periodSwitch(function (period) {
       area.textContent = "";
-      if (!period) { area.appendChild(allTimeBoard); if (gapNote) area.appendChild(gapNote); return; }
+      if (!period) {
+        area.appendChild(allTimeBoard);
+        if (gapNote) area.appendChild(gapNote);
+        if (legendNote) area.appendChild(legendNote);
+        return;
+      }
       area.appendChild(skeleton("body"));
       api("leaderboard?period=" + period).then(function (p) {
         area.textContent = "";
@@ -117,6 +122,7 @@
     var board = section();
     var allTimeBoard = board;
     var gapNote = null;
+    var legendNote = null;
     board.list.classList.add("board");
     var mine = null, myRow = null;
     d.rows.forEach(function (row) {
@@ -126,6 +132,22 @@
     });
     area.appendChild(board);
     if (d.gap) { gapNote = el("p", "footnote", d.gap); area.appendChild(gapNote); }
+    // v2.212.0: что значат стрелки справа от рейтинга — раньше нигде не объяснялось
+    if (d.rows.some(function (row) { return row.week_change !== 0; })) {
+      legendNote = el("p", "footnote", "▲▼ — на сколько мест игрок поднялся или опустился за неделю.");
+      area.appendChild(legendNote);
+    }
+    // Два экрана, до которых от рейтинга иначе не добраться (они жили только в меню клуба)
+    var more = section();
+    [["Гонка рейтинга", "race"], ["Кто с кем", "pairs"]].forEach(function (l) {
+      var li = clickable(el("li", "row"), l[1]);
+      var lb = el("div", "body");
+      lb.appendChild(el("div", "name", l[0]));
+      li.appendChild(lb);
+      li.appendChild(icon("chevron", "ico-lead"));
+      more.list.appendChild(li);
+    });
+    c.appendChild(more);
     gestureHint(c, area);
     var ids = d.rows.map(function (row) { return row.player_id; });
     if (pendingRise && mine && pendingRise > myRow.rank) {

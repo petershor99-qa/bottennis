@@ -445,7 +445,8 @@ async def _build_short_stats_screen(session: AsyncSession, player: Player, app_u
     lines.append(f"🗓 Форма: {form}  <i>(последние {len(recent)})</i>")
 
     s = _compute_player_stats(player, matches)
-    goals = [_rank_title_progress_line(player.rating), _nearest_achievement_progress(player, s, len(players_all))]
+    goals = [_rank_title_progress_line(player.rating),
+             _nearest_achievement_progress(player, s, len(players_all), rank_goal_shown=True)]
     goals = [g for g in goals if g]
     if goals:
         lines.append("")

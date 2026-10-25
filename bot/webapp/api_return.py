@@ -361,7 +361,7 @@ async def goals_payload(session: AsyncSession, viewer: Player) -> dict:
     if all_done:
         streak += 1
     days_left = (start + timedelta(weeks=1) - now).days
-    left = "последний день" if days_left == 0 else f"осталось {_ru_plural(days_left, 'день', 'дня', 'дней')}"
+    left = "последний день недели" if days_left == 0 else f"осталось {_ru_plural(days_left, 'день', 'дня', 'дней')}"
     skill_goal = next((g for g in goals if g.get("skill")), None)
     can_choose = start not in choices and skill_goal is not None and not skill_goal["done"]
     options = [{"key": k, "title": t} for k, t, _target, _p in SKILLS
