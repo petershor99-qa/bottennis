@@ -291,6 +291,14 @@ def rank_progress(rating: float) -> tuple[str, float] | None:
     return None
 
 
+def next_rank_threshold(rating: float) -> int | None:
+    """Рейтинг, с которого начинается следующее звание (None у высшего)."""
+    for threshold, _title in RANK_TITLE_BANDS:
+        if rating < threshold:
+            return threshold
+    return None
+
+
 def pluralize_points(n: int) -> str:
     """1 очко / 2 очка / 5 очков"""
     return _ru_plural(n, "очко", "очка", "очков")

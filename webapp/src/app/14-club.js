@@ -12,27 +12,78 @@
     return li;
   }
 
+  // «Все матчи клуба» (v2.212.0): по дням, карточками как в «Итогах дня» (партии и
+  // изменение рейтинга победителя), с выбором игрока вверху
+  function clubMatchCard(m) {
+    return dayMatchCard({ id: m.id, a: m.pa, b: m.pb, winner: m.winner, sets: m.sets, delta: m.delta }, "", "");
+  }
+
   function renderClubMatches(c, d) {
     c.appendChild(header(d.title, d.subtitle));
-    if (d.empty) { emptyState(c, d.empty); return; }
-    var s = section();
-    d.matches.forEach(function (m) { s.list.appendChild(clubMatchRow(m)); });
-    c.appendChild(s);
-    var next = d.next_offset;
-    if (next !== null) {
-      var btn = el("button", "button button-quiet", "Показать ещё");
-      btn.type = "button";
-      btn.addEventListener("click", function () {
-        btn.disabled = true;
-        api("matches?offset=" + next).then(function (more) {
-          more.matches.forEach(function (m) { s.list.appendChild(clubMatchRow(m)); });
-          next = more.next_offset;
-          btn.disabled = false;
-          if (next === null) btn.remove();
-        }, function () { btn.disabled = false; });
-      });
-      c.appendChild(btn);
+    var playerId = d.player_id === null || d.player_id === undefined ? null : d.player_id;
+    var area = el("div");
+
+    function paint(data, chosen) {
+      area.textContent = "";
+      if (data.empty) { emptyState(area, data.empty); return; }
+      var groupsByDay = {};
+      var lists = [];
+      function add(matches) {
+        matches.forEach(function (m) {
+          var key = m.day || m.date;
+          if (!groupsByDay[key]) {
+            var sec = el("section", "group");
+            sec.appendChild(el("h2", "group-title", m.day_label || m.date));
+            var ul = el("ul", "feed-list");
+            sec.appendChild(ul);
+            area.insertBefore(sec, moreBtn);
+            groupsByDay[key] = ul;
+            lists.push(ul);
+          }
+          groupsByDay[key].appendChild(clubMatchCard(m));
+        });
+      }
+      var moreBtn = el("div");
+      area.appendChild(moreBtn);
+      add(data.matches);
+      var next = data.next_offset;
+      if (next !== null) {
+        var btn = el("button", "button button-quiet", "Показать ещё");
+        btn.type = "button";
+        btn.addEventListener("click", function () {
+          btn.disabled = true;
+          api("matches?offset=" + next + (chosen ? "&player=" + chosen : "")).then(function (more) {
+            add(more.matches);
+            next = more.next_offset;
+            btn.disabled = false;
+            if (next === null) btn.remove();
+          }, function () { btn.disabled = false; });
+        });
+        area.appendChild(btn);
+      }
     }
+
+    if (!d.empty || playerId !== null) {
+      var chips = el("div", "pick-bar");
+      [{ id: null, name: "Все" }].concat(d.players || []).forEach(function (p) {
+        var b = el("button", "pick-chip" + ((p.id === playerId) ? " is-active" : ""), p.name);
+        b.type = "button";
+        b.addEventListener("click", function () {
+          if (b.classList.contains("is-active")) return;
+          haptic("select");
+          [].forEach.call(chips.children, function (x) { x.classList.remove("is-active"); });
+          b.classList.add("is-active");
+          area.textContent = "";
+          area.appendChild(skeleton("body"));
+          api("matches" + (p.id ? "?player=" + p.id : "")).then(function (data) { paint(data, p.id); },
+            function (err) { area.textContent = ""; emptyState(area, err.message, true, err); });
+        });
+        chips.appendChild(b);
+      });
+      if ((d.players || []).length > 1) c.appendChild(chips);
+    }
+    c.appendChild(area);
+    paint(d, playerId);
   }
 
   // Витрина рекордов (v2.199.0, макет и тексты утверждены владельцем): главный

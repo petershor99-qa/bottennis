@@ -410,16 +410,20 @@ async def player_payload(session: AsyncSession, player: Player, viewer: Player) 
     goal_lines = []
     if personal:
         goal_lines = [_rank_title_progress_line(player.rating),
-                      _nearest_achievement_progress(player, s, len(players_all))]
+                      _nearest_achievement_progress(player, s, len(players_all), rank_goal_shown=True)]
     goals = [it for g in groups([x for x in goal_lines if x]) for it in g]
     for it in goals:
         if it.get("label", "").startswith("До звания") and "progress" not in it:
             it["progress"] = _title_progress(player.rating)
 
-    position = groups([x for x in (
-        _rank_gap_line(player, players_all, ranks),
-        _throne_distance_line(player, champion, challenger, total),
-    ) if x])
+    rank_gap = _rank_gap_line(player, players_all, ranks)
+    throne_line = _throne_distance_line(player, champion, challenger, total)
+    # v2.212.0: вторым в рейтинге «До #1 (Вика)» и «До трона» — одно и то же число; пока #1 и есть
+    # чемпион, оставляем одну строку (с именем)
+    if (rank_gap and throne_line and throne_line.startswith("👑 До трона:") and champion is not None
+            and ranks.get(player.id) == 2 and ranks.get(champion.id) == 1):
+        throne_line = None
+    position = groups([x for x in (rank_gap, throne_line) if x])
 
     rated = sorted((m for m in matches if m.rating_change is not None and m.completed_at),
                    key=lambda m: m.completed_at)
@@ -813,36 +817,76 @@ async def h2h_payload(session: AsyncSession, viewer: Player, opponent: Player, t
 CLUB_MATCHES_PAGE = 30
 
 
-async def club_matches_payload(session: AsyncSession, offset: int) -> dict:
+async def club_matches_payload(session: AsyncSession, offset: int, player_id: int | None = None) -> dict:
+    """Все матчи клуба (v2.212.0: по дням, со счётом партий и изменением рейтинга победителя,
+    с фильтром по игроку). Старые поля (`a`, `b`, `score`) оставлены."""
+    from bot.webapp.api_day import day_label
+
     offset = max(0, offset)
-    total = (await session.execute(
-        select(func.count()).select_from(Match).where(Match.status == MatchStatus.completed)
-    )).scalar_one()
+    where = [Match.status == MatchStatus.completed]
+    if player_id is not None:
+        where.append(or_(Match.challenger_id == player_id, Match.challenged_id == player_id))
+    total = (await session.execute(select(func.count()).select_from(Match).where(*where))).scalar_one()
     rows = (await session.execute(
         select(Match)
-        .where(Match.status == MatchStatus.completed)
+        .where(*where)
         .order_by(desc(Match.completed_at), desc(Match.id))
         .offset(offset).limit(CLUB_MATCHES_PAGE)
         .options(selectinload(Match.challenger), selectinload(Match.challenged))
     )).scalars().all()
+    today = (datetime.now(timezone.utc).replace(tzinfo=None) + MSK_OFFSET).date()
     items = []
     for m in rows:
         winner = "a" if m.winner_id == m.challenger_id else ("b" if m.winner_id == m.challenged_id else "")
+        day = (m.completed_at + MSK_OFFSET).date() if m.completed_at else None
         items.append({
             "id": m.id,
             "date": _msk_date(m.completed_at),
+            "day": day.isoformat() if day else "",
+            "day_label": day_label(day, today) if day else "",
             "a": m.challenger.display_name, "a_id": m.challenger_id,
             "b": m.challenged.display_name, "b_id": m.challenged_id,
+            "pa": _person(m.challenger), "pb": _person(m.challenged),
             "winner": winner,
             "score": match_score_challenger_first(m),
+            "sets": _sets_chips(m),
+            "delta": f"+{m.rating_change:.1f}" if winner and m.rating_change else "",
+            "boss": bool(m.is_boss_fight),
         })
     next_offset = offset + len(rows)
+    players = []
+    if offset == 0:
+        ids = (await session.execute(
+            select(Match.challenger_id).where(Match.status == MatchStatus.completed)
+            .union(select(Match.challenged_id).where(Match.status == MatchStatus.completed))
+        )).scalars().all()
+        found = (await session.execute(select(Player).where(Player.id.in_(ids)))).scalars().all() if ids else []
+        players = [{"id": p.id, "name": p.display_name} for p in sorted(found, key=lambda p: p.display_name.lower())]
     return {
         "title": "Все матчи клуба",
         "subtitle": _ru_plural(total, "матч", "матча", "матчей"),
         "matches": items,
+        "players": players,
+        "player_id": player_id,
         "next_offset": next_offset if next_offset < total else None,
-        "empty": "Матчей ещё не было." if total == 0 else "",
+        "empty": "Матчей ещё не было." if total == 0 and player_id is None else (
+            "У этого игрока ещё нет матчей." if total == 0 else ""),
+    }
+
+
+# ── Рассылки (v2.212.0) ───────────────────────────────────────────────────────
+
+def notifications_payload(player: Player) -> dict:
+    """Экран «Рассылки»: те же сводки и то же хранение, что в боте (Справка → Рассылки)."""
+    from bot.services.digests import DIGEST_KINDS, muted_digests
+
+    muted = muted_digests(player)
+    return {
+        "title": "Рассылки",
+        "intro": "Нажми на строку, чтобы отключить или снова включить автосводку.",
+        "items": [{"key": key, "label": plain(label), "on": key not in muted} for key, label in DIGEST_KINDS],
+        "note": ("Личные уведомления (вызовы, результаты матчей, трон) и голосование за звания года "
+                 "отключить нельзя."),
     }
 
 

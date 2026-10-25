@@ -45,3 +45,18 @@ def toggle_digest(player: Player, kind: str) -> bool | None:
     # порядок сохраняем стабильным — как в DIGEST_KINDS
     player.muted_digests = ",".join(k for k, _ in DIGEST_KINDS if k in muted)
     return now_muted
+
+
+def set_digest_muted(player: Player, kind: str, muted: bool) -> bool:
+    """Явно включает или отключает сводку `kind` (для приложения: переключатель знает
+    нужное состояние, повторный запрос ничего не «перекидывает»). False — неизвестный
+    ключ. Коммит — на вызывающем."""
+    if kind not in DIGEST_KEYS:
+        return False
+    current = muted_digests(player)
+    if muted:
+        current.add(kind)
+    else:
+        current.discard(kind)
+    player.muted_digests = ",".join(k for k, _ in DIGEST_KINDS if k in current)
+    return True

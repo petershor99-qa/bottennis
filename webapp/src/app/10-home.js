@@ -494,9 +494,10 @@
     me.appendChild(meRating(me, d.me.rating));
     c.appendChild(me);
     c.appendChild(challengeButton(null));
-    if (d.goals) c.appendChild(goalsBlock(d.goals));
-
+    // Меню клуба — сразу под кнопкой вызова (v2.212.0), «Цели недели» — после него: раньше плитки
+    // оказывались только на второй странице экрана
     if (d.links.length) c.appendChild(clubTiles(d.links));
+    if (d.goals) c.appendChild(goalsBlock(d.goals));
     homeIconOffer(c);
 
     if (d.featured) {

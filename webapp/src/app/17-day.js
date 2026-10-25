@@ -155,10 +155,15 @@
     var chart = el("div", "card");
     chart.appendChild(hourBars(d.hours));
     when.appendChild(chart);
+    c.appendChild(when);
+
+    // Список матчей дня — со своим заголовком (v2.212.0: раньше карточки шли сразу под столбиками часов)
+    var matchesSec = el("section", "group");
+    matchesSec.appendChild(el("h2", "group-title", "Матчи дня"));
     var all = el("ul", "feed-list");
     d.timeline.forEach(function (m) { all.appendChild(dayMatchCard(m, "", "")); });
-    when.appendChild(all);
-    c.appendChild(when);
+    matchesSec.appendChild(all);
+    c.appendChild(matchesSec);
 
     if (d.achievements.length || d.records.length) {
       var ach = el("section", "group");

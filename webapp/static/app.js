@@ -1223,9 +1223,10 @@
     me.appendChild(meRating(me, d.me.rating));
     c.appendChild(me);
     c.appendChild(challengeButton(null));
-    if (d.goals) c.appendChild(goalsBlock(d.goals));
-
+    // Меню клуба — сразу под кнопкой вызова (v2.212.0), «Цели недели» — после него: раньше плитки
+    // оказывались только на второй странице экрана
     if (d.links.length) c.appendChild(clubTiles(d.links));
+    if (d.goals) c.appendChild(goalsBlock(d.goals));
     homeIconOffer(c);
 
     if (d.featured) {
@@ -1348,7 +1349,12 @@
     var area = el("div");
     c.appendChild(periodSwitch(function (period) {
       area.textContent = "";
-      if (!period) { area.appendChild(allTimeBoard); if (gapNote) area.appendChild(gapNote); return; }
+      if (!period) {
+        area.appendChild(allTimeBoard);
+        if (gapNote) area.appendChild(gapNote);
+        if (legendNote) area.appendChild(legendNote);
+        return;
+      }
       area.appendChild(skeleton("body"));
       api("leaderboard?period=" + period).then(function (p) {
         area.textContent = "";
@@ -1364,6 +1370,7 @@
     var board = section();
     var allTimeBoard = board;
     var gapNote = null;
+    var legendNote = null;
     board.list.classList.add("board");
     var mine = null, myRow = null;
     d.rows.forEach(function (row) {
@@ -1373,6 +1380,22 @@
     });
     area.appendChild(board);
     if (d.gap) { gapNote = el("p", "footnote", d.gap); area.appendChild(gapNote); }
+    // v2.212.0: что значат стрелки справа от рейтинга — раньше нигде не объяснялось
+    if (d.rows.some(function (row) { return row.week_change !== 0; })) {
+      legendNote = el("p", "footnote", "▲▼ — на сколько мест игрок поднялся или опустился за неделю.");
+      area.appendChild(legendNote);
+    }
+    // Два экрана, до которых от рейтинга иначе не добраться (они жили только в меню клуба)
+    var more = section();
+    [["Гонка рейтинга", "race"], ["Кто с кем", "pairs"]].forEach(function (l) {
+      var li = clickable(el("li", "row"), l[1]);
+      var lb = el("div", "body");
+      lb.appendChild(el("div", "name", l[0]));
+      li.appendChild(lb);
+      li.appendChild(icon("chevron", "ico-lead"));
+      more.list.appendChild(li);
+    });
+    c.appendChild(more);
     gestureHint(c, area);
     var ids = d.rows.map(function (row) { return row.player_id; });
     if (pendingRise && mine && pendingRise > myRow.rank) {
@@ -1632,7 +1655,52 @@
     d.blocks.forEach(function (b) {
       var s = section(b.title);
       b.items.forEach(function (it) { s.list.appendChild(itemRow(it)); });
+      // «Положение» — две-три короткие строки, остальное (с кем играю, рейтинг в цифрах,
+      // привычки) — длинные списки: свёрнуты, раскрываются по заголовку (v2.212.0)
+      if (b.title !== "Положение") foldSection(s, b.title);
       c.appendChild(s);
+    });
+    // Своя настройка автосводок — ссылка внизу своего профиля (v2.212.0)
+    if (String(playerId) === String(viewerId)) {
+      var ns = section();
+      var nrow = clickable(el("li", "row"), "notifications");
+      var nbody = el("div", "body");
+      nbody.appendChild(el("div", "name", "Рассылки"));
+      nbody.appendChild(el("div", "sub", "Какие автосводки присылать"));
+      nrow.appendChild(nbody);
+      nrow.appendChild(icon("chevron", "ico-lead"));
+      ns.list.appendChild(nrow);
+      c.appendChild(ns);
+    }
+  }
+
+  // Название из одного длинного слова («Прошаренный», «Дьюсмейкер») в клетке на 4 значка не
+  // помещалось и переносилось по одной букве — шрифт чуть меньше по длине самого длинного слова (v2.212.0)
+  function badgeNameSize(name) {
+    var longest = String(name).split(/\s+/).reduce(function (m, w) { return Math.max(m, w.length); }, 0);
+    return longest >= 11 ? " is-xlong" : (longest >= 9 ? " is-long" : "");
+  }
+
+  // Заголовок блока превращается в кнопку «раскрыть / свернуть»
+  var unfolded = {};
+  function foldSection(s, title) {
+    var head = s.querySelector(".group-title");
+    if (!head) return;
+    s.classList.add("is-fold");
+    if (!unfolded[title]) s.classList.add("is-folded");
+    head.setAttribute("role", "button");
+    head.setAttribute("tabindex", "0");
+    head.setAttribute("aria-expanded", unfolded[title] ? "true" : "false");
+    head.appendChild(icon("chevron", "ico-fold"));
+    function toggle() {
+      var folded = s.classList.toggle("is-folded");
+      unfolded[title] = !folded;
+      head.setAttribute("aria-expanded", folded ? "false" : "true");
+      haptic("select");
+    }
+    head.addEventListener("click", toggle);
+    head.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
     });
   }
 
@@ -1989,7 +2057,7 @@
         if (a.hidden) badge.appendChild(el("span", "badge-q", "?"));
         else badge.appendChild(useIcon(a.icon || "trophy"));
         cell.appendChild(badge);
-        cell.appendChild(el("span", "badge-name", a.name));
+        cell.appendChild(el("span", "badge-name" + badgeNameSize(a.name), a.name));
         cell.addEventListener("click", function () { achievementSheet(a); });
         return cell;
       }
@@ -2267,27 +2335,78 @@
     return li;
   }
 
+  // «Все матчи клуба» (v2.212.0): по дням, карточками как в «Итогах дня» (партии и
+  // изменение рейтинга победителя), с выбором игрока вверху
+  function clubMatchCard(m) {
+    return dayMatchCard({ id: m.id, a: m.pa, b: m.pb, winner: m.winner, sets: m.sets, delta: m.delta }, "", "");
+  }
+
   function renderClubMatches(c, d) {
     c.appendChild(header(d.title, d.subtitle));
-    if (d.empty) { emptyState(c, d.empty); return; }
-    var s = section();
-    d.matches.forEach(function (m) { s.list.appendChild(clubMatchRow(m)); });
-    c.appendChild(s);
-    var next = d.next_offset;
-    if (next !== null) {
-      var btn = el("button", "button button-quiet", "Показать ещё");
-      btn.type = "button";
-      btn.addEventListener("click", function () {
-        btn.disabled = true;
-        api("matches?offset=" + next).then(function (more) {
-          more.matches.forEach(function (m) { s.list.appendChild(clubMatchRow(m)); });
-          next = more.next_offset;
-          btn.disabled = false;
-          if (next === null) btn.remove();
-        }, function () { btn.disabled = false; });
-      });
-      c.appendChild(btn);
+    var playerId = d.player_id === null || d.player_id === undefined ? null : d.player_id;
+    var area = el("div");
+
+    function paint(data, chosen) {
+      area.textContent = "";
+      if (data.empty) { emptyState(area, data.empty); return; }
+      var groupsByDay = {};
+      var lists = [];
+      function add(matches) {
+        matches.forEach(function (m) {
+          var key = m.day || m.date;
+          if (!groupsByDay[key]) {
+            var sec = el("section", "group");
+            sec.appendChild(el("h2", "group-title", m.day_label || m.date));
+            var ul = el("ul", "feed-list");
+            sec.appendChild(ul);
+            area.insertBefore(sec, moreBtn);
+            groupsByDay[key] = ul;
+            lists.push(ul);
+          }
+          groupsByDay[key].appendChild(clubMatchCard(m));
+        });
+      }
+      var moreBtn = el("div");
+      area.appendChild(moreBtn);
+      add(data.matches);
+      var next = data.next_offset;
+      if (next !== null) {
+        var btn = el("button", "button button-quiet", "Показать ещё");
+        btn.type = "button";
+        btn.addEventListener("click", function () {
+          btn.disabled = true;
+          api("matches?offset=" + next + (chosen ? "&player=" + chosen : "")).then(function (more) {
+            add(more.matches);
+            next = more.next_offset;
+            btn.disabled = false;
+            if (next === null) btn.remove();
+          }, function () { btn.disabled = false; });
+        });
+        area.appendChild(btn);
+      }
     }
+
+    if (!d.empty || playerId !== null) {
+      var chips = el("div", "pick-bar");
+      [{ id: null, name: "Все" }].concat(d.players || []).forEach(function (p) {
+        var b = el("button", "pick-chip" + ((p.id === playerId) ? " is-active" : ""), p.name);
+        b.type = "button";
+        b.addEventListener("click", function () {
+          if (b.classList.contains("is-active")) return;
+          haptic("select");
+          [].forEach.call(chips.children, function (x) { x.classList.remove("is-active"); });
+          b.classList.add("is-active");
+          area.textContent = "";
+          area.appendChild(skeleton("body"));
+          api("matches" + (p.id ? "?player=" + p.id : "")).then(function (data) { paint(data, p.id); },
+            function (err) { area.textContent = ""; emptyState(area, err.message, true, err); });
+        });
+        chips.appendChild(b);
+      });
+      if ((d.players || []).length > 1) c.appendChild(chips);
+    }
+    c.appendChild(area);
+    paint(d, playerId);
   }
 
   // Витрина рекордов (v2.199.0, макет и тексты утверждены владельцем): главный
@@ -3110,10 +3229,15 @@
     var chart = el("div", "card");
     chart.appendChild(hourBars(d.hours));
     when.appendChild(chart);
+    c.appendChild(when);
+
+    // Список матчей дня — со своим заголовком (v2.212.0: раньше карточки шли сразу под столбиками часов)
+    var matchesSec = el("section", "group");
+    matchesSec.appendChild(el("h2", "group-title", "Матчи дня"));
     var all = el("ul", "feed-list");
     d.timeline.forEach(function (m) { all.appendChild(dayMatchCard(m, "", "")); });
-    when.appendChild(all);
-    c.appendChild(when);
+    matchesSec.appendChild(all);
+    c.appendChild(matchesSec);
 
     if (d.achievements.length || d.records.length) {
       var ach = el("section", "group");
@@ -4794,6 +4918,44 @@
     if (reduceMotion) { at = d.days.length - 1; show(at); }
   }
 
+  // ── «Рассылки» (v2.212.0): включить или отключить автосводки. Те же сводки и то же
+  // хранение, что у бота (Справка → Рассылки); личные уведомления отключить нельзя.
+  function renderNotifications(c, d) {
+    c.appendChild(header(d.title, ""));
+    c.appendChild(el("p", "footnote footnote-top", d.intro));
+    var s = section();
+    d.items.forEach(function (it) {
+      var li = el("li", "row row-switch");
+      var body = el("div", "body");
+      body.appendChild(el("div", "name", it.label));
+      li.appendChild(body);
+      var sw = el("button", "switch" + (it.on ? " is-on" : ""));
+      sw.type = "button";
+      sw.setAttribute("role", "switch");
+      sw.setAttribute("aria-checked", it.on ? "true" : "false");
+      sw.setAttribute("aria-label", it.label);
+      sw.appendChild(el("span", "switch-knob"));
+      sw.addEventListener("click", function () {
+        var turnOn = !sw.classList.contains("is-on");
+        sw.disabled = true;
+        haptic("select");
+        post("notifications", { key: it.key, muted: !turnOn }).then(function () {
+          sw.classList.toggle("is-on", turnOn);
+          sw.setAttribute("aria-checked", turnOn ? "true" : "false");
+          sw.disabled = false;
+        }, function (err) {
+          sw.disabled = false;
+          var warn = li.querySelector(".switch-error");
+          if (!warn) { warn = el("div", "sub switch-error"); body.appendChild(warn); }
+          warn.textContent = err && err.message ? err.message : "Не удалось сохранить.";
+        });
+      });
+      li.appendChild(sw);
+      s.list.appendChild(li);
+    });
+    c.appendChild(s);
+    c.appendChild(el("p", "footnote", d.note));
+  }
   // ── Маршруты ───────────────────────────────────────────────────────────────
   // [шаблон адреса, вкладка снизу, загрузка данных, отрисовка]
   function one(path) { return function () { return api(path); }; }
@@ -4821,6 +4983,8 @@
     [/^when(?:\/(me))?$/, "home", function (m) { return api("when?who=" + (m[1] || "club")); },
       function (c, d, m) { renderWhen(c, d, m[1] || "club"); }, "when"],
     [/^usage$/, "home", one("usage"), renderUsage, "usage"],
+    // v2.212.0: «Рассылки» — переключатели автосводок (ссылка с «Я»)
+    [/^notifications$/, "home", one("notifications"), renderNotifications, "notifications"],
     [/^pairs$/, "home", one("pairs"), renderPairs, "pairs"],
     [/^race$/, "home", one("race"), renderRace, "race"],
     // v2.177.0: летопись, счета клуба, «Твой месяц»

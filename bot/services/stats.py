@@ -20,6 +20,7 @@ from bot.utils import (
     get_career_matches,
     get_match_counts,
     match_rating_delta,
+    next_rank_threshold,
     pluralize_losses,
     pluralize_matches,
     pluralize_times,
@@ -910,9 +911,16 @@ def nearest_achievements(player, s: dict, total_players: int) -> list[tuple[floa
     return sorted(valid, key=lambda c: -c[0])
 
 
-def _nearest_achievement_progress(player, s: dict, total_players: int) -> str | None:
-    """Возвращает строку прогресса до ближайшей незаработанной счётной ачивки или None."""
+def _nearest_achievement_progress(
+    player, s: dict, total_players: int, rank_goal_shown: bool = False,
+) -> str | None:
+    """Возвращает строку прогресса до ближайшей незаработанной счётной ачивки или None.
+
+    rank_goal_shown — рядом уже показано «До звания …»: если следующее звание начинается
+    с 1200 (как ачивка «Рейтинг 1200»), одну и ту же цель дважды не показываем (v2.212.0)."""
     nearest = nearest_achievements(player, s, total_players)
+    if rank_goal_shown and next_rank_threshold(player.rating) == 1200:
+        nearest = [c for c in nearest if c[1] != "rating_1200"]
     if not nearest:
         return None
     ratio, ach_id, current, target, unit = nearest[0]
