@@ -176,6 +176,7 @@ html, body {
 
 /* ── Аватары (фото или буква на цветном круге) ────────────────────────── */
 .avatar {
+  position: relative;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -1365,3 +1366,22 @@ html.has-fs-toggle .screen-head { padding-right: 40px; }
 @media (prefers-reduced-motion: reduce) {
   .throne-noir { animation: none; }
 }
+
+/* ── Сезонное оформление и «Игрок недели» (v2.214.0) ──────────────────── */
+.snow { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 1; }
+.snow i {
+  position: absolute; top: -12px; width: var(--s); height: var(--s); border-radius: 50%;
+  background: #fff; opacity: 0.8; box-shadow: 0 0 0 1px rgba(120, 150, 190, 0.3);
+  animation: snowfall var(--d) linear var(--dl) infinite;
+}
+@keyframes snowfall {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(var(--x), 108vh, 0); }
+}
+@media (prefers-reduced-motion: reduce) { .snow { display: none; } }
+.avatar-star {
+  position: absolute; right: -3px; bottom: -3px; width: 16px; height: 16px; padding: 0;
+  display: grid; place-items: center; border: 0; border-radius: 50%;
+  background: var(--gold); color: #fff; box-shadow: 0 0 0 2px var(--card);
+}
+.avatar-star svg { width: 10px; height: 10px; }

@@ -17,7 +17,7 @@
       toggledReactions: toggledReactions, matchMood: matchMood, tapGuard: tapGuard, chipSets: chipSets, isPhoneClient: isPhoneClient, replayTiming: replayTiming, ballHeight: ballHeight,
       nextNav: nextNav, sparkPoints: sparkPoints, odometerDigits: odometerDigits, raceOrder: raceOrder,
       edgeProgress: edgeProgress, isRootRoute: isRootRoute, playerFromRoute: playerFromRoute,
-      reignClock: reignClock, throneChange: throneChange, timelineShares: timelineShares, thinPoints: thinPoints, isOpaqueScriptError: isOpaqueScriptError, selfVersusTarget: selfVersusTarget, goalsFresh: goalsFresh, desktopFullscreenDefault: desktopFullscreenDefault, deltaTone: deltaTone, relaunchRoute: relaunchRoute, canGoBack: canGoBack, errorView: errorView, backFallback: backFallback
+      reignClock: reignClock, throneChange: throneChange, timelineShares: timelineShares, thinPoints: thinPoints, isOpaqueScriptError: isOpaqueScriptError, selfVersusTarget: selfVersusTarget, goalsFresh: goalsFresh, desktopFullscreenDefault: desktopFullscreenDefault, deltaTone: deltaTone, relaunchRoute: relaunchRoute, canGoBack: canGoBack, errorView: errorView, backFallback: backFallback, snowSeason: snowSeason
     };
     return;
   }
@@ -393,6 +393,8 @@
     var a = el("div", "avatar avatar-" + (size || "md"), person.initial);
     a.style.setProperty("--hue", String((person.id * 47) % 360));
     loadPhoto(person.id, a);
+    // «Игрок недели» (v2.214.0): значок на аватаре, кроме совсем мелких
+    if (weekStar && person.id === weekStar.id && size !== "xs") a.appendChild(starBadge(person));
     return a;
   }
 
@@ -401,7 +403,8 @@
       if (!url) return;
       node.style.backgroundImage = "url(" + url + ")";
       node.classList.add("has-photo");
-      node.textContent = "";
+      // буква убирается, значок «Игрок недели» (если есть) остаётся
+      [].slice.call(node.childNodes).forEach(function (n) { if (n.nodeType === 3) node.removeChild(n); });
     }
     var cached = photoCache[id];
     if (cached !== undefined) {
@@ -818,7 +821,7 @@
   function monthReady(c, anchor, m) {
     storageGet(MONTH_READY_KEY, function (seen) {
       if (seen === m.ym || !anchor.isConnected) return;
-      var card = clickable(el("div", "card hint month-ready"), "month/" + m.ym);
+      var card = clickable(el("div", "card hint month-ready"), m.route || "month/" + m.ym);
       card.appendChild(icon("calendar-event", "ico-lead"));
       var b = el("div", "body");
       b.appendChild(el("div", "name", m.title));
@@ -1212,6 +1215,7 @@
     podiumMoves(podiumNode, d.podium);
     checkMeDot(d.me);
     if (d.month_ready) monthReady(c, podiumNode, d.month_ready);
+    if (d.year_ready) monthReady(c, podiumNode, d.year_ready);   // v2.214.0
 
     var me = clickable(el("div", "card me-card"), "player/" + d.me.id);
     me.appendChild(avatar({ id: d.me.id, initial: d.me.initial }, "md"));
@@ -3873,12 +3877,12 @@
       b.setAttribute("aria-label", label);
       b.appendChild(icon(name));
       if (!target) b.disabled = true;
-      else b.addEventListener("click", function () { haptic("select"); location.replace("#/month/" + target); });
+      else b.addEventListener("click", function () { haptic("select"); location.replace("#/" + (d.base || "month") + "/" + target); });
       return b;
     }
-    nav.appendChild(arrow(d.prev, "chevron-left", "Предыдущий месяц"));
+    nav.appendChild(arrow(d.prev, "chevron-left", d.base === "year" ? "Предыдущий год" : "Предыдущий месяц"));
     nav.appendChild(el("div", "day-label", d.label || d.ym));
-    nav.appendChild(arrow(d.next, "chevron-right", "Следующий месяц"));
+    nav.appendChild(arrow(d.next, "chevron-right", d.base === "year" ? "Следующий год" : "Следующий месяц"));
     c.appendChild(nav);
     if (d.empty) { emptyState(c, d.empty); return; }
 
@@ -5008,6 +5012,48 @@
     c.appendChild(s);
     c.appendChild(el("p", "footnote", d.note));
   }
+  // ── Сезонное оформление (v2.214.0) ─────────────────────────────────────────
+  // Снег на главной с 1 декабря по 10 января (дата устройства). Лёгкий слой из
+  // «снежинок» на transform и opacity, без картинок; «уменьшить движение» — без снега.
+  function snowSeason(date) {
+    var m = date.getMonth(), d = date.getDate();
+    return m === 11 || (m === 0 && d <= 10);
+  }
+
+  function syncSnow(onHome) {
+    var layer = document.getElementById("snow");
+    var want = onHome && !reduceMotion && snowSeason(new Date());
+    if (!want) { if (layer) layer.remove(); return; }
+    if (layer) return;
+    layer = el("div", "snow");
+    layer.id = "snow";
+    layer.setAttribute("aria-hidden", "true");
+    for (var i = 0; i < 26; i++) {
+      var flake = el("i");
+      flake.style.left = (i * 37 % 100) + "%";
+      flake.style.setProperty("--s", (3 + i % 4) + "px");
+      flake.style.setProperty("--d", (9 + i * 7 % 8) + "s");
+      flake.style.setProperty("--dl", "-" + (i * 13 % 12) + "s");
+      flake.style.setProperty("--x", ((i % 2 ? 1 : -1) * (12 + i % 5 * 6)) + "px");
+      layer.appendChild(flake);
+    }
+    document.body.appendChild(layer);
+  }
+
+  // «Игрок недели» (v2.214.0): значок на аватаре; id приходит с /api/me
+  var weekStar = null;
+
+  function starBadge(person) {
+    var b = el("button", "avatar-star");
+    b.type = "button";
+    b.setAttribute("aria-label", "Игрок недели");
+    b.appendChild(useIcon("medal"));
+    b.addEventListener("click", function (e) {
+      e.stopPropagation();
+      sheetOpen(null, "Игрок недели", "Прошлая неделя: " + weekStar.delta, "");
+    });
+    return b;
+  }
   // ── Маршруты ───────────────────────────────────────────────────────────────
   // [шаблон адреса, вкладка снизу, загрузка данных, отрисовка]
   function one(path) { return function () { return api(path); }; }
@@ -5043,6 +5089,9 @@
     [/^chronicle$/, "home", one("chronicle"), renderChronicle, "chronicle"],
     [/^scores$/, "home", one("scores"), renderScores, "scores"],
     [/^month(?:\/(\d{6}))?$/, "me", function (m) { return api("month" + (m[1] ? "?ym=" + m[1] : "")); },
+      function (c, d) { renderMonth(c, d); }, "month"],
+    // «Твой год» (v2.214.0): те же карточки-сторис, что у месяца
+    [/^year(?:\/(\d{4}))?$/, "me", function (m) { return api("year" + (m[1] ? "?y=" + m[1] : "")); },
       function (c, d) { renderMonth(c, d); }, "month"]
   ];
 
@@ -5132,8 +5181,9 @@
     var selfPair = selfVersusTarget(route, viewerId);
     if (selfPair) { location.replace("#/" + selfPair); return; }
     // «Твой месяц» во весь экран (v2.183.0); остальные экраны — если так выбрано (v2.186.0)
-    if (!/^month/.test(route) && !wantFullscreen()) leaveFullscreen();
+    if (!/^(month|year)/.test(route) && !wantFullscreen()) leaveFullscreen();
 
+    syncSnow(route === "");   // снег с 1 декабря — только на главной (v2.214.0)
     var token = ++renderToken;
     var pm = route.match(PLAYER_ROUTE);
 
@@ -5358,7 +5408,8 @@
   // сразу, параллельно с /api/me, — render() возьмёт их из кэша ответов
   var firstJobs = [];
   try { firstJobs = routeJobs(currentRoute()); } catch (e) { /* первый экран загрузит сам */ }
-  var meReady = api("me").then(function (d) { viewerId = d.id; }, function () { viewerId = null; });
+  var meReady = api("me").then(function (d) { viewerId = d.id; weekStar = d.week_star || null; },
+    function () { viewerId = null; });
   var snap = currentRoute() === "" ? readHomeSnapshot() : null;
   if (snap) {
     viewerId = snap.v;

@@ -348,6 +348,8 @@
     var a = el("div", "avatar avatar-" + (size || "md"), person.initial);
     a.style.setProperty("--hue", String((person.id * 47) % 360));
     loadPhoto(person.id, a);
+    // «Игрок недели» (v2.214.0): значок на аватаре, кроме совсем мелких
+    if (weekStar && person.id === weekStar.id && size !== "xs") a.appendChild(starBadge(person));
     return a;
   }
 
@@ -356,7 +358,8 @@
       if (!url) return;
       node.style.backgroundImage = "url(" + url + ")";
       node.classList.add("has-photo");
-      node.textContent = "";
+      // буква убирается, значок «Игрок недели» (если есть) остаётся
+      [].slice.call(node.childNodes).forEach(function (n) { if (n.nodeType === 3) node.removeChild(n); });
     }
     var cached = photoCache[id];
     if (cached !== undefined) {
