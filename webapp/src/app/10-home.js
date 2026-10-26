@@ -89,7 +89,7 @@
   function monthReady(c, anchor, m) {
     storageGet(MONTH_READY_KEY, function (seen) {
       if (seen === m.ym || !anchor.isConnected) return;
-      var card = clickable(el("div", "card hint month-ready"), "month/" + m.ym);
+      var card = clickable(el("div", "card hint month-ready"), m.route || "month/" + m.ym);
       card.appendChild(icon("calendar-event", "ico-lead"));
       var b = el("div", "body");
       b.appendChild(el("div", "name", m.title));
@@ -483,6 +483,7 @@
     podiumMoves(podiumNode, d.podium);
     checkMeDot(d.me);
     if (d.month_ready) monthReady(c, podiumNode, d.month_ready);
+    if (d.year_ready) monthReady(c, podiumNode, d.year_ready);   // v2.214.0
 
     var me = clickable(el("div", "card me-card"), "player/" + d.me.id);
     me.appendChild(avatar({ id: d.me.id, initial: d.me.initial }, "md"));
