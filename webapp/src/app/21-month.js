@@ -183,12 +183,12 @@
       b.setAttribute("aria-label", label);
       b.appendChild(icon(name));
       if (!target) b.disabled = true;
-      else b.addEventListener("click", function () { haptic("select"); location.replace("#/month/" + target); });
+      else b.addEventListener("click", function () { haptic("select"); location.replace("#/" + (d.base || "month") + "/" + target); });
       return b;
     }
-    nav.appendChild(arrow(d.prev, "chevron-left", "Предыдущий месяц"));
+    nav.appendChild(arrow(d.prev, "chevron-left", d.base === "year" ? "Предыдущий год" : "Предыдущий месяц"));
     nav.appendChild(el("div", "day-label", d.label || d.ym));
-    nav.appendChild(arrow(d.next, "chevron-right", "Следующий месяц"));
+    nav.appendChild(arrow(d.next, "chevron-right", d.base === "year" ? "Следующий год" : "Следующий месяц"));
     c.appendChild(nav);
     if (d.empty) { emptyState(c, d.empty); return; }
 

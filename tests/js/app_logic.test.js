@@ -329,3 +329,12 @@ test("throneChange: смена чемпиона с прошлого визита
   assert.deepEqual(app.throneChange("2", cur, timeline), { old: timeline[1] });   // видел Боба, теперь Вика
   assert.deepEqual(app.throneChange("9", cur, timeline), { old: null });          // давно: нет в летописи
 });
+
+test("snowSeason: снег с 1 декабря по 10 января", () => {
+  assert.equal(app.snowSeason(new Date(2026, 10, 30)), false);   // 30 ноября
+  assert.equal(app.snowSeason(new Date(2026, 11, 1)), true);     // 1 декабря
+  assert.equal(app.snowSeason(new Date(2026, 11, 31)), true);
+  assert.equal(app.snowSeason(new Date(2027, 0, 10)), true);
+  assert.equal(app.snowSeason(new Date(2027, 0, 11)), false);
+  assert.equal(app.snowSeason(new Date(2026, 5, 15)), false);
+});

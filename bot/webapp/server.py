@@ -23,6 +23,7 @@
   GET /api/throne                           — зал славы
   GET /api/summary/{kind}                   — итоги дня/недели/месяца/квартала/года (v2.168.0)
   GET /api/month?ym=ГГГГММ                  — «Твой месяц» карточками (v2.177.0)
+  GET /api/year?y=ГГГГ                      — «Твой год» карточками, с 1 декабря (v2.214.0)
   GET /api/chronicle                        — летопись клуба (v2.177.0)
   GET /api/scores                           — счета клуба: частые счета, дьюсы (v2.177.0)
   GET /api/day?date=ГГГГ-ММ-ДД              — итоги дня на лету: табло, игрок дня, движение, матч дня… (v2.176.0)
@@ -67,6 +68,8 @@ from bot.webapp import (
     api_period,
     api_personal,
     api_return,
+    api_star,
+    api_year,
     menu,
     payload_cache,
     reactions,
@@ -180,6 +183,7 @@ async def home(request, session, viewer):
     payload["goals"] = await api_return.goals_payload(session, viewer)
     # v2.202.0: первые дни месяца — «Твой октябрь готов»
     payload["month_ready"] = await api_month.month_ready(session, viewer)
+    payload["year_ready"] = await api_year.year_ready(session, viewer)   # v2.214.0
     payload["feed"], payload["feed_more"] = page["items"], page["more"]
     # v2.173.0: реакции и на карточке «Матч дня» — счётчики, как в ленте
     featured = payload.get("featured")
@@ -237,6 +241,11 @@ async def day(request, session, viewer):
 async def month(request, session, viewer):
     """«Твой месяц» (v2.177.0): ?ym=ГГГГММ, без него — текущий (или прошлый)."""
     return await api_month.month_payload(session, viewer, request.query.get("ym") or None)
+
+
+async def year(request, session, viewer):
+    """«Твой год» (v2.214.0): ?y=ГГГГ, без него — текущий (с 1 декабря) или прошлый."""
+    return await api_year.year_payload(session, viewer, request.query.get("y") or None)
 
 
 async def chronicle(request, session, viewer):
@@ -408,7 +417,8 @@ async def chart(request, session, viewer):
 
 async def me(request, session, viewer):
     """id зрителя — для вкладки «Я» (страница сама его не знает)."""
-    return {"id": viewer.id, "name": viewer.display_name}
+    return {"id": viewer.id, "name": viewer.display_name,
+            "week_star": await api_star.week_star(session)}   # v2.214.0
 
 
 async def photo(request, session, viewer):
@@ -679,6 +689,7 @@ def create_app(bot_token: str, session_factory, bot=None, storage=None) -> web.A
         ("/api/summary/{kind}", summary),
         ("/api/day", day),
         ("/api/month", month),
+        ("/api/year", year),
         ("/api/chronicle", chronicle),
         ("/api/scores", scores),
         ("/api/match/{match_id}", match_screen),

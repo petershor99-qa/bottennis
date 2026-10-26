@@ -33,6 +33,9 @@
     [/^chronicle$/, "home", one("chronicle"), renderChronicle, "chronicle"],
     [/^scores$/, "home", one("scores"), renderScores, "scores"],
     [/^month(?:\/(\d{6}))?$/, "me", function (m) { return api("month" + (m[1] ? "?ym=" + m[1] : "")); },
+      function (c, d) { renderMonth(c, d); }, "month"],
+    // «Твой год» (v2.214.0): те же карточки-сторис, что у месяца
+    [/^year(?:\/(\d{4}))?$/, "me", function (m) { return api("year" + (m[1] ? "?y=" + m[1] : "")); },
       function (c, d) { renderMonth(c, d); }, "month"]
   ];
 
@@ -122,8 +125,9 @@
     var selfPair = selfVersusTarget(route, viewerId);
     if (selfPair) { location.replace("#/" + selfPair); return; }
     // «Твой месяц» во весь экран (v2.183.0); остальные экраны — если так выбрано (v2.186.0)
-    if (!/^month/.test(route) && !wantFullscreen()) leaveFullscreen();
+    if (!/^(month|year)/.test(route) && !wantFullscreen()) leaveFullscreen();
 
+    syncSnow(route === "");   // снег с 1 декабря — только на главной (v2.214.0)
     var token = ++renderToken;
     var pm = route.match(PLAYER_ROUTE);
 
@@ -348,7 +352,8 @@
   // сразу, параллельно с /api/me, — render() возьмёт их из кэша ответов
   var firstJobs = [];
   try { firstJobs = routeJobs(currentRoute()); } catch (e) { /* первый экран загрузит сам */ }
-  var meReady = api("me").then(function (d) { viewerId = d.id; }, function () { viewerId = null; });
+  var meReady = api("me").then(function (d) { viewerId = d.id; weekStar = d.week_star || null; },
+    function () { viewerId = null; });
   var snap = currentRoute() === "" ? readHomeSnapshot() : null;
   if (snap) {
     viewerId = snap.v;

@@ -127,6 +127,41 @@ def test_back_with_dead_history_falls_back_to_profile(browser, base_url):
     page.context.close()
 
 
+def test_year_story_before_december_is_closed(browser, base_url):
+    """v2.214.0: «Твой год» до 1 декабря — понятное сообщение и стрелка вперёд недоступна."""
+    page = open_page(browser, f"{base_url}/preview#/year/{__import__('datetime').date.today().year}")
+    page.wait_for_selector(".state", timeout=10000)
+    assert "откроется 1 декабря" in page.inner_text("#app")
+    assert page.locator(".day-arrow").last.is_disabled()
+    assert page.errors == []
+    page.context.close()
+
+
+DECEMBER_CLOCK = """
+(function () {
+  var Real = Date, fixed = new Real(2026, 11, 5, 12, 0, 0).getTime();
+  function Fake() { var a = arguments; return a.length ? new (Function.prototype.bind.apply(Real, [null].concat([].slice.call(a))))() : new Real(fixed); }
+  Fake.prototype = Real.prototype; Fake.now = function () { return fixed; };
+  Fake.UTC = Real.UTC; Fake.parse = Real.parse; window.Date = Fake;
+})();
+"""
+
+
+def test_snow_only_on_home_in_december(browser, base_url):
+    """v2.214.0: снег с 1 декабря — на главной есть, на других экранах нет."""
+    ctx = browser.new_context(viewport={"width": 390, "height": 844})
+    ctx.add_init_script(DECEMBER_CLOCK)
+    page = ctx.new_page()
+    page.goto(f"{base_url}/preview#/")
+    wait_screen(page)
+    assert page.locator("#snow i").count() >= 10
+    page.evaluate("location.hash = '#/rating'")
+    wait_screen(page)
+    page.wait_for_timeout(300)
+    assert page.locator("#snow").count() == 0
+    ctx.close()
+
+
 def test_share_sends_png_to_bot(browser, base_url):
     page = open_page(browser, f"{base_url}/preview#/summary/day")
     wait_screen(page)
