@@ -523,3 +523,214 @@ ssh root@НОВЫЙ_IP "cd /opt/bottennis && git pull && systemctl restart botte
 **Устранено (v2.93.0):** `confirm_result` разбита с ~480 строк на именованные корутины (`_handle_boss_fight_outcome`, `_award_win_achievements_and_eggs`/`_award_draw_achievements_and_eggs`, `_notify_challenger_status_change`) без изменения поведения — подробности в `docs/HISTORY.md`.
 
 **Устранено (v2.95.0/v2.96.0):** уборка находок код-ревью от 2026-08-19 — общие `_ru_plural`/`as_naive`/`msk_hour_and_weekday`/`rating_tenths` в utils.py, `get_h2h_matches()` вместо 4 отдельных запросов h2h-истории за одно подтверждение победы. Полный разбор в `docs/HISTORY.md`.
+
+---
+
+# Протокол проекта (глубокая карта; дописано 2026-10-30, эпоха v2.214)
+
+> Раздел ниже — «протоптанная дорога» для новых сессий: что где лежит и как
+> связано. Дополняет разделы выше (бизнес-правила, флоу релизов), не заменяет их.
+
+## Карта проекта
+
+```
+main.py                  точка входа: бот (long polling) + планировщик + веб-сервер Mini App в одном процессе
+bot/
+  handlers/              роутеры aiogram (10): start (меню, /start), challenge (вызов/отмена),
+                         match_result (FSM ввода счёта), leaderboard, profile, history (H2H),
+                         admin (/usage, обслуживание), photo (фото для Mini App),
+                         year_vote («Итоги года»), notifications (автосводки)
+  services/              логика без Telegram: rating (ELO), validation (счёт партий), achievements,
+                         leaderboard (места/▲▼ — одно определение для бота и приложения), stats,
+                         digests + digest_delivery (сводки), club_records, personal_records,
+                         usage (счётчик), year_vote
+  webapp/                сервер Mini App: server.py (aiohttp, все маршруты, обёртка endpoint()),
+                         auth.py (initData), config.py (.env-флаги), api*.py (JSON-пейлоады по
+                         экранам: api, api_club, api_personal, api_day, api_month, api_year,
+                         api_period, api_insights, api_chronicle, api_return, api_star),
+                         text.py (строки приложения), reactions.py, share.py, payload_cache.py,
+                         usage.py (запуски/экраны), assets.py (статика из памяти), menu.py,
+                         menu_button.py (кнопка «Клуб»), photos.py, challenge_open.py
+  db/                    models.py (13 таблиц SQLAlchemy), database.py (engine, async_session,
+                         init_db, _migrate_db — индексы для уже существующей БД)
+  keyboards/inline.py    все inline-клавиатуры + версия постоянной клавиатуры REPLY_KB_VERSION
+  states/states.py       FSM-состояния ввода результата
+  middleware.py          DatabaseMiddleware (сессия + commit), UsageMiddleware (счётчик, фоновая
+                         запись), ReplyKeyboardMiddleware (миграция старой клавиатуры)
+  scheduler.py           APScheduler: напоминания (час), итоги дня 21:30 МСК, дайджест пн 9:00,
+                         месячные/квартальные/годовые сводки, джобы голосования (декабрь)
+  utils.py, phrases.py   общие хелперы (msk_day_start, get_player…) и строки
+webapp/
+  src/app/*.js           исходники страницы (без сборщика): 00-start (инициализация, Telegram-мост,
+                         экспорт чистых функций для node-тестов), 01-core (DOM), 02-api (fetch с
+                         кэшем 60 с, заголовок tma, отчёт ошибок), 03-charts, 10..28 — экраны
+                         (home, rating, profile, matches, club, summary, share, day, when, usage,
+                         match, month, gestures, return, fx, new, race, notifications, season),
+                         90-routes (таблица маршрутов #/…, таб-бар «Клуб/Рейтинг/Я»)
+  static/                index.html, app.css, app.js (СБОРКА из src/app), telegram-web-app.js
+                         (локальная копия SDK), fonts/ (Raleway, урезан subset_font.py),
+                         icons.svg, картинки
+scripts/                 build_app_js.py (склейка app.js, --check в CI), preview_miniapp.py
+                         (превью на фейковой базе), subset_font.py, update_telegram_js.py,
+                         export_usage.py, quarterly_report.py, rehearse_year_vote.py,
+                         analyze_ratings.py, style_report.py, fix_ratings.py и др.
+tests/                   pytest-юниты (tests/test_*.py, ~1800 тестов), tests/js (node --test чистых
+                         функций страницы), tests/e2e (Playwright: загрузка, бюджеты, эталоны)
+docs/                    MINIAPP.md (устройство миниаппа, включение на VPS), HISTORY.md (архив
+                         постмортемов и правил), планы и аудиты
+.github/workflows/tests.yml   CI: lint → pytest → (мерж в main) deploy + GitHub Release
+```
+
+## Архитектура
+
+Два рантайма в ОДНОМ процессе (`main.py`):
+
+1. **Бот** — aiogram 3, long polling (вебхука нет), только личные чаты.
+   Обновление проходит middlewares (сессия БД → счётчик → клавиатура) и роутеры
+   `bot/handlers/*`; хендлеры тонкие — логика в `bot/services/*`.
+2. **Mini App** — aiohttp (`bot/webapp/server.py`), слушает `127.0.0.1:8081`,
+   наружу — HTTPS через Caddy. Почти всё «только чтение»; пишут в БД только
+   короткие транзакции (реакции, счётчик экранов, выключение сводок, цель
+   недели) — второй постоянный писатель упрётся в блокировку SQLite (v2.157.2).
+
+Путь данных бота: кнопка/команда → DatabaseMiddleware (сессия) → хендлер →
+service → SQLAlchemy async → SQLite (на VPS `/data/bottennis.db`) → HTML-ответ.
+
+Путь данных миниаппа: страница читает `#tgWebAppData` из адреса → `api()` в
+`02-api.js` шлёт `Authorization: tma <initData>` → обёртка `endpoint()` в
+server.py проверяет подпись, ищет игрока по `telegram_id`, открывает сессию →
+`api_*.py` собирает JSON (строки интерфейса — на сервере) → рендер через
+`textContent` (имена не интерпретируются как HTML).
+
+Два режима бота (`slim_bot_for`): без `WEBAPP_URL` бот полный; с ним игрокам с
+доступом к приложению глубокая статистика прячется за «Подробнее в приложении»,
+ссылки на экран — `webapp_link(id, "player/5")` → `?r=player/5`.
+
+Переходы бот → приложение: кнопки «Открыть приложение», меню-кнопка «Клуб»,
+«Разбор матча»/«Личные встречи». Приложение → бот: «Вызвать на матч» и
+«Поставить фото» — бот присылает экран/просьбу в чат; FSM-ожидание ставится из
+веб-хендлера через хранилище диспетчера (STORAGE_KEY в server.py).
+
+## Интеграция с Telegram
+
+- **Подключение**: long polling (`dp.start_polling`); фильтр `F.chat.type ==
+  "private"` на message и callback_query — в группах бот молчит.
+- **Mini App SDK**: локальная копия `webapp/static/telegram-web-app.js`
+  (обновление — `scripts/update_telegram_js.py`). Страница не ждёт скрипт:
+  подпись и тему берёт из адреса (`#tgWebAppData`), «Назад»/вибрацию/тему
+  подключает, когда скрипт пришёл (v2.175.0).
+- **Авторизация API**: `Authorization: tma <initData>`; проверка
+  `safe_parse_webapp_init_data` (aiogram, HMAC-SHA256 по токену бота), срок
+  24 ч, допуск −300 с на часы клиента (`bot/webapp/auth.py`); игрок ищется по
+  `telegram_id`, незарегистрированным — 403, открытому вне Telegram — 401.
+- **Клавиатуры**: inline — все в `bot/keyboards/inline.py`, callback-формат
+  `action_id` / `action_subaction_id`; постоянная клавиатура версионирована
+  (`REPLY_KB_VERSION` ↔ `Player.reply_kb_version`), раздаёт обновление
+  ReplyKeyboardMiddleware.
+- **Меню-кнопка «Клуб»** ставится при каждом старте (`menu_button.py`): смена
+  `.env` требует рестарта сервиса.
+- **Ошибки Telegram** гасятся глобально в main.py: «message is not modified» —
+  тихо; прочие BadRequest — лог + `callback.answer()` (иначе спинер ~15 с);
+  RetryAfter (429) — тихо. На каждый callback должен прийти `answer()`.
+
+## Данные
+
+SQLite (`DATABASE_URL`; на VPS `/data/bottennis.db`), 13 таблиц в
+`bot/db/models.py`:
+
+- `players` — игрок, привязка к Telegram: `telegram_id` (unique); рейтинг,
+  peak_rating, ачивки (JSON id), `photo_file_id`, `muted_digests`,
+  `is_champion`, `reply_kb_version`.
+- `matches` — challenger/challenged (FK), статус `accepted → completed/declined`
+  (`pending` только в старых строках), `sets_data` (JSON, перспектива
+  победителя), `rating_change`, `is_boss_fight`.
+- `champion_reigns` — периоды владения 1-м местом; `achievements_earned` и
+  `personal_records_earned` — даты ачивок и история личных рекордов
+  (`earned_at=None` — дата неизвестна).
+- `usage_events` — счётчик экранов бота и приложения (префикс `app_`);
+  `app_boots` — время и фейлы запусков миниаппа.
+- `match_reactions` (fire/like/lol/poo), `feed_reactions` (ach:/rec:) — реакции
+  приложения, без уведомлений; `digest_snapshots` — клубная часть сводок для
+  экрана «Итоги»; `club_record_pings` — антиспам пингов рекордов;
+  `goal_choices` — цель недели; `year_votes` — голоса «Итогов года»
+  (уникальность year+nomination+voter, смена голоса = UPDATE).
+
+Миграций-фреймворка нет: `create_all` + `_migrate_db()` (индексы существующих
+таблиц); исторические скрипты — `scripts/migrate_*.py`.
+
+## Запуск
+
+```bash
+py -3.13 -m pytest -q                 # все тесты (первая проверка перед чем угодно)
+py -3.13 -m ruff check .              # линт
+py -3.13 scripts/build_app_js.py      # пересборка app.js после правки webapp/src/app
+node --test tests/js/*.test.js        # чистые функции страницы
+py -3.13 scripts/preview_miniapp.py   # превью Mini App: http://127.0.0.1:8770/preview (?dark=1)
+py -3.13 main.py                      # бот локально (.env: BOT_TOKEN, INVITE_CODE, ADMIN_ID, DATABASE_URL)
+```
+
+E2E (Playwright): `pytest -q tests/e2e` — в CI советующая (`continue-on-error`),
+скриншот-эталоны — только локально. Деплой — мерж PR в `main`: job `deploy`
+(pull --ff-only, pip install, restart, проверки бота и миниаппа) + job `release`
+(GitHub Release из шапки RELEASE_NOTES.md). PyPI с VPS недоступен — зеркало
+Tsinghua (см. выше). Хук pre-commit (ZCode/Claude) пускает коммит только при
+зелёных pytest+ruff.
+
+## Где что добавлять
+
+- **Новый экран Mini App**: `webapp/src/app/NN-*.js` (рендер) + маршрут в
+  `90-routes.js` + пейлоад в `bot/webapp/api*.py` + маршрут в списке `routes`
+  `create_app()` (server.py); ссылку с главной — в `home()` и `bot/webapp/menu.py`.
+  Затем `scripts/build_app_js.py`, коммитить часть и app.js вместе.
+- **Новая кнопка бота**: хендлер в подходящем `bot/handlers/*`, клавиатура в
+  `keyboards/inline.py`, строки в `phrases.py`; логика — в `services/`, не в хендлере.
+- **Новая команда**: новый роутер в `bot/handlers/` (не в `start.py`) +
+  `dp.include_router` в main.py.
+- **Новая таблица**: модель в `db/models.py`; индексы/альтерации существующих —
+  `_migrate_db()` в `db/database.py`.
+- **Новая сводка/джоба**: `services/digests.py` + job в `scheduler.py`
+  (CronTrigger с явным `timezone=msk`).
+- **Новая ачивка**: `services/achievements.py` — описание, условия, бэкфилл.
+
+## Конвенции
+
+- Python 3.13 + аннотации; aiogram 3; SQLAlchemy 2 async; APScheduler 3;
+  фронт — чистый JS без сборщика и фреймворков.
+- Строки пользователю — русские, HTML (parse_mode задан глобально в main.py);
+  имена экранировать `from html import escape as h`; рейтинг — всегда
+  `round(x, 1)`, никогда `int`.
+- Комментарии объясняют «почему» и помечают версию (v2.x.y); плотные докстринги
+  с историей решения — норма проекта, не шум.
+- Фронт: ES5-стиль (`var`, `function`), части — куски одной IIFE-обёртки в
+  порядке имён; DOM — только `textContent`; чистые функции экспортируются для
+  `node --test` (блок в начале `00-start.js`); тексты интерфейса — на сервере.
+- Тесты: pytest + pytest-asyncio (auto) + hypothesis; CI — `pytest -n auto` с
+  покрытием; e2e — Playwright. Релизы v2.NNN.0; RELEASE_NOTES.md — новая запись
+  сверху, без эмодзи.
+
+## Подводные камни
+
+- **SQLite — один писатель**: из веб-части только короткие транзакции; запись
+  счётчика — фоновая задача (v2.157.2), не возвращать её в await в хендлере.
+- **initData**: 24 ч жизни; открытие вне Telegram — 401 «Откройте приложение из
+  бота»; подпись проверяется на каждом запросе; допуски часов — −300 с.
+- **app.js — артефакт**: правится только `webapp/src/app/*.js` + пересборка;
+  рассинхрон валит CI (`build_app_js.py --check`).
+- **Кэши**: index.html — `no-store`; app.js/app.css/icons.svg — `?v=<хеш>`
+  (immutable); шрифты — месяц; фото — ETag/304. Встроенный браузер Telegram
+  кэширует «по эвристике» — наивная правка заголовков ломает обновление.
+- **Бюджет загрузки** (e2e, валит CI локально и держит порог): первый запуск
+  ≤ 150 КБ статики, повторный ≤ 8 КБ, главный экран на «быстром 3G» ≤ 3 с.
+- **Заставка Telegram** до `web_app_ready`: не откладывать «готово» на ответ
+  сети; никаких сторонних доменов, грузящихся до `load`.
+- **HTTP/3 выключен в Caddy** (`protocols h1 h2` глобальным блоком): h3/UDP на
+  мобильных сетях режется → зависание на загрузке.
+- **CronTrigger без timezone берёт локальную tz сервера** — каждому триггеру
+  явно `timezone=msk` (предупреждение в scheduler.py).
+- **Спинер callback**: неответ на callback_query оставляет спинер ~15 с;
+  глобальные обработчики ошибок в main.py не удалять.
+- **Заморозка деплоя 15–31.12** — голосование «Итоги года»; в это окно PR в
+  main не мержить.
+- **Имя хоста миниаппа только в `.env` на VPS** (репозиторий публичный);
+  сертификат на IP короткоживущий (6 дней), продлевает Caddy — детали и
+  инструкции включения в `docs/MINIAPP.md`.
