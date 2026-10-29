@@ -21,6 +21,13 @@ case "$input" in
     cmd=$(printf '%s' "$input" | py -3.13 -c "import json,sys; print(json.load(sys.stdin).get('tool_input',{}).get('command',''))" 2>/dev/null)
     case "$cmd" in
       *"git commit"*)
+        # Tests run in the actual repo: cwd if it is a git repo, else the
+        # standard D: clone (sessions live in the G: Drive folder — no code
+        # there by design).
+        repo=$(git rev-parse --show-toplevel 2>/dev/null)
+        [ -z "$repo" ] && repo=/d/claude/bottennis
+        [ -d "$repo" ] || exit 0
+        cd "$repo" || exit 0
         if ! py -3.13 -m pytest -q >/tmp/zcode-precommit-pytest.log 2>&1; then
           printf 'pytest -q упал — коммит заблокирован. Смотри /tmp/zcode-precommit-pytest.log, почини и закоммить заново.' >&2
           exit 2
