@@ -1,0 +1,22 @@
+{
+  "mcp": {
+    "servers": {}
+  },
+  "hooks": {
+    "enabled": true,
+    "events": {
+      "PreToolUse": [
+        {
+          "matcher": "Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "sh \"${ZCODE_PROJECT_DIR}/.zcode/hooks/pre-commit-check.sh\"",
+              "timeout": 300
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
