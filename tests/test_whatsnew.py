@@ -80,3 +80,18 @@ async def test_send_counts_undelivered_players(db, monkeypatch):
     bot.send_message.side_effect = fake_send
     await send_whatsnew(cb, bot, db)
     assert "1 из 2" in cb.message.answer.await_args.args[0]
+
+
+async def test_send_double_tap_during_broadcast_sends_once(db, monkeypatch):
+    """Пока рассылка идёт, второй тап не запускает её повторно (v2.215.0):
+    снятие кнопки не закрывает окно гонки — апдейты обрабатываются
+    параллельными тасками, страхует asyncio.Lock."""
+    monkeypatch.setattr(admin_module, "ADMIN_ID", 1)
+    db.add(_player(10, "Алиса"))
+    await db.commit()
+
+    async with admin_module._whatsnew_lock:
+        cb, bot = _callback(1, "whatsnew_send"), AsyncMock()
+        await send_whatsnew(cb, bot, db)
+        bot.send_message.assert_not_awaited()
+        cb.answer.assert_awaited()

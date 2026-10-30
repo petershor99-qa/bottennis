@@ -5783,3 +5783,43 @@ async def test_career_recap_no_narrative_below_5_matches(db):
     assert "тебе почти нет равных" not in text
     assert "стараются не пересекаться лишний раз" not in text
     assert "ты играешь в клубе на своей волне" not in text
+
+
+# ── напоминание не теряется при сбое доставки (v2.215.0) ───────────────────────
+
+async def test_reminder_retried_when_delivery_fails(monkeypatch, db_factory):
+    """Сбой отправки не съедает единственное напоминание: reminder_sent
+    поднимается только при доставке хотя бы одному участнику, иначе попытка
+    повторится на следующем часовом тике."""
+    import bot.scheduler as sched
+
+    factory = db_factory
+    monkeypatch.setattr(sched, "async_session", factory)
+
+    old = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=25)
+    async with factory() as s:
+        p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+        s.add_all([p1, p2])
+        await s.flush()
+        s.add(Match(
+            challenger_id=p1.id, challenged_id=p2.id,
+            status=MatchStatus.accepted, accepted_at=old,
+        ))
+        await s.commit()
+
+    broken = AsyncMock()
+    broken.send_message = AsyncMock(side_effect=RuntimeError("сеть"))
+    await sched.send_match_reminders(broken)
+    assert broken.send_message.await_count == 2  # попытка была
+
+    async with factory() as s:
+        m = (await s.execute(select(Match))).scalar_one()
+        assert m.reminder_sent is False  # сбой не пометил как отправленное
+
+    working = AsyncMock()
+    await sched.send_match_reminders(working)
+    assert working.send_message.call_count == 2  # повтор доставки
+
+    async with factory() as s:
+        m = (await s.execute(select(Match))).scalar_one()
+        assert m.reminder_sent is True

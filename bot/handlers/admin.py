@@ -7,6 +7,7 @@
 /usage    — какие экраны реально открывают (счётчик, этап 1 дорожной карты)
 /whatsnew — показать текст «Что нового» и по кнопке разослать его всем игрокам
 """
+import asyncio
 import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -34,6 +35,12 @@ from bot.utils import (
 router = Router()
 
 ADMIN_ID: int = env_int("ADMIN_ID")
+
+# Рассылка «Что нового» не параллелится (v2.215.0): снятие кнопки ДО рассылки
+# не закрывает окно гонки двойного тапа — апдейты обрабатываются параллельными
+# тасками, и обе корутины успевают начать рассылку до видимости edit'а. Тот же
+# класс гонки, что у set_vote до v2.157.2.
+_whatsnew_lock = asyncio.Lock()
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -188,16 +195,23 @@ async def send_whatsnew(callback: CallbackQuery, bot: Bot, session: AsyncSession
     if ADMIN_ID == 0 or callback.from_user.id != ADMIN_ID:
         await callback.answer()
         return
-    await callback.answer()
-    # Кнопку убираем ДО рассылки — двойной тап не отправит сообщение дважды.
-    await cb_msg(callback).edit_reply_markup(reply_markup=None)
+    if _whatsnew_lock.locked():
+        # Рассылка уже идёт из первого тапа — второй тап гасим тихо (как
+        # «message is not modified»): текст и так уйдёт каждому один раз.
+        await callback.answer()
+        return
+    async with _whatsnew_lock:
+        await callback.answer()
+        # Кнопку убираем ДО рассылки — при живом фронтенде второй тап вообще
+        # не увидит кнопки; от параллельных тапов страхует lock выше.
+        await cb_msg(callback).edit_reply_markup(reply_markup=None)
 
-    players = (await session.execute(select(Player))).scalars().all()
-    delivered = 0
-    for p in players:
-        if await safe_send(bot, p.telegram_id, WHATS_NEW_TEXT):
-            delivered += 1
-    await cb_msg(callback).answer(f"✅ Разослано: {delivered} из {len(players)}.")
+        players = (await session.execute(select(Player))).scalars().all()
+        delivered = 0
+        for p in players:
+            if await safe_send(bot, p.telegram_id, WHATS_NEW_TEXT):
+                delivered += 1
+        await cb_msg(callback).answer(f"✅ Разослано: {delivered} из {len(players)}.")
 
 
 # ── /dbstats ──────────────────────────────────────────────────────────────────
