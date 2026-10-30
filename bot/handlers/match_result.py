@@ -1047,8 +1047,12 @@ async def _award_draw_achievements_and_eggs(
 ) -> None:
     """Достижения обоих участников ничьей + пасхалки (Договорнячок / марафон /
     7 матчей за день / время / H2H-юбилей / быстрый реванш)."""
-    new_ch_ach = await check_draw_achievements(session, challenger, final_sets, is_challenger=True)
-    new_cd_ach = await check_draw_achievements(session, challenged, final_sets, is_challenger=False)
+    new_ch_ach = await check_draw_achievements(
+        session, challenger, final_sets, is_challenger=True, rating_delta=match.rating_change,
+    )
+    new_cd_ach = await check_draw_achievements(
+        session, challenged, final_sets, is_challenger=False, rating_delta=-match.rating_change,
+    )
     record_achievements_earned(session, challenger.id, new_ch_ach, match.completed_at)
     record_achievements_earned(session, challenged.id, new_cd_ach, match.completed_at)
     await session.commit()

@@ -159,3 +159,22 @@ def test_what_if_newcomer_bonus_increases_win_range():
     newcomer = what_if_range(1000.0, 1050.0, viewer_is_newcomer=True)
     assert newcomer[0][0] > normal[0][0]  # win_lo больше с бонусом новичка
     assert newcomer[0][1] > normal[0][1]  # win_hi тоже
+
+
+def test_what_if_newcomer_bonus_not_applied_to_lose_range():
+    """Бонус новичка даётся победителю (реальная формула, match_result.py):
+    новичок-зритель, проигрывающий ветерану, теряет БЕЗ ×1.2 — до v2.215.0
+    калькулятор завышал ветку поражения."""
+    normal = what_if_range(1000.0, 1050.0, viewer_is_newcomer=False)
+    newcomer = what_if_range(1000.0, 1050.0, viewer_is_newcomer=True)
+    assert newcomer[1] == normal[1]  # (lose_lo, lose_hi) без изменений
+
+
+def test_what_if_lose_range_bonus_only_when_opponent_is_newcomer():
+    """В ветке поражения победитель — соперник: ×1.2 появляется только когда
+    новичок именно он."""
+    base = what_if_range(1050.0, 1000.0, viewer_is_newcomer=False)
+    opp = what_if_range(1050.0, 1000.0, viewer_is_newcomer=False, opponent_is_newcomer=True)
+    assert opp[1][0] > base[1][0]  # lose_lo больше: победитель-новичок забирает больше
+    assert opp[1][1] > base[1][1]
+    assert opp[0] == base[0]        # ветка победы зрителя не меняется

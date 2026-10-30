@@ -2404,3 +2404,63 @@ async def test_every_achievement_has_a_category():
     assert set(CATEGORY_ORDER) == {a.category for a in ACHIEVEMENTS_LIST}
     for a in ACHIEVEMENTS_LIST:
         assert a.category, f"{a.id} has no category"
+
+
+# ── round_hundred / rock_bottom в ничьей (v2.215.0, находка код-ревью) ─────────
+
+async def test_round_hundred_fires_on_draw_with_changed_rating(db):
+    """Ничья меняет рейтинг (андердог растёт) — попадание ровно в кратное 100
+    теперь считается, как и в win-ветке (раньше проверялись только победы)."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _add_draw(db, p1, p2)
+    p1.rating = 1100.0  # ничья привела рейтинг ровно к кратному 100
+    new = await check_draw_achievements(
+        db, p1, _DEFAULT_SETS, is_challenger=True, rating_delta=12.4,
+    )
+    assert "round_hundred" in new
+
+
+async def test_no_round_hundred_on_draw_with_zero_delta(db):
+    """Ничья равных рейтингов не меняет рейтинг — «круглой цифры» нет, хотя
+    стартовые 1000.0 формально кратны 100: рейтинг не СТАЛ круглым, он уже был."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _add_draw(db, p1, p2)
+    new = await check_draw_achievements(
+        db, p1, _DEFAULT_SETS, is_challenger=True, rating_delta=0.0,
+    )
+    assert "round_hundred" not in new
+
+
+async def test_rock_bottom_fires_on_draw_clamped_to_900(db):
+    """Фаворит теряет очки на ничьей, пол ветерана клампит ровно на 900.0 —
+    «Дно» выдаётся, как и в loss-ветке."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _add_draw(db, p1, p2)
+    p1.rating = 900.0  # кламп после потери очков на ничьей
+    new = await check_draw_achievements(
+        db, p1, _DEFAULT_SETS, is_challenger=True, rating_delta=-3.2,
+    )
+    assert "rock_bottom" in new
+
+
+async def test_no_rock_bottom_on_draw_without_drop(db):
+    """Рейтинг не падал (дельта ≥ 0) — «Дна» нет, даже если стоит ровно на 900.0."""
+    p1, p2 = _player(1, "Alice"), _player(2, "Bob")
+    db.add_all([p1, p2])
+    await db.flush()
+
+    await _add_draw(db, p1, p2)
+    p1.rating = 900.0
+    new = await check_draw_achievements(
+        db, p1, _DEFAULT_SETS, is_challenger=True, rating_delta=0.0,
+    )
+    assert "rock_bottom" not in new

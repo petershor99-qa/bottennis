@@ -92,18 +92,25 @@ WHAT_IF_NEWCOMER_BONUS = 1.2
 
 def what_if_range(
     viewer_rating: float, opponent_rating: float, viewer_is_newcomer: bool = False,
+    opponent_is_newcomer: bool = False,
 ) -> tuple[tuple[float, float], tuple[float, float]]:
     """((win_lo, win_hi), (lose_lo, lose_hi)) — ориентировочная дельта рейтинга
     для гипотетического матча viewer vs opponent прямо сейчас, без реального
     результата (базовая версия «Что если», без repeat/boss-fight множителей —
     те применимы только к уже сыгранному матчу с известными участниками счёта).
+
+    Бонус новичка — на победителя, как в реальной формуле (match_result.py):
+    в ветке «выиграешь» он применяется, когда новичок — зритель, в ветке
+    «проиграешь» — когда новичок соперник. До v2.215.0 бонус зритителя
+    завышал и ветку поражения, хотя в бою при победе ветерана его нет.
     """
     win_close = calculate_rating_change(viewer_rating, opponent_rating, WHAT_IF_CLOSE_WIN_SETS)
     win_decisive = calculate_rating_change(viewer_rating, opponent_rating, WHAT_IF_DECISIVE_WIN_SETS)
     lose_close = calculate_rating_change(opponent_rating, viewer_rating, WHAT_IF_CLOSE_WIN_SETS)
     lose_decisive = calculate_rating_change(opponent_rating, viewer_rating, WHAT_IF_DECISIVE_WIN_SETS)
 
-    bonus = WHAT_IF_NEWCOMER_BONUS if viewer_is_newcomer else 1.0
-    win_lo, win_hi = sorted([round(win_close * bonus, 1), round(win_decisive * bonus, 1)])
-    lose_lo, lose_hi = sorted([round(lose_close * bonus, 1), round(lose_decisive * bonus, 1)])
+    win_bonus = WHAT_IF_NEWCOMER_BONUS if viewer_is_newcomer else 1.0
+    lose_bonus = WHAT_IF_NEWCOMER_BONUS if opponent_is_newcomer else 1.0
+    win_lo, win_hi = sorted([round(win_close * win_bonus, 1), round(win_decisive * win_bonus, 1)])
+    lose_lo, lose_hi = sorted([round(lose_close * lose_bonus, 1), round(lose_decisive * lose_bonus, 1)])
     return (win_lo, win_hi), (lose_lo, lose_hi)
