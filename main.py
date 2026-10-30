@@ -72,11 +72,34 @@ async def on_telegram_bad_request(event: ErrorEvent) -> bool:
 
 async def on_telegram_rate_limit(event: ErrorEvent) -> bool:
     """RetryAfter (429) — Telegram rate-limit на редактирование сообщений.
-    Снимаем спиннер, пользователь может нажать кнопку ещё раз."""
+    Снимаем спинер, пользователь может нажать кнопку ещё раз."""
     callback = event.update.callback_query if event.update else None
     if callback:
         try:
             await callback.answer()
+        except Exception:
+            pass
+    return True
+
+
+def _is_unexpected_error(event: ErrorEvent) -> bool:
+    """Только исключения, не разобранные конкретными хендлерами выше
+    (BadRequest/RetryAfter). Фильтр вместо порядка регистрации: в aiogram
+    error-хендлеры вызываются от последнего зарегистрированного, и «голый»
+    catch-all перехватил бы и тихий случай "message is not modified"."""
+    return not isinstance(event.exception, (TelegramBadRequest, TelegramRetryAfter))
+
+
+async def on_unexpected_error(event: ErrorEvent) -> bool:
+    """Последняя страховка (v2.215.0): любое ДРУГОЕ исключение в хендлере —
+    например, SQLite busy на коммите хвоста confirm_result — не должно
+    оставлять крутящийся спинер на кнопке (~15 с до "query is too old").
+    Лог с трейсбеком + ответ на callback тем же текстом, что у BadRequest."""
+    logging.error("Необработанная ошибка апдейта", exc_info=event.exception)
+    callback = event.update.callback_query if event.update else None
+    if callback:
+        try:
+            await callback.answer("Упс, что-то пошло не так. Попробуй ещё раз 🙏")
         except Exception:
             pass
     return True
@@ -104,6 +127,7 @@ async def main() -> None:
 
     dp.error.register(on_telegram_bad_request, ExceptionTypeFilter(TelegramBadRequest))
     dp.error.register(on_telegram_rate_limit, ExceptionTypeFilter(TelegramRetryAfter))
+    dp.error.register(on_unexpected_error, _is_unexpected_error)
 
     # Бот работает только в личных чатах — в группах молчит
     dp.message.filter(F.chat.type == "private")

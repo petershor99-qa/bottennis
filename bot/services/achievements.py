@@ -724,6 +724,7 @@ async def check_draw_achievements(
     player: Player,
     sets_data: list[dict],          # challenger perspective: {"w": ch_pts, "l": cd_pts}
     is_challenger: bool,
+    rating_delta: float | None = None,
 ) -> list[str]:
     """
     Проверяет достижения после ничьей для одного из участников.
@@ -793,6 +794,17 @@ async def check_draw_achievements(
     # выше 1200 (см. правило про peak_rating: растёт и на победе, и на ничьей).
     if player.rating >= 1200.0:
         maybe("rating_1200")
+
+    # ── Круглая цифра / Дно (v2.215.0, находка код-ревью) — те же условия, что
+    # в win/loss-ветках, но от ничьей: андердог на ничьей растёт (может попасть
+    # ровно в кратное 100), фаворит теряет очки — и пол ветерана клампит его
+    # ровно на 900.0. Ровно та дыра, что уже чинили для rating_1200 (v2.135.0).
+    # rating_delta (знаковая, с перспективы игрока) отсекает вырожденный случай
+    # ничьей равных рейтингов: дельта 0 — рейтинг НЕ «стал» круглым, он уже был.
+    if rating_delta is not None and rating_delta != 0 and rating_tenths(player.rating) % 1000 == 0:
+        maybe("round_hundred")
+    if rating_delta is not None and rating_delta < 0 and rating_tenths(player.rating) == 9000:
+        maybe("rock_bottom")
 
     career_points, career_sets_won, career_points_conceded = _career_points_and_sets(
         all_matches, player.id,

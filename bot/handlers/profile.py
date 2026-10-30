@@ -771,8 +771,9 @@ async def show_what_if(callback: CallbackQuery, session: AsyncSession):
 
     match_counts = await get_match_counts(session)
     viewer_is_newcomer = match_counts.get(viewer.id, 0) < NEWCOMER_THRESHOLD
+    opponent_is_newcomer = match_counts.get(opponent.id, 0) < NEWCOMER_THRESHOLD
     (win_lo, win_hi), (lose_lo, lose_hi) = what_if_range(
-        viewer.rating, opponent.rating, viewer_is_newcomer,
+        viewer.rating, opponent.rating, viewer_is_newcomer, opponent_is_newcomer,
     )
 
     await cb_msg(callback).answer(

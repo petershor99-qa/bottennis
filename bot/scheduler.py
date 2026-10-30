@@ -382,11 +382,12 @@ async def send_match_reminders(bot: Bot) -> None:
         matches = result.scalars().all()
 
         for match in matches:
+            delivered = 0
             for player, opponent in [
                 (match.challenger, match.challenged),
                 (match.challenged, match.challenger),
             ]:
-                await safe_send(
+                if await safe_send(
                     bot,
                     player.telegram_id,
                     f"⏰ <b>Напоминание о матче</b>\n\n"
@@ -395,13 +396,20 @@ async def send_match_reminders(bot: Bot) -> None:
                     f"Пока он не завершён, вы оба не можете вызвать никого другого — "
                     f"сыграйте и напишите счёт сюда: <code>11:7 9:11 11:5</code> 🏓",
                     reply_markup=busy_with_match_kb(match.id),
-                )
-
-            match.reminder_sent = True
+                ):
+                    delivered += 1
+            # Флаг поднимаем только при доставке хотя бы одному участнику:
+            # safe_send глотает и временные сбои (сеть, 429), а напоминание у
+            # матча одно (v2.215.0) — помеченное при сбое терялось навсегда,
+            # хотя матч продолжал блокировать обоих. Не доставлено никому —
+            # попытка повторится на следующем часовом тике.
+            if delivered:
+                match.reminder_sent = True
 
         if matches:
             await session.commit()
-            logger.info("Отправлено напоминаний: %d", len(matches))
+            sent = sum(1 for m in matches if m.reminder_sent)
+            logger.info("Напоминаний доставлено: %d из %d висящих", sent, len(matches))
 
 
 # ── Авто-освобождение трона (14 дней бездействия чемпиона) ────────────────────
@@ -1653,7 +1661,15 @@ async def send_year_end_combo(bot: Bot) -> None:
 # ── Инициализация планировщика ────────────────────────────────────────────────
 
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
-    scheduler = AsyncIOScheduler(timezone="UTC")
+    # misfire_grace_time: дефолт APScheduler — 1 секунда. Если event loop в
+    # момент срабатывания cron-джобы занят дольше (рассылка сводки, flood-wait
+    # Telegram), задача считается просроченной и МОЛЧА пропускается — итоги
+    # дня не придут до следующего дня. 5 минут запаса + coalesce (свернуть
+    # накопившиеся пропуски в один запуск вместо очереди).
+    scheduler = AsyncIOScheduler(
+        timezone="UTC",
+        job_defaults={"misfire_grace_time": 300, "coalesce": True},
+    )
 
     # Проверка незавершённых матчей — каждый час
     scheduler.add_job(

@@ -741,7 +741,10 @@ async def _forecast(session: AsyncSession, viewer: Player, opponent: Player) -> 
     """Шанс победы и «что если» — те же формулы, что у калькулятора в боте."""
     counts = await get_match_counts(session)
     newcomer = counts.get(viewer.id, 0) < NEWCOMER_THRESHOLD
-    (win_lo, win_hi), (lose_lo, lose_hi) = what_if_range(viewer.rating, opponent.rating, newcomer)
+    opponent_newcomer = counts.get(opponent.id, 0) < NEWCOMER_THRESHOLD
+    (win_lo, win_hi), (lose_lo, lose_hi) = what_if_range(
+        viewer.rating, opponent.rating, newcomer, opponent_newcomer,
+    )
     return {
         "chance": round(win_probability(viewer.rating, opponent.rating) * 100),
         "win": f"+{win_lo}…+{win_hi}",
