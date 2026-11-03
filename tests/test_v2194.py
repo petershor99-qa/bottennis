@@ -131,7 +131,9 @@ async def test_month_ends_with_outro_current_month(db):
 
 async def test_month_outro_for_finished_month_says_see_you_next(db):
     a, b = await _pair(db)
-    old = msk_day_start() - timedelta(days=40)
+    # Матч внутри ПРОШЛОГО месяца, не «40 дней назад»: у относительной даты
+    # тест ломался 1–9 числа каждого месяца (40 дней уезжали в позапрошлый).
+    old = (msk_day_start().replace(day=1) - timedelta(days=1)).replace(day=1) + timedelta(days=2, hours=12)
     db.add(_completed(a, b, a.id, 10.0, old))
     await db.commit()
     d = await month_payload(db, a, None)       # в этом месяце не играл — прошлый (закрытый)

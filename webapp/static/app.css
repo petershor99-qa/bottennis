@@ -1385,3 +1385,12 @@ html.has-fs-toggle .screen-head { padding-right: 40px; }
   background: var(--gold); color: #fff; box-shadow: 0 0 0 2px var(--card);
 }
 .avatar-star svg { width: 10px; height: 10px; }
+
+/* v2.216.0: «Итоги» периода — приговор, корона доминанта, ход мест */
+.you-verdict { font-size: 17px; font-weight: 800; margin: 4px 0 6px; }
+.dominant-card { margin-bottom: 10px; }
+.dominant-head { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.dominant-head > div:last-child { flex: 1; }
+.dominant-value { font-size: 24px; font-weight: 800; line-height: 1.1; }
+.dominant-line { font-size: 13px; color: var(--hint); margin-top: 4px; }
+.move-badge { font-size: 12px; font-weight: 700; margin-left: auto; }

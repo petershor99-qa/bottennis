@@ -68,6 +68,8 @@
   function youCard(you) {
     var card = el("div", "card you-card");
     card.appendChild(el("div", "eyebrow", you.title));
+    // v2.216.0: приговор периода вместо сухого списка («Октябрь: топ-3, но в минус»)
+    if (you.verdict) card.appendChild(el("div", "you-verdict " + (you.verdict.tone || ""), you.verdict.text));
     you.lines.forEach(function (line) { card.appendChild(el("div", "you-line", line)); });
     if (you.story) {
       var b = el("button", "button button-quiet you-story", "Смотреть сторис");
@@ -96,6 +98,7 @@
     });
     main.appendChild(board);
     if (d.compare_note) main.appendChild(el("p", "day-usual", d.compare_note));
+    if (d.mood) main.appendChild(el("p", "day-usual", d.mood));
     if (d.standings.length >= 2) {
       main.appendChild(podium(d.standings.slice(0, 3).map(function (s) {
         return { id: s.id, name: s.name, initial: s.initial, rating: s.record, streak: 0, champion: false };
@@ -107,6 +110,22 @@
       main.appendChild(top);
     }
     var side = cols.side;
+    // v2.216.0: доминирующий игрок периода — карточка-корона («Месяц Дмитрия»)
+    // вместо кучи его плиток в «Героях»
+    if (d.dominant) {
+      var dd = d.dominant;
+      var crown = clickable(el("div", "card dominant-card stagger"), "player/" + dd.player.id);
+      crown.appendChild(el("div", "eyebrow", dd.title));
+      var head = el("div", "dominant-head");
+      head.appendChild(avatar(dd.player, "md"));
+      var hv = el("div");
+      if (dd.value) hv.appendChild(el("div", "dominant-value " + deltaTone(dd.value), dd.value));
+      if (dd.games) hv.appendChild(el("div", "sub", dd.games));
+      head.appendChild(hv);
+      crown.appendChild(head);
+      dd.lines.forEach(function (line) { crown.appendChild(el("div", "dominant-line", line)); });
+      side.appendChild(crown);
+    }
     if (d.heroes.length) {
       var hs = el("section", "group");
       hs.appendChild(el("h2", "group-title", d.heroes_title));
@@ -125,6 +144,8 @@
       b.appendChild(el("div", "name", r.name));
       b.appendChild(el("div", "sub", r.record));
       li.appendChild(b);
+      // v2.216.0: ход места против прошлого периода (▲2 / ▼1 / новый)
+      if (r.move) li.appendChild(el("div", "move-badge " + r.move.tone, r.move.label));
       if (r.form.length) li.appendChild(formStrip(r.form, "strip-inline"));
       s.list.appendChild(li);
     });
