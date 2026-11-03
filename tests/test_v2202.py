@@ -60,12 +60,22 @@ async def test_week_payload_board_standings_heroes_you(db):
     assert [r["name"] for r in d["standings"]] == ["Алиса", "Вика", "Боб"]
     assert d["standings"][0]["record"] == "2–0 (100%)" and d["standings"][0]["form"] == ["w", "w"]
     keys = {h["key"]: h for h in d["heroes"]}
-    assert keys["active"]["title"] == "Главный теннисист недели" and keys["active"]["players"][0]["name"] in ("Алиса", "Боб")
+    # v2.216.0: Алиса занимает 5 из 7 плиток «Героев» — они сворачиваются в
+    # карточку-корону, в сетке остаются чужие и парные плитки
+    assert d["dominant"]["player"]["name"] == "Алиса"
+    assert d["dominant"]["title"] == "Неделя Алиса"
+    assert d["dominant"]["value"] == "+32.0" and d["dominant"]["games"] == "2 матча"
+    assert "Больше всех побед — 2" in " | ".join(d["dominant"]["lines"])
+    assert "Нагибатель недели" in " | ".join(d["dominant"]["lines"])
+    assert "streak" not in keys and "wins" not in keys
+    assert keys["active"]["players"][0]["name"] == "Боб"  # чужая плитка остаётся в сетке
     assert keys["derby"]["players"][0]["name"] == "Алиса" and keys["derby"]["value"] == "2 матча"
-    assert keys["streak"]["title"] == "Нагибатель недели"
     assert d["heroes_title"] == "Герои недели"
     assert d["match"]["title"] == "Матч недели"
-    assert d["you"]["title"] == "Твоя неделя" and "2 победы · 0 поражений" in d["you"]["lines"]
+    assert d["you"]["title"] == "Твоя неделя"
+    # v2.216.0: приговор вместо списка место/рейтинг/победы
+    assert d["you"]["verdict"]["text"] == "Неделя: топ-1, и в плюс +32.0 (2:0)"
+    assert d["you"]["verdict"]["tone"] == "tone-win"
 
 
 async def test_period_navigation_and_empty(db):
