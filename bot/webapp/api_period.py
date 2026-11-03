@@ -25,6 +25,10 @@ from bot.utils import (
 from bot.webapp.api import _club_match, _person, _signed
 from bot.webapp.api_club import _now
 from bot.webapp.api_day import _matches_between, _standings_at
+from bot.webapp.api_month import (  # v2.216.0: характер периода — та же механика, что в «Твоём месяце»
+    MOOD_ORDER,
+    match_mood,
+)
 from bot.webapp.text import plain
 
 MONTHS_NOM = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август",
@@ -46,8 +50,18 @@ COMPARE_NOTES = {"week": "к среднему за 4 недели", "month": "к
 # показывало «−83%» — спад, которого нет.
 COMPARE_NOTES_SO_FAR = {"week": "к тому же сроку 4 прошлых недель", "month": "к тому же сроку прошлого месяца",
                         "quarter": "к тому же сроку прошлого квартала"}
-YOU_TITLES = {"week": "Твоя неделя", "quarter": "Твой квартал"}
+YOU_TITLES = {"week": "Твоя неделя", "quarter": "Твой квартал", "year": "Твой год"}
 SWING_MIN = 20   # как «Американские горки» в сводках бота
+# v2.216.0: подписи «Характер периода» (механика match_mood из «Твоего месяца»)
+MOOD_PLURALS = {
+    "deuce": ("дьюс", "дьюса", "дьюсов"),
+    "comeback": ("камбэк", "камбэка", "камбэков"),
+    "blowout": ("разгром", "разгрома", "разгромов"),
+    "rally": ("отыгрыш", "отыгрыша", "отыгрышей"),
+    "boss": ("босс-файт", "босс-файта", "босс-файтов"),
+}
+# v2.216.0: слово приговора по периоду («Октябрь: топ-3, но в минус»); месяц — имя месяца
+VERDICT_WORDS = {"week": "Неделя", "quarter": "Квартал", "year": "Год"}
 
 
 def _msk_date(dt: datetime) -> date:
@@ -117,6 +131,42 @@ def _record(w: int, lost: int, d: int) -> str:
     total = w + lost + d
     rate = int(w / total * 100) if total else 0
     return f"{w}–{lost}" + (f"–{d}" if d else "") + f" ({rate}%)"
+
+
+def _fill_stats(matches: list[Match], stats: dict[int, list]) -> None:
+    """Накопить [победы, поражения, ничьи, форма, дельта] по каждому участнику."""
+    for m in matches:
+        for pid in (m.challenger_id, m.challenged_id):
+            st = stats.setdefault(pid, [0, 0, 0, [], 0.0])
+            st[3].append(_form(m, pid))
+            st[4] += match_rating_delta(m, pid)
+            if m.winner_id is None:
+                st[2] += 1
+            elif m.winner_id == pid:
+                st[0] += 1
+            else:
+                st[1] += 1
+
+
+def _order_places(stats: dict[int, list]) -> tuple[list[int], dict[int, int]]:
+    """Порядок топа периода (по победам, затем по матчам — как в сводке бота)
+    и словарь место по игроку."""
+    order = sorted(stats, key=lambda p: (stats[p][0], sum(stats[p][:3]), -p), reverse=True)
+    return order, {pid: i + 1 for i, pid in enumerate(order)}
+
+
+def _mood_line(matches: list[Match]) -> str:
+    """«Характер: 12 дьюсов · 5 камбэков · 30 разгромов» — состав периода по
+    штампам матчей (matchMood); пусто, если ни одного характерного матча."""
+    counts: dict[str, int] = {}
+    for m in matches:
+        mood = match_mood(m)
+        if mood:
+            counts[mood] = counts.get(mood, 0) + 1
+    if not counts:
+        return ""
+    items = sorted(counts.items(), key=lambda kv: (-kv[1], MOOD_ORDER.index(kv[0])))
+    return "Характер: " + " · ".join(_ru_plural(n, *MOOD_PLURALS[key]) for key, n in items)
 
 
 def _heroes(kind: str, matches: list[Match], people: dict[int, dict], slackers: list[dict]) -> list[dict]:
@@ -193,7 +243,11 @@ def _heroes(kind: str, matches: list[Match], people: dict[int, dict], slackers: 
 
 
 async def _you(session: AsyncSession, viewer: Player, matches: list[Match], players: list[Player],
-               start: datetime, end: datetime) -> list[str] | None:
+               start: datetime, end: datetime, kind: str) -> dict | None:
+    """Личная карточка периода. С v2.216.0 первая строка — приговор
+    («Октябрь: топ-3, но в минус (13:27)») вместо сухого списка место/рейтинг/
+    победы: тон и связка по дельте и месту. Остаются только строки, которых в
+    приговоре нет (новые ачивки)."""
     mine = [m for m in matches if viewer.id in (m.challenger_id, m.challenged_id)]
     if not mine:
         return None
@@ -201,20 +255,39 @@ async def _you(session: AsyncSession, viewer: Player, matches: list[Match], play
     later = await _matches_between(session, end, now + timedelta(days=1)) if end <= now else []
     moment_end = min(end, now + timedelta(seconds=1))
     place_end = (await _standings_at(session, players, moment_end, later)).get(viewer.id)
-    place_start = (await _standings_at(session, players, start, matches + later)).get(viewer.id)
-    lines = []
-    if place_end:
-        lines.append(f"Место: #{place_end}" + (f" (было #{place_start})" if place_start and place_start != place_end else ""))
-    lines.append(f"Рейтинг: {_signed(sum(match_rating_delta(m, viewer.id) for m in mine))}")
+    delta = sum(match_rating_delta(m, viewer.id) for m in mine)
     w = sum(1 for m in mine if m.winner_id == viewer.id)
     lost = sum(1 for m in mine if m.winner_id not in (None, viewer.id))
-    lines.append(f"{_ru_plural(w, 'победа', 'победы', 'побед')} · {_ru_plural(lost, 'поражение', 'поражения', 'поражений')}")
+
+    place_part = None
+    if place_end:
+        place_part = f"топ-{place_end}" if place_end <= 3 else f"#{place_end}"
+    if delta > 0:
+        conn = "но" if place_part and place_end > 3 else "и"
+        delta_part = f"{conn} в плюс {_signed(delta)}"
+        tone = "tone-win"
+    elif delta < 0:
+        conn = "но" if place_part and place_end <= 3 else "и"
+        delta_part = f"{conn} в минус {_signed(delta)}"
+        tone = "tone-loss"
+    else:
+        delta_part = "в ноль"
+        tone = ""
+    # start — naive UTC: имя месяца для приговора берём по МСК (1 октября в МСК
+    # ещё 30 сентября в UTC — иначе приговор называет не тот месяц)
+    head = VERDICT_WORDS.get(kind) or MONTHS_NOM[(start + MSK_OFFSET).month - 1]
+    parts = [head + ":"]
+    if place_part:
+        parts.append(place_part + ",")
+    parts.append(delta_part + f" ({w}:{lost})")
+
+    lines: list[str] = []
     achs = (await session.execute(select(func.count()).select_from(AchievementEarned).where(
         AchievementEarned.player_id == viewer.id, AchievementEarned.earned_at >= start,
         AchievementEarned.earned_at < end))).scalar_one()
     if achs:
         lines.append(f"Новые ачивки: {achs}")
-    return lines
+    return {"verdict": {"text": " ".join(parts), "tone": tone}, "lines": lines}
 
 
 async def period_payload(session: AsyncSession, viewer: Player, kind: str, day_iso: str | None) -> dict | None:
@@ -277,21 +350,34 @@ async def period_payload(session: AsyncSession, viewer: Player, kind: str, day_i
 
     # Топ периода: по победам, затем по матчам (как в сводке бота)
     stats: dict[int, list] = {}
-    for m in matches:
-        for pid in (m.challenger_id, m.challenged_id):
-            st = stats.setdefault(pid, [0, 0, 0, [], 0.0])
-            st[3].append(_form(m, pid))
-            st[4] += match_rating_delta(m, pid)
-            if m.winner_id is None:
-                st[2] += 1
-            elif m.winner_id == pid:
-                st[0] += 1
-            else:
-                st[1] += 1
-    order = sorted(stats, key=lambda p: (stats[p][0], sum(stats[p][:3]), -p), reverse=True)
+    _fill_stats(matches, stats)
+    order, places_now = _order_places(stats)
+
+    # Ход мест (v2.216.0): разница с топом прошлого периода. Прошлого нет —
+    # значки не рисуем.
+    prev_matches = await _completed(session, _utc(prev_start), _utc(start))
+    places_prev: dict[int, int] | None = None
+    if prev_matches:
+        prev_stats: dict[int, list] = {}
+        _fill_stats(prev_matches, prev_stats)
+        places_prev = _order_places(prev_stats)[1]
+
+    def _move(pid: int) -> dict | None:
+        if places_prev is None:
+            return None
+        if pid not in places_prev:
+            return {"label": "новый", "tone": ""}
+        diff = places_prev[pid] - places_now[pid]
+        if diff > 0:
+            return {"label": f"▲{diff}", "tone": "tone-win"}
+        if diff < 0:
+            return {"label": f"▼{-diff}", "tone": "tone-loss"}
+        return None
+
     payload["standings_title"] = STANDINGS[kind]
     payload["standings"] = [{**people[pid], "place": i + 1, "record": _record(*stats[pid][:3]),
-                             "form": stats[pid][3][-7:], "delta": _signed(stats[pid][4])}
+                             "form": stats[pid][3][-7:], "delta": _signed(stats[pid][4]),
+                             "move": _move(pid)}
                             for i, pid in enumerate(order) if pid in people]
 
     counts_all = dict((await session.execute(
@@ -304,8 +390,37 @@ async def period_payload(session: AsyncSession, viewer: Player, kind: str, day_i
             .group_by(Match.challenged_id))).all():
         counts_all[pid] = counts_all.get(pid, 0) + n
     slackers = [people[p.id] for p in players if counts_all.get(p.id) and p.id not in stats]
-    payload["heroes"] = _heroes(kind, matches, people, slackers)
+    heroes = _heroes(kind, matches, people, slackers)
+
+    # v2.216.0: доминирующий игрок периода — карточка-корона вместо кучи его
+    # плиток («Месяц Дмитрия»): раньше один игрок занимал до половины стены
+    # «Героев» и остальные tile'ы никто не читал. Порог: ≥3 одиночных плиток и
+    # не меньше половины от всех одиночных. Парные плитки (дерби, халявщики) не
+    # в счёт и остаются в сетке.
+    dominant = None
+    if len(heroes) >= 4:
+        own = [h for h in heroes if len(h["players"]) == 1]
+        counts: dict[int, int] = {}
+        for h in own:
+            counts[h["players"][0]["id"]] = counts.get(h["players"][0]["id"], 0) + 1
+        pid_d, n = (max(counts.items(), key=lambda kv: (kv[1], -kv[0])) if counts else (None, 0))
+        if pid_d is not None and n >= 3 and n * 2 >= len(own):
+            st = stats.get(pid_d)
+            dominant = {
+                "title": {"week": "Неделя", "month": "Месяц", "quarter": "Квартал", "year": "Год"}[kind]
+                         + " " + people[pid_d]["name"],
+                "player": people[pid_d],
+                "games": _ru_plural(st[0] + st[1] + st[2], "матч", "матча", "матчей") if st else "",
+                "value": _signed(st[4]) if st else "",
+                "lines": [h["title"] + (f" — {h['value']}" if h["value"] else "")
+                          for h in own if h["players"][0]["id"] == pid_d],
+            }
+            heroes = [h for h in heroes
+                      if not (len(h["players"]) == 1 and h["players"][0]["id"] == pid_d)]
+    payload["dominant"] = dominant
+    payload["heroes"] = heroes
     payload["heroes_title"] = f"Герои {GEN[kind]}"
+    payload["mood"] = _mood_line(matches)
 
     top = pick_match_of_day(matches)
     if top is not None:
@@ -314,11 +429,11 @@ async def period_payload(session: AsyncSession, viewer: Player, kind: str, day_i
         payload["match"] = {**_club_match(top), "title": MATCH_TITLES[kind],
                             "report": plain(match_report(top, winner_name)) if winner_name else ""}
 
-    you = await _you(session, viewer, matches, players, _utc(start), _utc(end))
+    you = await _you(session, viewer, matches, players, _utc(start), _utc(end), kind)
     if you:
         if kind in YOU_TITLES:
-            payload["you"] = {"title": YOU_TITLES[kind], "lines": you}
+            payload["you"] = {"title": YOU_TITLES[kind], **you}
         elif kind == "month":
-            payload["you"] = {"title": f"Твой {MONTHS_NOM_LOWER[start.month - 1]}", "lines": you,
+            payload["you"] = {"title": f"Твой {MONTHS_NOM_LOWER[start.month - 1]}", **you,
                               "story": f"{start.year}{start.month:02d}"}
     return payload
