@@ -55,7 +55,7 @@ def test_reply_keyboard_third_button(app_on):
     third = main_reply_kb(ADMIN).keyboard[0][2]
     assert third.text == REPLY_KB_APP and third.web_app.url == "https://club.example/"
     assert main_reply_kb().keyboard[0][2].text == REPLY_KB_PROFILE           # без зрителя — как раньше
-    assert REPLY_KB_VERSION == 3
+    assert REPLY_KB_VERSION == 4                                             # v2.217.0: возврат свёрнутых
 
 
 def test_reply_keyboard_without_app(app_off):
