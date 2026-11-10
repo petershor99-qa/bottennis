@@ -93,8 +93,10 @@ BOT_KEY: web.AppKey = web.AppKey("bot")
 STORAGE_KEY: web.AppKey = web.AppKey("fsm_storage")
 PHOTOS_KEY: web.AppKey[PhotoCache] = web.AppKey("photos", PhotoCache)
 USAGE_KEY: web.AppKey[UsageWriter] = web.AppKey("usage", UsageWriter)
-TRACK_REQUEST_KEY = "bottennis_track"  # что записать в счётчик после ответа
-BOOT_FAIL_REQUEST_KEY = "bottennis_boot_fail"  # неудачный запуск — в app_boots после ответа (v2.180.0)
+# v2.218.0: web.RequestKey вместо строк — aiohttp 3.14 предупреждает NotAppKeyWarning
+# (для request[...] нужен именно RequestKey; web.AppKey — только для app[...])
+TRACK_REQUEST_KEY: web.RequestKey[tuple] = web.RequestKey("bottennis_track", tuple)  # что записать в счётчик после ответа
+BOOT_FAIL_REQUEST_KEY: web.RequestKey[str] = web.RequestKey("bottennis_boot_fail", str)  # неудачный запуск — в app_boots после ответа (v2.180.0)
 ASSETS_KEY: web.AppKey[Assets] = web.AppKey("assets", Assets)
 # Ответы API крупнее этого сжимаются gzip (v2.172.0); мелкие — дороже сжимать
 COMPRESS_MIN_BYTES = 1024
