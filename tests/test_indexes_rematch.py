@@ -51,6 +51,10 @@ async def test_migration_adds_indexes_to_existing_db_and_is_idempotent(monkeypat
 
 
 def _rematch_buttons(markup) -> list[str]:
+    # v2.219.0: сообщениям без своей клавиатуры safe_send прикрепляет reply-клавиатуру —
+    # там inline-кнопок не бывает, для проверки «реванша нет» это пустой список
+    if not hasattr(markup, "inline_keyboard"):
+        return []
     return [
         b.callback_data for row in markup.inline_keyboard for b in row
         if b.callback_data and b.callback_data.startswith("rematch_")
