@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from aiogram.types import ReplyKeyboardMarkup
 from aiohttp.test_utils import TestClient, TestServer
 from sqlalchemy import select
 
@@ -92,7 +93,11 @@ async def test_deliver_digest_without_app_sends_full(app_on):
     bot = SimpleNamespace(send_message=AsyncMock())
     await deliver_digest(bot, SimpleNamespace(telegram_id=2002), "week", "ПОЛНЫЙ", "КОРОТКИЙ")
     args, kwargs = bot.send_message.call_args
-    assert args[1] == "ПОЛНЫЙ" and "reply_markup" not in kwargs
+    assert args[1] == "ПОЛНЫЙ"
+    # v2.219.0: сообщениям без своей клавиатуры safe_send прикрепляет постоянную reply-клавиатуру
+    kb = kwargs["reply_markup"]
+    assert isinstance(kb, ReplyKeyboardMarkup) and kb.is_persistent
+    assert len(kb.keyboard[0]) == 3
 
 
 async def test_daily_summary_saves_snapshot_and_shortens_for_app_users(db_factory, monkeypatch, app_on):
