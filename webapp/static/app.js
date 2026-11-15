@@ -4506,6 +4506,9 @@
       if (!last || now - last < SINCE_MIN_GAP_MS) return;
       api("since?t=" + Math.floor(last / 1000)).then(function (d) {
         if (!d || !d.items || !d.items.length) return;
+        // v2.220.0: ответ мог прийти после ухода с главной (таймаут запроса 15 с) —
+        // иначе карточка рисовалась поверх чужого экрана
+        if (currentRoute() !== "") return;
         sinceState = { d: d, closed: false };
         if (c.isConnected && !c.querySelector(".since")) sinceCard(c, d);
       }, function () { /* не вышло — просто без карточки */ });
@@ -5190,6 +5193,11 @@
   }
 
   function render(quiet) {
+    // v2.220.0: шторка (.sheet-wrap) закрывается при любой навигации — раньше её
+    // снимал только клик по подложке, и кнопка «Назад» Telegram рендерила новый
+    // экран под открытой шторкой
+    var staleSheet = document.querySelector(".sheet-wrap");
+    if (staleSheet) staleSheet.remove();
     var route = currentRoute();
     app.classList.toggle("quiet", quiet === true);
     var nav = navEntry();
