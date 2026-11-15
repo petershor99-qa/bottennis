@@ -53,6 +53,7 @@ from pathlib import Path
 
 from aiohttp import web
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Player
@@ -114,6 +115,17 @@ def _json_error(status: int, message: str) -> web.Response:
     return web.json_response({"error": message}, status=status, headers=_SECURITY_HEADERS)
 
 
+def _int_param(raw: str, lo: int = 1, hi: int = 10**9) -> int | None:
+    """Безопасный парсинг числового параметра (v2.220.0): None — не число или вне
+    диапазона. Гигантские значения из URL при привязке к SQLite роняли запрос
+    OverflowError'ом (500) — теперь кривой вход даёт 404/400."""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if lo <= value <= hi else None
+
+
 async def index(request: web.Request) -> web.Response:
     """Страница со ссылками на текущие версии app.js и app.css (v2.172.0).
     Сжата gzip (v2.194.0): она не кэшируется и приходит при каждом запуске —
@@ -166,9 +178,8 @@ def endpoint(handler: Handler) -> Callable[[web.Request], Awaitable[web.Response
 
 
 async def _target(request: web.Request, session: AsyncSession) -> Player | None:
-    try:
-        player_id = int(request.match_info["player_id"])
-    except (KeyError, ValueError):
+    player_id = _int_param(request.match_info.get("player_id", ""))
+    if player_id is None:
         return None
     return (await session.execute(select(Player).where(Player.id == player_id))).scalar_one_or_none()
 
@@ -289,9 +300,8 @@ async def usage(request, session, viewer):
 
 
 async def match_screen(request, session, viewer):
-    try:
-        match_id = int(request.match_info["match_id"])
-    except ValueError:
+    match_id = _int_param(request.match_info.get("match_id", ""))
+    if match_id is None:
         return None
     payload = await api_club.match_payload(session, match_id)
     if payload is not None:
@@ -302,8 +312,10 @@ async def match_screen(request, session, viewer):
 
 async def react(request, session, viewer):
     """Поставить или снять реакцию на матч (v2.169.0). Никаких уведомлений."""
+    match_id = _int_param(request.match_info.get("match_id", ""))
+    if match_id is None:
+        return None
     try:
-        match_id = int(request.match_info["match_id"])
         body = await request.json()
     except Exception:
         return None
@@ -342,12 +354,10 @@ async def pairs(request, session, viewer):
 
 
 async def since(request, session, viewer):
-    """«Пока тебя не было» (v2.181.0): ?t=<секунды UTC прошлого захода>."""
-    try:
-        ts = int(request.query.get("t", ""))
-    except ValueError:
-        return None
-    return await api_return.since_payload(session, viewer, ts) if ts > 0 else None
+    """«Пока тебя не было» (v2.181.0): ?t=<секунды UTC прошлого захода>.
+    Верхняя граница — 2100 год: fromtimestamp на гигантском ts падал 500-й."""
+    ts = _int_param(request.query.get("t", ""), lo=0, hi=4102444800)
+    return await api_return.since_payload(session, viewer, ts) if ts else None
 
 
 async def challenge_open(request, session, viewer):
@@ -360,7 +370,8 @@ async def challenge_open(request, session, viewer):
     except Exception:
         body = None
     raw = body.get("opponent_id") if isinstance(body, dict) else None
-    if raw is not None and (isinstance(raw, bool) or not isinstance(raw, int)):
+    if raw is not None and (isinstance(raw, bool) or not isinstance(raw, int)
+                            or not 0 < raw <= 10**9):   # v2.220.0: гигантский id ронял сессию.get
         return _json_error(400, "Не удалось открыть вызов.")
     result = await open_challenge(bot, session, viewer, raw)
     if result == "ok":
@@ -535,9 +546,8 @@ async def achievements(request, session, viewer):
 
 async def achievement_category(request, session, viewer):
     target = await _target(request, session)
-    try:
-        index = int(request.match_info["index"])
-    except ValueError:
+    index = _int_param(request.match_info.get("index", ""), lo=0, hi=99)
+    if index is None:
         return None
     return api.achievement_category_payload(target, index) if target else None
 
@@ -571,9 +581,8 @@ async def h2h(request, session, viewer):
 async def pair(request, session, viewer):
     """Любая пара игроков (v2.193.0): /api/pair/{a}/{b} — «A против B» глазами
     третьего. Если смотрит один из пары — обычное «Ты против …» с его стороны."""
-    try:
-        ids = int(request.match_info["a"]), int(request.match_info["b"])
-    except (KeyError, ValueError):
+    ids = _int_param(request.match_info.get("a", "")), _int_param(request.match_info.get("b", ""))
+    if None in ids:
         return None
     if ids[0] == ids[1]:
         return None
@@ -618,7 +627,13 @@ async def notifications_set(request, session, viewer):
         return _json_error(400, "Не удалось прочитать запрос.")
     if not set_digest_muted(viewer, str(body.get("key", "")), body["muted"]):
         return None
-    await session.commit()
+    try:
+        await session.commit()
+    except OperationalError:
+        # v2.220.0: база занята ботом — короткая запись веба не должна падать 500
+        # (паттерн reactions.py); экран покажет прежнее состояние переключателя
+        await session.rollback()
+        return _json_error(503, "База занята, попробуйте через минуту.")
     return api.notifications_payload(viewer)
 
 

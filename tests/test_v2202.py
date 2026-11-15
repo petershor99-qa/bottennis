@@ -63,7 +63,7 @@ async def test_week_payload_board_standings_heroes_you(db):
     # v2.216.0: Алиса занимает 5 из 7 плиток «Героев» — они сворачиваются в
     # карточку-корону, в сетке остаются чужие и парные плитки
     assert d["dominant"]["player"]["name"] == "Алиса"
-    assert d["dominant"]["title"] == "Неделя Алиса"
+    assert d["dominant"]["title"] == "Корона недели — Алиса"
     assert d["dominant"]["value"] == "+32.0" and d["dominant"]["games"] == "2 матча"
     assert "Больше всех побед — 2" in " | ".join(d["dominant"]["lines"])
     assert "Нагибатель недели" in " | ".join(d["dominant"]["lines"])

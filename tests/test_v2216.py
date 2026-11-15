@@ -37,7 +37,7 @@ async def test_dominant_player_collapses_into_crown(db):
     d = await api_period.period_payload(db, a, "week", None)
     assert d["dominant"], "Алиса выиграла 5 из 5 — без короны стена плиток о ней"
     assert d["dominant"]["player"]["name"] == "Алиса"
-    assert d["dominant"]["title"] == "Неделя Алиса"
+    assert d["dominant"]["title"] == "Корона недели — Алиса"
     assert d["dominant"]["games"] == "5 матчей" and d["dominant"]["value"] == "+58.0"
     joined = " | ".join(d["dominant"]["lines"])
     assert "Больше всех побед — 5" in joined and "Нагибатель недели" in joined
@@ -122,3 +122,49 @@ async def test_no_move_badges_without_previous_matches(db):
     await db.commit()
     d = await api_period.period_payload(db, a, "week", None)
     assert all(r["move"] is None for r in d["standings"]), "первый период — значков хода нет"
+
+
+# ── v2.220.0: ветки, не покрытые ранее ────────────────────────────────────────
+
+async def test_quarter_verdict_word(db):
+    """VERDICT_WORDS: «Квартал» (месяц — имя месяца, неделя/год проверены выше)."""
+    a, b, _ = await _club(db)
+    db.add(_m(a, b, a.id, [(11, 5)], MONDAY + timedelta(hours=10), rc=10.0))
+    await db.commit()
+    d = await api_period.period_payload(db, a, "quarter", None)
+    assert d["you"]["verdict"]["text"] == "Квартал: топ-1, и в плюс +10.0 (1:0)"
+
+
+async def test_verdict_zero_delta_says_v_nol(db):
+    """Ничья равных рейтингов: дельта 0 — приговор «в ноль»."""
+    a, b, _ = await _club(db)
+    db.add(_m(a, b, None, [(11, 9)], MONDAY + timedelta(hours=10), rc=0.0))
+    await db.commit()
+    d = await api_period.period_payload(db, a, "month", "2026-10-15")
+    assert d["you"]["verdict"]["text"] == "Октябрь: топ-1, в ноль (0:0)"
+    assert d["you"]["verdict"]["tone"] == ""
+
+
+async def test_mood_empty_without_special_matches(db):
+    """Обычные партии без дьюсов/камбэков/разгромов — «Характер» пуст."""
+    a, b, _ = await _club(db)
+    db.add(_m(a, b, a.id, [(11, 9), (11, 8)], MONDAY + timedelta(hours=10), rc=10.0))
+    await db.commit()
+    d = await api_period.period_payload(db, a, "week", None)
+    assert d["mood"] == ""
+
+
+async def test_move_marks_newcomer(db):
+    """Игрок, не игравший в прошлом периоде, но играющий в этом — значок «новый»."""
+    a, b, c = await _club(db)
+    db.add_all([
+        _m(a, b, a.id, [(11, 5)], MONDAY - timedelta(days=7) + timedelta(hours=10), rc=10.0),
+        _m(a, b, a.id, [(11, 6)], MONDAY + timedelta(hours=10), rc=10.0),
+        _m(b, c, c.id, [(11, 4)], MONDAY + timedelta(hours=11), rc=10.0),
+    ])
+    await db.commit()
+    d = await api_period.period_payload(db, a, "week", None)
+    moves = {r["name"]: r["move"] for r in d["standings"]}
+    assert moves["Вика"]["label"] == "новый"
+    assert moves["Боб"]["label"] == "▼1" and moves["Боб"]["tone"] == "tone-loss"
+    assert moves["Алиса"] is None   # место не изменилось — значка нет

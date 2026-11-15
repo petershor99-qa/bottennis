@@ -113,6 +113,11 @@
   }
 
   function render(quiet) {
+    // v2.220.0: шторка (.sheet-wrap) закрывается при любой навигации — раньше её
+    // снимал только клик по подложке, и кнопка «Назад» Telegram рендерила новый
+    // экран под открытой шторкой
+    var staleSheet = document.querySelector(".sheet-wrap");
+    if (staleSheet) staleSheet.remove();
     var route = currentRoute();
     app.classList.toggle("quiet", quiet === true);
     var nav = navEntry();
