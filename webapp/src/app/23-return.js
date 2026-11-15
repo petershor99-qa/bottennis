@@ -255,6 +255,9 @@
       if (!last || now - last < SINCE_MIN_GAP_MS) return;
       api("since?t=" + Math.floor(last / 1000)).then(function (d) {
         if (!d || !d.items || !d.items.length) return;
+        // v2.220.0: ответ мог прийти после ухода с главной (таймаут запроса 15 с) —
+        // иначе карточка рисовалась поверх чужого экрана
+        if (currentRoute() !== "") return;
         sinceState = { d: d, closed: false };
         if (c.isConnected && !c.querySelector(".since")) sinceCard(c, d);
       }, function () { /* не вышло — просто без карточки */ });

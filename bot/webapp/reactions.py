@@ -181,7 +181,8 @@ async def feed_reactions_for(session: AsyncSession, targets: list[str], viewer_i
 
 async def _target_exists(session: AsyncSession, target: str) -> bool:
     prefix, _, raw_id = target.partition(":")
-    if not raw_id.isdigit():
+    # v2.220.0: длина цифр ограничена — гигантский id ронял session.get OverflowError'ом
+    if not raw_id.isdigit() or len(raw_id) > 9:
         return False
     if prefix == "ach":
         row = await session.get(AchievementEarned, int(raw_id))

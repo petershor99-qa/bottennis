@@ -149,8 +149,9 @@ def _fill_stats(matches: list[Match], stats: dict[int, list]) -> None:
 
 
 def _order_places(stats: dict[int, list]) -> tuple[list[int], dict[int, int]]:
-    """Порядок топа периода (по победам, затем по матчам — как в сводке бота)
-    и словарь место по игроку."""
+    """Порядок топа периода (по победам, затем по матчам — как в сводке бота;
+    при полном равенстве первым идёт меньший id — в сводках бота порядок
+    тай-игроков зависит от обхода матчей) и словарь место по игроку."""
     order = sorted(stats, key=lambda p: (stats[p][0], sum(stats[p][:3]), -p), reverse=True)
     return order, {pid: i + 1 for i, pid in enumerate(order)}
 
@@ -257,6 +258,8 @@ async def _you(session: AsyncSession, viewer: Player, matches: list[Match], play
     place_end = (await _standings_at(session, players, moment_end, later)).get(viewer.id)
     delta = sum(match_rating_delta(m, viewer.id) for m in mine)
     w = sum(1 for m in mine if m.winner_id == viewer.id)
+    # Ничьи в приговор не входят — одобренный владельцем формат «(13:27)» без
+    # третьего числа; полный record с ничьими показывается в «Топе периода» ниже.
     lost = sum(1 for m in mine if m.winner_id not in (None, viewer.id))
 
     place_part = None
@@ -393,22 +396,24 @@ async def period_payload(session: AsyncSession, viewer: Player, kind: str, day_i
     heroes = _heroes(kind, matches, people, slackers)
 
     # v2.216.0: доминирующий игрок периода — карточка-корона вместо кучи его
-    # плиток («Месяц Дмитрия»): раньше один игрок занимал до половины стены
-    # «Героев» и остальные tile'ы никто не читал. Порог: ≥3 одиночных плиток и
-    # не меньше половины от всех одиночных. Парные плитки (дерби, халявщики) не
-    # в счёт и остаются в сетке.
+    # плиток: раньше один игрок занимал до половины стены «Героев» и остальные
+    # tile'ы никто не читал. Порог (v2.220.0, единый) — только по одиночным
+    # плиткам: ≥4 одиночных всего и ≥3 у одного игрока, не меньше половины от
+    # одиночных. Парные плитки (дерби, халявщики) в порог не входят и остаются
+    # в сетке.
     dominant = None
-    if len(heroes) >= 4:
-        own = [h for h in heroes if len(h["players"]) == 1]
+    own = [h for h in heroes if len(h["players"]) == 1]
+    if len(own) >= 4:
         counts: dict[int, int] = {}
         for h in own:
             counts[h["players"][0]["id"]] = counts.get(h["players"][0]["id"], 0) + 1
-        pid_d, n = (max(counts.items(), key=lambda kv: (kv[1], -kv[0])) if counts else (None, 0))
-        if pid_d is not None and n >= 3 and n * 2 >= len(own):
+        pid_d, n = max(counts.items(), key=lambda kv: (kv[1], -kv[0]))
+        if n * 2 >= len(own):
             st = stats.get(pid_d)
             dominant = {
-                "title": {"week": "Неделя", "month": "Месяц", "quarter": "Квартал", "year": "Год"}[kind]
-                         + " " + people[pid_d]["name"],
+                "title": {"week": "Корона недели", "month": "Корона месяца",
+                          "quarter": "Корона квартала", "year": "Корона года"}[kind]
+                         + " — " + people[pid_d]["name"],
                 "player": people[pid_d],
                 "games": _ru_plural(st[0] + st[1] + st[2], "матч", "матча", "матчей") if st else "",
                 "value": _signed(st[4]) if st else "",
